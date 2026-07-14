@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  对应上位机客户端模式（KukaCommunicator::start 主动 connectToHost）：
+  - EXTERNAL/TYPE = Client  → 外部系统(上位机)是客户端，机器人作 TCP Server 监听
+  - EXTERNAL/IP   = 上位机网卡 IP（机器人侧识别的外部系统地址）
+  - EXTERNAL/PORT = 机器人监听端口（与上位机 start(机器人IP, port) 的 port 一致）
+  - 上位机 UI 里填写的 IP 是「机器人控制器 IP」，不是这里的 EXTERNAL/IP
+  RECEIVE/SEND 报文结构不变，无需改动。
+-->
+<ETHERNETKRL>
+	<CONFIGURATION>
+		<EXTERNAL>
+			<!-- 上位机 IP（示例）；按实际网卡修改 -->
+			<IP>192.168.0.1</IP>
+			<!-- 机器人监听端口；上位机 connectToHost(robotIp, 59152) -->
+			<PORT>59152</PORT>
+			<!-- 关键：外部系统为客户端（相对原 Server 模式的唯一关键改动） -->
+			<TYPE>Client</TYPE>
+		</EXTERNAL>
+		<INTERNAL>
+			<BUFFERING Mode="FIFO" Limit="512"/>
+			<BUFFSIZE Limit="16384"/>
+			<TIMEOUT Connect="60000"/>
+			<ALIVE Set_Out="666" Ping="200"/>
+			<PROTOCOL>TCP</PROTOCOL>
+		</INTERNAL>
+	</CONFIGURATION>
+	<RECEIVE>
+		<XML>
+			<ELEMENT Tag="Sensor/SJ1" Type="REAL"/>
+			<ELEMENT Tag="Sensor/SJ2" Type="REAL"/>
+			<ELEMENT Tag="Sensor/SJ3" Type="REAL"/>
+			<ELEMENT Tag="Sensor/SJ4" Type="REAL"/>
+			<ELEMENT Tag="Sensor/SJ5" Type="REAL"/>
+			<ELEMENT Tag="Sensor/SJ6" Type="REAL"/>
+			<ELEMENT Tag="Sensor/SE1" Type="REAL"/>
+			<ELEMENT Tag="Sensor/Status/IsOut" Type="BOOL"/>
+			<ELEMENT Tag="Sensor/StepMode" Type="INT"/>
+			<ELEMENT Tag="Sensor" Set_Flag="1"/>
+		</XML>
+	</RECEIVE>
+	<SEND>
+		<XML>
+			<ELEMENT Tag="Robot/PE1"/>
+			<ELEMENT Tag="Robot/joint1"/>
+			<ELEMENT Tag="Robot/joint2"/>
+			<ELEMENT Tag="Robot/joint3"/>
+			<ELEMENT Tag="Robot/joint4"/>
+			<ELEMENT Tag="Robot/joint5"/>
+			<ELEMENT Tag="Robot/joint6"/>
+			<ELEMENT Tag="Robot/PX"/>
+			<ELEMENT Tag="Robot/PY"/>
+			<ELEMENT Tag="Robot/PZ"/>
+			<ELEMENT Tag="Robot/PA"/>
+			<ELEMENT Tag="Robot/PB"/>
+			<ELEMENT Tag="Robot/PC"/>
+		</XML>
+	</SEND>
+</ETHERNETKRL>
