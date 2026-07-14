@@ -4,7 +4,7 @@
 			<TYPE>Client</TYPE>
 		</EXTERNAL>
 		<INTERNAL>
-			<ENVIRONMENT>Program</ENVIRONMENT>
+			<ENVIRONMENT>Submit</ENVIRONMENT>
 			<BUFFERING Mode="FIFO" Limit="512"/>
 			<BUFFSIZE Limit="16384"/>
 			<TIMEOUT Connect="60000"/>
