@@ -127,14 +127,15 @@ void MainWindow::on_InitializeRobot_clicked()
 		if (!comm) {
 			return;
 		}
+		// buildSensorXml(se1, SJ1..SJ6)：笛卡尔用 SJ1..SJ6=X,Y,Z,A,B,C，SE1=0
 		std::array<double, 7> xp2{};
 		{
 			QMutexLocker locker(&g_robotMutex);
 			g_robotData.pose[axis] += dir * ui->transStepSpinbox->value();
+			xp2[0] = 0;
 			for (int i = 0; i < 6; ++i) {
-				xp2[i] = g_robotData.pose[i];
+				xp2[i + 1] = g_robotData.pose[i];
 			}
-			xp2[6] = 0;
 		}
 		QMetaObject::invokeMethod(comm, [comm, xp2]() {
 			comm->stepMove(2, xp2);
