@@ -9,9 +9,10 @@
 			<BUFFSIZE Limit="16384"/>
 			<TIMEOUT Connect="60000"/>
 			<ALIVE Set_Flag="2" Ping="200"/>
-			<IP>192.168.1.147</IP>
+			<IP>192.168.0.1</IP>
 			<PORT>54600</PORT>
 			<PROTOCOL>TCP</PROTOCOL>
+			<MESSAGES Display="error" Logging="warning"/>
 		</INTERNAL>
 	</CONFIGURATION>
 	<RECEIVE>
