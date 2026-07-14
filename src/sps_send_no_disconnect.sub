@@ -1,0 +1,45 @@
+; SPS USER PLC：防断连的发送逻辑（无外部轴时不要读 E1）
+
+    IF EkiInited == TRUE THEN
+      IF $FLAG[2] == TRUE THEN
+        ; 无外部轴时用 0，避免 $POS_ACT_MES.E1 触发 Submit 故障导致断链
+        reade1 = 0.0
+        ; 若确有 E1，再改回：reade1 = $POS_ACT_MES.E1
+
+        readj1 = $AXIS_ACT_MEAS.A1
+        readj2 = $AXIS_ACT_MEAS.A2
+        readj3 = $AXIS_ACT_MEAS.A3
+        readj4 = $AXIS_ACT_MEAS.A4
+        readj5 = $AXIS_ACT_MEAS.A5
+        readj6 = $AXIS_ACT_MEAS.A6
+        readx  = $POS_ACT_MES.X
+        ready  = $POS_ACT_MES.Y
+        readz  = $POS_ACT_MES.Z
+        reada  = $POS_ACT_MES.A
+        readb  = $POS_ACT_MES.B
+        readc  = $POS_ACT_MES.C
+
+        RET = EKI_SetReal("Xml_motion16","Robot/PE1",reade1)
+        RET = EKI_SetReal("Xml_motion16","Robot/joint1",readj1)
+        RET = EKI_SetReal("Xml_motion16","Robot/joint2",readj2)
+        RET = EKI_SetReal("Xml_motion16","Robot/joint3",readj3)
+        RET = EKI_SetReal("Xml_motion16","Robot/joint4",readj4)
+        RET = EKI_SetReal("Xml_motion16","Robot/joint5",readj5)
+        RET = EKI_SetReal("Xml_motion16","Robot/joint6",readj6)
+        RET = EKI_SetReal("Xml_motion16","Robot/PX",readx)
+        RET = EKI_SetReal("Xml_motion16","Robot/PY",ready)
+        RET = EKI_SetReal("Xml_motion16","Robot/PZ",readz)
+        RET = EKI_SetReal("Xml_motion16","Robot/PA",reada)
+        RET = EKI_SetReal("Xml_motion16","Robot/PB",readb)
+        RET = EKI_SetReal("Xml_motion16","Robot/PC",readc)
+
+        ; Send 失败不要盲目继续刷，避免把通道打挂
+        IF RET.Msg_No == 0 THEN
+          RET = EKI_Send("Xml_motion16","Robot")
+        ENDIF
+
+        IsOpen = TRUE
+      ELSE
+        IsOpen = FALSE
+      ENDIF
+    ENDIF

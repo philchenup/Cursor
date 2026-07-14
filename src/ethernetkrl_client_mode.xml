@@ -8,7 +8,7 @@
 			<BUFFERING Mode="FIFO" Limit="512"/>
 			<BUFFSIZE Limit="16384"/>
 			<TIMEOUT Connect="60000"/>
-			<ALIVE Set_Flag="2" Ping="200"/>
+			<ALIVE Set_Flag="2"/>
 			<IP>192.168.0.1</IP>
 			<PORT>54600</PORT>
 			<PROTOCOL>TCP</PROTOCOL>
