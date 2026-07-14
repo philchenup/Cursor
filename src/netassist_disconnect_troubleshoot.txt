@@ -1,0 +1,44 @@
+; ============================================================
+; 网络调试助手：能连上但马上断开
+; 提示 "Server disconnected and a reconnection is scheduled..."
+; = 远端（机器人/EKI/Router）把 TCP 关掉了，助手在自动重连
+; ============================================================
+;
+; 最常见原因（按概率）：
+; 1) SPS 一连上就发数据，读了不存在的轴（如 $POS_ACT_MES.E1）→ Submit 报错
+;    → ENVIRONMENT=Submit 时连接被清掉 → 助手显示断开
+; 2) 助手连上后自动发了乱数据/心跳，EKI XML 解析失败导致断链
+; 3) Router 路由不稳 / 选错网卡 Interface Index
+; 4) 同时开了两个客户端（助手 + 上位机）抢同一端口
+;
+; ---------- 第一步：SPS 只监听、先不发送（验证纯 TCP）----------
+; USER PLC 暂时改成空，或：
+
+    IF EkiInited == TRUE THEN
+      ; 仅保持监听，不 Send，看助手能否保持连接
+      IF $FLAG[2] == TRUE THEN
+        IsOpen = TRUE
+      ELSE
+        IsOpen = FALSE
+      ENDIF
+    ENDIF
+
+; 若这样能保持连接 → 问题在发送逻辑（E1/发送过快/Send 失败）
+; 若仍断开 → 查 Router / 是否有第二个客户端 / 助手是否在乱发数据
+;
+; ---------- 第二步：恢复发送时注意 ----------
+; - 没有第七轴就不要读 $POS_ACT_MES.E1，改成 reade1 = 0.0
+; - 不要每个 SPS 周期都 Send，加节流（例如每 50ms）
+; - 网络调试助手：协议选 TCP，勾掉“连接后自动发送”，先只收不发
+;
+; ---------- 助手侧正确用法 ----------
+; 连接：Router监听IP + 54600（TCP Client）
+; 连接成功后应能收到类似：
+;   <Robot><PE1>...</PE1><joint1>...</joint1>...<PX>...</PX>...</Robot>
+; 若要发指令，必须发完整 Sensor XML，例如：
+; <Sensor><Status><IsOut>FALSE</IsOut></Status><StepMode>1</StepMode>
+; <SJ1>0</SJ1><SJ2>-90</SJ2><SJ3>90</SJ3><SJ4>0</SJ4><SJ5>0</SJ5><SJ6>0</SJ6><SE1>0</SE1></Sensor>
+;
+; ---------- 推荐 XML ALIVE（测试期可去掉 Ping）----------
+; <ALIVE Set_Flag="2"/>
+; ============================================================

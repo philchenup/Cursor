@@ -1,0 +1,102 @@
+&ACCESS RVP
+&REL 1
+&PARAM TEMPLATE = C:\KRC\Roboter\Template\vorgabe
+&PARAM EDITMASK = *
+DEF Xml_motion16( )
+  ; ============================================================
+  ; 与 sps.sub 配合使用的运行程序（机器人解释器）
+  ;
+  ; 分工：
+  ;   SPS  : EKI_Init / EKI_Open / 周期 EKI_Send(Robot状态)
+  ;   本程序: 只负责收 Sensor 指令并运动，禁止再 Init/Open
+  ;
+  ; 防报错要点：
+  ;   1) 不再调用 EKI_Init/EKI_Open（否则 Already initialized）
+  ;   2) 先等 $FLAG[2](ALIVE) 上位机已连接
+  ;   3) 再等 $FLAG[1](Sensor收到) 才 Get，避免空缓冲 Value invalid
+  ;   4) Get 后清 Flag，防止重复读同一帧
+  ; ============================================================
+
+  DECL EKI_STATUS RET
+  DECL INT StepMode
+  DECL BOOL IsOut
+  DECL REAL SE1, SJ1, SJ2, SJ3, SJ4, SJ5, SJ6
+  DECL AXIS XP_Joint
+  DECL POS XP_Cart
+
+  ; --- 基本初始化（按你现场 BAS 习惯可改）---
+  BAS(#INITMOV, 0)
+  $VEL.CP = 0.2
+  $ACC.CP = 0.5
+
+  ; 必须先有 SPS 已 Init+Open，且上位机已连上
+  WAIT FOR ($FLAG[2] == TRUE)
+
+  LOOP
+    ; 等一帧完整 Sensor（XML 中 <ELEMENT Tag="Sensor" Set_Flag="1"/>）
+    WAIT FOR ($FLAG[1] == TRUE)
+
+    ; 读指令（路径必须与 Xml_motion16.xml 的 RECEIVE 一致）
+    RET = EKI_GetBool("Xml_motion16", "Sensor/Status/IsOut", IsOut)
+    RET = EKI_GetInt ("Xml_motion16", "Sensor/StepMode", StepMode)
+    RET = EKI_GetReal("Xml_motion16", "Sensor/SE1", SE1)
+    RET = EKI_GetReal("Xml_motion16", "Sensor/SJ1", SJ1)
+    RET = EKI_GetReal("Xml_motion16", "Sensor/SJ2", SJ2)
+    RET = EKI_GetReal("Xml_motion16", "Sensor/SJ3", SJ3)
+    RET = EKI_GetReal("Xml_motion16", "Sensor/SJ4", SJ4)
+    RET = EKI_GetReal("Xml_motion16", "Sensor/SJ5", SJ5)
+    RET = EKI_GetReal("Xml_motion16", "Sensor/SJ6", SJ6)
+
+    ; 清接收标志，避免同一帧被反复处理
+    $FLAG[1] = FALSE
+
+    ; 上位机请求退出
+    IF IsOut == TRUE THEN
+      EXIT
+    ENDIF
+
+    ; StepMode:
+    ;   0 = 回零/复位（关节）
+    ;   1 = 关节步进（上位机 stepMove(1, ...)）
+    ;   2 = 笛卡尔步进（上位机 stepMove(2, ...)）
+    IF StepMode == 0 THEN
+      XP_Joint = {A1 0, A2 -90, A3 90, A4 0, A5 0, A6 0, E1 0}
+      XP_Joint.A1 = SJ1
+      XP_Joint.A2 = SJ2
+      XP_Joint.A3 = SJ3
+      XP_Joint.A4 = SJ4
+      XP_Joint.A5 = SJ5
+      XP_Joint.A6 = SJ6
+      XP_Joint.E1 = SE1
+      PTP XP_Joint
+
+    ELSE
+      IF StepMode == 1 THEN
+        XP_Joint = $AXIS_ACT
+        XP_Joint.A1 = SJ1
+        XP_Joint.A2 = SJ2
+        XP_Joint.A3 = SJ3
+        XP_Joint.A4 = SJ4
+        XP_Joint.A5 = SJ5
+        XP_Joint.A6 = SJ6
+        XP_Joint.E1 = SE1
+        PTP XP_Joint
+
+      ELSE
+        IF StepMode == 2 THEN
+          ; 上位机笛卡尔约定：SJ1..SJ6 = X,Y,Z,A,B,C（SE1 忽略）
+          XP_Cart = $POS_ACT
+          XP_Cart.X = SJ1
+          XP_Cart.Y = SJ2
+          XP_Cart.Z = SJ3
+          XP_Cart.A = SJ4
+          XP_Cart.B = SJ5
+          XP_Cart.C = SJ6
+          LIN XP_Cart
+        ENDIF
+      ENDIF
+    ENDIF
+
+  ENDLOOP
+
+END
