@@ -1,27 +1,28 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  对应上位机客户端模式（KukaCommunicator::start 主动 connectToHost）：
-  - EXTERNAL/TYPE = Client  → 外部系统(上位机)是客户端，机器人作 TCP Server 监听
-  - EXTERNAL/IP   = 上位机网卡 IP（机器人侧识别的外部系统地址）
-  - EXTERNAL/PORT = 机器人监听端口（与上位机 start(机器人IP, port) 的 port 一致）
-  - 上位机 UI 里填写的 IP 是「机器人控制器 IP」，不是这里的 EXTERNAL/IP
-  RECEIVE/SEND 报文结构不变，无需改动。
+  机器人作 Server（EXTERNAL/TYPE=Client）时的正确写法：
+  1) EXTERNAL 的 IP/PORT 会被忽略，不要只写在 EXTERNAL
+  2) 必须在 INTERNAL 写机器人监听 IP + PORT
+  3) INTERNAL/PORT 只能是 54600..54615（59152 会导致 EKI_Init 失败）
+  4) 文件放到：C:\KRC\ROBOTER\Config\User\Common\EthernetKRL\Xml_motion16.xml
+  5) 上位机 connectToHost(机器人IP, 54600)
 -->
 <ETHERNETKRL>
 	<CONFIGURATION>
 		<EXTERNAL>
-			<!-- 上位机 IP（示例）；按实际网卡修改 -->
-			<IP>192.168.0.1</IP>
-			<!-- 机器人监听端口；上位机 connectToHost(robotIp, 59152) -->
-			<PORT>59152</PORT>
-			<!-- 关键：外部系统为客户端（相对原 Server 模式的唯一关键改动） -->
+			<!-- 外部系统=客户端；此处 IP/PORT 在 TYPE=Client 时无效 -->
 			<TYPE>Client</TYPE>
 		</EXTERNAL>
 		<INTERNAL>
+			<ENVIRONMENT>Program</ENVIRONMENT>
 			<BUFFERING Mode="FIFO" Limit="512"/>
 			<BUFFSIZE Limit="16384"/>
 			<TIMEOUT Connect="60000"/>
-			<ALIVE Set_Out="666" Ping="200"/>
+			<ALIVE Set_Flag="1" Ping="200"/>
+			<!-- 机器人网卡 IP（KLI 等），按实际修改 -->
+			<IP>172.31.1.147</IP>
+			<!-- 必须在 54600..54615 -->
+			<PORT>54600</PORT>
 			<PROTOCOL>TCP</PROTOCOL>
 		</INTERNAL>
 	</CONFIGURATION>
