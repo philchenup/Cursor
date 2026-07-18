@@ -1,0 +1,6 @@
+build/
+cmake-build-*/
+matched_*.ply
+*.o
+*.a
+.DS_Store
