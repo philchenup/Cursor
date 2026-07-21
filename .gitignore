@@ -1,0 +1,11 @@
+build/
+edge_cloud.ply
+cloud_colored.ply
+*.pcd
+*.ply
+!models/**
+!data/**
+.vscode/
+.idea/
+*.o
+*.out
