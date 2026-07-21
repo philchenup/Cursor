@@ -1,0 +1,8 @@
+build/
+edge_cloud.pcd
+*.pcd
+!models/*.pcd
+.vscode/
+.idea/
+*.o
+*.out
