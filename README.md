@@ -1,17 +1,41 @@
-# 基于点云的边缘提取算法（C++ / PCL）
+# PCA / Sigma 点云边缘提取（PCL 1.12 + C++14）
 
-实现两种经典边缘提取算法：
+基于邻域协方差特征值曲率的边缘提取，修复原代码问题并适配 PCL 1.12。
 
-| 方法 | 适用场景 | 判据 |
-|------|----------|------|
-| `boundary` | 外轮廓、孔洞边界 | 切平面邻域方位角最大间隙 > 阈值 |
-| `curvature` | 棱边、尖锐几何特征 | PCA 曲率 σ = λ₀/(λ₀+λ₁+λ₂) ≥ 阈值 |
+## 算法
+
+对每个点取 K 近邻，构建协方差矩阵并特征值分解（λs ≤ λm ≤ λl）：
+
+```
+Sigma = λs / (λs + λm + λl)
+```
+
+`Sigma` 较大 → 局部弯曲/棱边显著 → 标为边缘（红色）。
+
+判定阈值：`MinSigma + N * (MaxSigma - MinSigma) / 256`（默认 N=6）。
+
+## 相对原代码的主要修正
+
+| 问题 | 修正 |
+|------|------|
+| 重复 `#include`、未使用变量 | 清理头文件与死代码 |
+| `new[]` 未 `delete` | 改用 `std::vector` |
+| 手工排序特征值 | 直接用 `SelfAdjointEigenSolver` 升序结果 |
+| `MinD` 初值设为点数 | 改为 `numeric_limits<double>::max()` |
+| 特征值除零风险 | 对特征值之和做保护 |
+| `CloudViewer` | 改为 PCL 1.12 常用的 `PCLVisualizer` |
+| 硬编码路径 | 支持命令行参数 |
+| 点类型 `PointXYZRGBA` | 改为 `PointXYZRGB`（着色足够且更通用） |
 
 ## 依赖
 
+- PCL **1.12**
+- Eigen3
+- CMake ≥ 3.10，C++14
+
 ```bash
-sudo apt update
-sudo apt install -y build-essential cmake libpcl-dev
+# Ubuntu 示例（版本因源而异，需确保为 1.12）
+sudo apt install build-essential cmake libpcl-dev libeigen3-dev
 ```
 
 ## 编译
@@ -25,43 +49,19 @@ make -j$(nproc)
 ## 运行
 
 ```bash
-./extract_edge_cloud <input.pcd|ply> [method] [k] [threshold] [voxel] [threads]
+./extract_edge_cloud <input.ply|pcd> [K邻域] [sigma倍数]
 ```
-
-| 参数 | 说明 | 默认 |
-|------|------|------|
-| method | `boundary` 或 `curvature` | `boundary` |
-| k | 邻域点数 | `30` |
-| threshold | boundary=角度(度)；curvature=曲率 | `90` / `0.1` |
-| voxel | 体素边长，`>0` 先降采样 | `0` |
-| threads | OpenMP 线程数 | 硬件并发 |
 
 ```bash
-# 轮廓/孔洞边界
-./extract_edge_cloud ../models/cloud.pcd boundary 30 90 0.005 8
-
-# 棱边/尖锐特征
-./extract_edge_cloud ../models/cloud.pcd curvature 30 0.1 0.005 8
+./extract_edge_cloud ../data/Edge.ply 10 6
 ```
 
-输出：`edge_cloud.pcd`（红=边缘，灰=原云）
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| K邻域 | 10 | 协方差邻域点数 |
+| sigma倍数 | 6 | 阈值 = Min + 倍数×step；越大边缘越少 |
 
-## 算法说明
+输出：
 
-### 1. Boundary（切平面角度空隙）
-
-1. 估计点法向量 **n**
-2. 将 k 近邻投影到切平面，计算方位角并排序
-3. 最大相邻角间隙 Δθ_max > 阈值 ⇒ 边界点
-
-### 2. Curvature（PCA 曲率）
-
-1. 对 k 近邻构建协方差矩阵并特征值分解
-2. σ = λ₀ / (λ₀+λ₁+λ₂)
-3. σ ≥ 阈值 ⇒ 边缘点（高曲率/棱边）
-
-## 加速
-
-- VoxelGrid 降采样减小 N
-- `NormalEstimationOMP` 并行法向量
-- 复用同一棵 KdTree
+- `edge_cloud.ply` — 仅边缘点
+- `cloud_colored.ply` — 全图着色（khaki / 红）
