@@ -151,13 +151,8 @@ int main(int argc, char* argv[]) {
     }
 
     const double smallest = static_cast<double>(evals[0]);
-    const double middle = static_cast<double>(evals[1]);
-    const double largest = static_cast<double>(evals[2]);
-    const double sum = smallest + middle + largest;
-
-    // 原代码还计算了 DLS/DLM/DMS，边缘判定实际只用 Sigma
-    (void)middle;
-    (void)largest;
+    const double sum = static_cast<double>(evals[0] + evals[1] + evals[2]);
+    // Sigma = λs / (λs+λm+λl)；原代码中的 DLS/DLM/DMS 未参与边缘判定，已省略
     sigma[i] = (sum > 1e-12) ? (smallest / sum) : 0.0;
   }
 
