@@ -1,12 +1,13 @@
-# PCL 边缘点云提取
+# 基于点云的边缘提取算法（C++ / PCL）
 
-使用 Point Cloud Library 读取点云，估计法向量，并通过边界估计提取边缘点云。
+实现两种经典边缘提取算法：
+
+| 方法 | 适用场景 | 判据 |
+|------|----------|------|
+| `boundary` | 外轮廓、孔洞边界 | 切平面邻域方位角最大间隙 > 阈值 |
+| `curvature` | 棱边、尖锐几何特征 | PCA 曲率 σ = λ₀/(λ₀+λ₁+λ₂) ≥ 阈值 |
 
 ## 依赖
-
-- PCL >= 1.8（`common`、`io`、`features`、`search`、`visualization`）
-- CMake >= 3.10
-- C++14
 
 ```bash
 sudo apt update
@@ -24,47 +25,43 @@ make -j$(nproc)
 ## 运行
 
 ```bash
-./extract_edge_cloud <input.pcd|ply> [k邻域] [角度阈值(度)] [体素边长] [线程数]
+./extract_edge_cloud <input.pcd|ply> [method] [k] [threshold] [voxel] [threads]
 ```
 
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| 输入文件 | `.pcd` 或 `.ply` 点云 | 必填 |
-| k邻域 | 法向量与边界估计的邻域点数 | `30` |
-| 角度阈值 | 判定边界的空隙角度（度），越小越敏感 | `90` |
-| 体素边长 | `>0` 时先 VoxelGrid 降采样 | `0`（不降采样） |
-| 线程数 | OpenMP 并行线程数 | 硬件并发数 |
-
-示例（推荐加速参数）：
+| 参数 | 说明 | 默认 |
+|------|------|------|
+| method | `boundary` 或 `curvature` | `boundary` |
+| k | 邻域点数 | `30` |
+| threshold | boundary=角度(度)；curvature=曲率 | `90` / `0.1` |
+| voxel | 体素边长，`>0` 先降采样 | `0` |
+| threads | OpenMP 线程数 | 硬件并发 |
 
 ```bash
-# 稠密点云：先降采样 + 多线程
-./extract_edge_cloud ../models/cloud.pcd 20 90 0.005 8
+# 轮廓/孔洞边界
+./extract_edge_cloud ../models/cloud.pcd boundary 30 90 0.005 8
+
+# 棱边/尖锐特征
+./extract_edge_cloud ../models/cloud.pcd curvature 30 0.1 0.005 8
 ```
 
-程序会：
+输出：`edge_cloud.pcd`（红=边缘，灰=原云）
 
-1. 读取点云
-2. （可选）VoxelGrid 降采样
-3. 用 `NormalEstimationOMP` 并行估计法向量
-4. 用多线程 `BoundaryEstimation` 检测边缘点
-5. 保存边缘点云为 `edge_cloud.pcd`，并打印各阶段耗时
-6. 可视化：灰色=工作点云，红色=边缘点云
+## 算法说明
 
-## 加速策略
+### 1. Boundary（切平面角度空隙）
 
-复杂度近似 `O(N · k · log N)`，优先减小 `N`，再并行化：
+1. 估计点法向量 **n**
+2. 将 k 近邻投影到切平面，计算方位角并排序
+3. 最大相邻角间隙 Δθ_max > 阈值 ⇒ 边界点
 
-| 优先级 | 手段 | 说明 |
-|--------|------|------|
-| 1 | VoxelGrid 降采样 | 点数降到 1/5～1/20，通常收益最大 |
-| 2 | `NormalEstimationOMP` + `setNumberOfThreads` | 法向量/边界估计吃满多核 |
-| 3 | 复用同一棵 KdTree | 避免法向量与边界估计各建一次树 |
-| 4 | 适当减小 k | 邻域查询更便宜，边缘略变锐利 |
-| 5 | 有序点云改用 Organized 接口 | 深度相机数据可换 `OrganizedEdgeFromNormals`，无需 KdTree |
+### 2. Curvature（PCA 曲率）
 
-调参建议：
+1. 对 k 近邻构建协方差矩阵并特征值分解
+2. σ = λ₀ / (λ₀+λ₁+λ₂)
+3. σ ≥ 阈值 ⇒ 边缘点（高曲率/棱边）
 
-- 边缘过少：减小角度阈值（如 `60`），或增大 k
-- 边缘过多/噪声：增大角度阈值（如 `120`），或增大体素边长
-- 仍慢：先确认 PCL 是否以 OpenMP 编译（`NormalEstimationOMP` 才真正并行）
+## 加速
+
+- VoxelGrid 降采样减小 N
+- `NormalEstimationOMP` 并行法向量
+- 复用同一棵 KdTree

@@ -1,36 +1,37 @@
 /**
  * @file extract_edge_cloud.cpp
- * @brief 使用 PCL 读取点云并提取边缘点云（含加速策略）
+ * @brief 基于点云的边缘提取算法（C++ / PCL）
  *
- * 流程：
- *   1. 读取点云（PCD / PLY）
- *   2. [加速] VoxelGrid 降采样，减小 N
- *   3. [加速] OpenMP 并行法向量估计
- *   4. [加速] 多线程边界估计
- *   5. 提取边缘点云并可视化、保存
+ * 实现两种常用算法：
+ *   1) boundary  —— 切平面角度空隙边界提取（外轮廓 / 孔洞边界）
+ *   2) curvature —— PCA 曲率阈值提取（棱边 / 尖锐特征）
  *
  * 用法：
- *   ./extract_edge_cloud <input.pcd|ply> [k邻域] [角度阈值(度)] [体素边长] [线程数]
+ *   ./extract_edge_cloud <input.pcd|ply> [method] [k] [threshold] [voxel] [threads]
  *
- *   默认：k=30，角度=90°，体素=0（不降采样），线程=硬件并发数
+ *   method:    boundary | curvature          默认 boundary
+ *   k:         邻域点数                      默认 30
+ *   threshold: boundary=角度阈值(度,默认90)
+ *              curvature=曲率阈值(默认0.1)
+ *   voxel:     体素边长，>0 则先降采样        默认 0
+ *   threads:   OpenMP 线程数                 默认硬件并发
  *
- * 加速要点（按收益排序）：
- *   A. 先 VoxelGrid 降采样 —— 复杂度近似 O(N·k·logN)，N 下降最有效
- *   B. NormalEstimationOMP / Feature 多线程 —— 吃满多核
- *   C. 复用同一棵 KdTree，避免重复建树
- *   D. 适当减小 k —— 邻域查询更便宜
- *   E. 有序点云（深度图）可改用 OrganizedEdge*，比 KdTree 快一个量级
+ * 示例：
+ *   ./extract_edge_cloud cloud.pcd boundary 30 90 0.005 8
+ *   ./extract_edge_cloud cloud.pcd curvature 30 0.1 0.005 8
  */
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <numeric>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <pcl/common/common.h>
-#include <pcl/features/boundary.h>
 #include <pcl/features/normal_3d_omp.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/io/pcd_io.h>
@@ -42,114 +43,236 @@
 
 namespace {
 
+using CloudT = pcl::PointCloud<pcl::PointXYZ>;
+using NormalCloudT = pcl::PointCloud<pcl::Normal>;
 using Clock = std::chrono::steady_clock;
 
 double msSince(const Clock::time_point& t0) {
   return std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
 }
 
-bool loadCloud(const std::string& path,
-               pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud) {
-  const auto ext_pos = path.find_last_of('.');
-  if (ext_pos == std::string::npos) {
+// ---------------------------------------------------------------------------
+// I/O & 预处理
+// ---------------------------------------------------------------------------
+
+bool loadCloud(const std::string& path, CloudT::Ptr& cloud) {
+  const auto pos = path.find_last_of('.');
+  if (pos == std::string::npos) {
     std::cerr << "错误：无法识别文件格式: " << path << std::endl;
     return false;
   }
-  const std::string ext = path.substr(ext_pos);
-
+  const std::string ext = path.substr(pos);
   int ret = -1;
   if (ext == ".pcd" || ext == ".PCD") {
     ret = pcl::io::loadPCDFile<pcl::PointXYZ>(path, *cloud);
   } else if (ext == ".ply" || ext == ".PLY") {
     ret = pcl::io::loadPLYFile<pcl::PointXYZ>(path, *cloud);
   } else {
-    std::cerr << "错误：仅支持 .pcd / .ply，当前: " << ext << std::endl;
+    std::cerr << "错误：仅支持 .pcd / .ply" << std::endl;
     return false;
   }
-
   if (ret < 0 || cloud->empty()) {
-    std::cerr << "错误：读取点云失败或点云为空: " << path << std::endl;
+    std::cerr << "错误：读取失败或点云为空" << std::endl;
     return false;
   }
   return true;
 }
 
-/** 加速 A：体素降采样，优先砍掉点数 N */
-pcl::PointCloud<pcl::PointXYZ>::Ptr downsampleVoxel(
-    const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud,
-    float leaf) {
+CloudT::Ptr downsampleVoxel(const CloudT::Ptr& cloud, float leaf) {
   if (leaf <= 0.0f) {
     return cloud;
   }
-  pcl::PointCloud<pcl::PointXYZ>::Ptr filtered(
-      new pcl::PointCloud<pcl::PointXYZ>);
+  CloudT::Ptr out(new CloudT);
   pcl::VoxelGrid<pcl::PointXYZ> vg;
   vg.setInputCloud(cloud);
   vg.setLeafSize(leaf, leaf, leaf);
-  vg.filter(*filtered);
-  return filtered;
+  vg.filter(*out);
+  return out;
 }
 
-/**
- * 加速 B：OpenMP 并行法向量估计。
- * 加速 C：外部传入并复用 KdTree，避免重复建树。
- */
-pcl::PointCloud<pcl::Normal>::Ptr estimateNormalsOMP(
-    const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud,
-    const pcl::search::KdTree<pcl::PointXYZ>::Ptr& tree,
-    int k_neighbors,
-    unsigned int num_threads) {
-  pcl::PointCloud<pcl::Normal>::Ptr normals(new pcl::PointCloud<pcl::Normal>);
+NormalCloudT::Ptr estimateNormals(const CloudT::Ptr& cloud,
+                                  const pcl::search::KdTree<pcl::PointXYZ>::Ptr& tree,
+                                  int k,
+                                  unsigned int threads) {
+  NormalCloudT::Ptr normals(new NormalCloudT);
   pcl::NormalEstimationOMP<pcl::PointXYZ, pcl::Normal> ne;
-  ne.setNumberOfThreads(num_threads);
+  ne.setNumberOfThreads(threads);
   ne.setInputCloud(cloud);
   ne.setSearchMethod(tree);
-  ne.setKSearch(k_neighbors);
+  ne.setKSearch(k);
   ne.compute(*normals);
   return normals;
 }
 
-/**
- * 边界估计：Feature 基类在 PCL 编译启用 OpenMP 时支持 setNumberOfThreads。
- * 与法向量共用同一棵 KdTree。
- */
-pcl::PointCloud<pcl::PointXYZ>::Ptr extractBoundaryCloud(
-    const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud,
-    const pcl::PointCloud<pcl::Normal>::Ptr& normals,
-    const pcl::search::KdTree<pcl::PointXYZ>::Ptr& tree,
-    int k_neighbors,
-    float angle_threshold_rad,
-    unsigned int num_threads) {
-  pcl::PointCloud<pcl::Boundary> boundaries;
-  pcl::BoundaryEstimation<pcl::PointXYZ, pcl::Normal, pcl::Boundary> be;
-  be.setNumberOfThreads(num_threads);
-  be.setInputCloud(cloud);
-  be.setInputNormals(normals);
-  be.setSearchMethod(tree);
-  be.setKSearch(k_neighbors);
-  be.setAngleThreshold(angle_threshold_rad);
-  be.compute(boundaries);
+// ---------------------------------------------------------------------------
+// 算法 1：Boundary Edge（切平面角度空隙）
+//
+// 对每个查询点 p：
+//   1. 取 k 近邻，用法向量 n 将邻域投影到切平面
+//   2. 计算投影向量相对某参考方向的方位角，排序
+//   3. 找相邻方位角的最大间隙 Δθ_max
+//   4. 若 Δθ_max > 阈值，则 p 为边界点（外轮廓或孔洞边缘）
+// ---------------------------------------------------------------------------
 
-  pcl::PointCloud<pcl::PointXYZ>::Ptr edge_cloud(
-      new pcl::PointCloud<pcl::PointXYZ>);
-  edge_cloud->reserve(cloud->size() / 10);
+CloudT::Ptr extractBoundaryEdges(
+    const CloudT::Ptr& cloud,
+    const NormalCloudT::Ptr& normals,
+    const pcl::search::KdTree<pcl::PointXYZ>::Ptr& tree,
+    int k,
+    float angle_threshold_rad,
+    unsigned int /*threads*/) {
+  CloudT::Ptr edges(new CloudT);
+  edges->reserve(cloud->size() / 10);
+
+  std::vector<int> nn_idx(static_cast<std::size_t>(k));
+  std::vector<float> nn_dist(static_cast<std::size_t>(k));
+  std::vector<float> angles;
+  angles.reserve(static_cast<std::size_t>(k));
 
   for (std::size_t i = 0; i < cloud->size(); ++i) {
-    if (boundaries.points[i].boundary_point != 0) {
-      edge_cloud->push_back(cloud->points[i]);
+    const auto& p = cloud->points[i];
+    const auto& nrm = normals->points[i];
+    if (!pcl::isFinite(p) || !std::isfinite(nrm.normal_x)) {
+      continue;
+    }
+
+    Eigen::Vector3f n(nrm.normal_x, nrm.normal_y, nrm.normal_z);
+    const float nlen = n.norm();
+    if (nlen < 1e-8f) {
+      continue;
+    }
+    n /= nlen;
+
+    if (tree->nearestKSearch(p, k, nn_idx, nn_dist) < 3) {
+      continue;
+    }
+
+    // 切平面正交基 u, v
+    Eigen::Vector3f u = n.unitOrthogonal();
+    Eigen::Vector3f v = n.cross(u);
+
+    angles.clear();
+    for (int j = 0; j < static_cast<int>(nn_idx.size()); ++j) {
+      if (static_cast<std::size_t>(nn_idx[j]) == i) {
+        continue;
+      }
+      const auto& q = cloud->points[nn_idx[j]];
+      Eigen::Vector3f d(q.x - p.x, q.y - p.y, q.z - p.z);
+      // 投影到切平面
+      const float x = d.dot(u);
+      const float y = d.dot(v);
+      if (x * x + y * y < 1e-12f) {
+        continue;
+      }
+      angles.push_back(std::atan2(y, x));
+    }
+
+    if (angles.size() < 2) {
+      continue;
+    }
+
+    std::sort(angles.begin(), angles.end());
+
+    float max_gap = 0.0f;
+    for (std::size_t a = 1; a < angles.size(); ++a) {
+      max_gap = std::max(max_gap, angles[a] - angles[a - 1]);
+    }
+    // 首尾跨越 ±π
+    const float wrap_gap =
+        (angles.front() + static_cast<float>(2.0 * M_PI)) - angles.back();
+    max_gap = std::max(max_gap, wrap_gap);
+
+    if (max_gap > angle_threshold_rad) {
+      edges->push_back(p);
     }
   }
 
-  edge_cloud->width = static_cast<uint32_t>(edge_cloud->size());
-  edge_cloud->height = 1;
-  edge_cloud->is_dense = true;
-  return edge_cloud;
+  edges->width = static_cast<uint32_t>(edges->size());
+  edges->height = 1;
+  edges->is_dense = true;
+  return edges;
 }
 
-void visualize(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud,
-               const pcl::PointCloud<pcl::PointXYZ>::Ptr& edge_cloud) {
+// ---------------------------------------------------------------------------
+// 算法 2：Curvature Edge（PCA 表面曲率）
+//
+// 对每个点取 k 邻域做 PCA：
+//   协方差矩阵特征值 λ0 ≤ λ1 ≤ λ2
+//   曲率 σ = λ0 / (λ0+λ1+λ2)
+//   σ 大 → 局部弯曲/棱边显著 → 判为边缘点
+// ---------------------------------------------------------------------------
+
+CloudT::Ptr extractCurvatureEdges(
+    const CloudT::Ptr& cloud,
+    const pcl::search::KdTree<pcl::PointXYZ>::Ptr& tree,
+    int k,
+    float curvature_threshold,
+    unsigned int /*threads*/) {
+  CloudT::Ptr edges(new CloudT);
+  edges->reserve(cloud->size() / 10);
+
+  std::vector<int> nn_idx(static_cast<std::size_t>(k));
+  std::vector<float> nn_dist(static_cast<std::size_t>(k));
+
+  for (std::size_t i = 0; i < cloud->size(); ++i) {
+    const auto& p = cloud->points[i];
+    if (!pcl::isFinite(p)) {
+      continue;
+    }
+    if (tree->nearestKSearch(p, k, nn_idx, nn_dist) < 3) {
+      continue;
+    }
+
+    // 邻域质心
+    Eigen::Vector3f centroid(0.f, 0.f, 0.f);
+    const int n_nn = static_cast<int>(nn_idx.size());
+    for (int j = 0; j < n_nn; ++j) {
+      const auto& q = cloud->points[nn_idx[j]];
+      centroid += Eigen::Vector3f(q.x, q.y, q.z);
+    }
+    centroid /= static_cast<float>(n_nn);
+
+    // 协方差
+    Eigen::Matrix3f cov = Eigen::Matrix3f::Zero();
+    for (int j = 0; j < n_nn; ++j) {
+      const auto& q = cloud->points[nn_idx[j]];
+      Eigen::Vector3f d(q.x - centroid.x(), q.y - centroid.y(),
+                        q.z - centroid.z());
+      cov += d * d.transpose();
+    }
+    cov /= static_cast<float>(n_nn);
+
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3f> solver(cov);
+    if (solver.info() != Eigen::Success) {
+      continue;
+    }
+    // SelfAdjointEigenSolver：特征值升序 λ0 ≤ λ1 ≤ λ2
+    const Eigen::Vector3f evals = solver.eigenvalues();
+    const float sum = evals.sum();
+    if (sum < 1e-12f) {
+      continue;
+    }
+    const float curvature = evals[0] / sum;
+
+    if (curvature >= curvature_threshold) {
+      edges->push_back(p);
+    }
+  }
+
+  edges->width = static_cast<uint32_t>(edges->size());
+  edges->height = 1;
+  edges->is_dense = true;
+  return edges;
+}
+
+// ---------------------------------------------------------------------------
+// 可视化
+// ---------------------------------------------------------------------------
+
+void visualize(const CloudT::Ptr& cloud, const CloudT::Ptr& edges,
+               const std::string& title) {
   pcl::visualization::PCLVisualizer::Ptr viewer(
-      new pcl::visualization::PCLVisualizer("Edge Point Cloud"));
+      new pcl::visualization::PCLVisualizer(title));
   viewer->setBackgroundColor(0.0, 0.0, 0.0);
 
   pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> gray(
@@ -159,115 +282,128 @@ void visualize(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud,
       pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 1, "cloud");
 
   pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> red(
-      edge_cloud, 255, 40, 40);
-  viewer->addPointCloud<pcl::PointXYZ>(edge_cloud, red, "edge");
+      edges, 255, 40, 40);
+  viewer->addPointCloud<pcl::PointXYZ>(edges, red, "edges");
   viewer->setPointCloudRenderingProperties(
-      pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 4, "edge");
+      pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 4, "edges");
 
-  pcl::PointXYZ min_pt, max_pt;
-  pcl::getMinMax3D(*cloud, min_pt, max_pt);
-  const float diag = std::sqrt(std::pow(max_pt.x - min_pt.x, 2) +
-                               std::pow(max_pt.y - min_pt.y, 2) +
-                               std::pow(max_pt.z - min_pt.z, 2));
+  pcl::PointXYZ mn, mx;
+  pcl::getMinMax3D(*cloud, mn, mx);
+  const float diag = (mx.getVector3fMap() - mn.getVector3fMap()).norm();
   viewer->addCoordinateSystem(std::max(diag * 0.15f, 0.01f));
   viewer->initCameraParameters();
   viewer->resetCamera();
 
-  std::cout << "可视化：灰=工作点云，红=边缘点云。关闭窗口或按 q 退出。"
-            << std::endl;
+  std::cout << "灰=点云，红=边缘。关闭窗口或按 q 退出。" << std::endl;
   while (!viewer->wasStopped()) {
     viewer->spinOnce(100);
   }
+}
+
+void printUsage(const char* prog) {
+  std::cerr
+      << "用法: " << prog
+      << " <input.pcd|ply> [method] [k] [threshold] [voxel] [threads]\n"
+      << "  method: boundary | curvature\n"
+      << "  boundary  threshold = 角度阈值(度), 默认 90\n"
+      << "  curvature threshold = 曲率阈值,     默认 0.1\n"
+      << "示例:\n"
+      << "  " << prog << " cloud.pcd boundary 30 90 0.005 8\n"
+      << "  " << prog << " cloud.pcd curvature 30 0.1 0.005 8\n";
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
   if (argc < 2) {
-    std::cerr
-        << "用法: " << argv[0]
-        << " <input.pcd|ply> [k邻域] [角度阈值(度)] [体素边长] [线程数]\n"
-        << "示例: " << argv[0] << " cloud.pcd 20 90 0.005 8\n"
-        << "  体素边长>0 时先降采样；线程数默认=硬件并发。\n";
+    printUsage(argv[0]);
     return 1;
   }
 
   const std::string input_path = argv[1];
-  const int k_neighbors = (argc >= 3) ? std::atoi(argv[2]) : 30;
-  const float angle_deg = (argc >= 4) ? static_cast<float>(std::atof(argv[3]))
-                                      : 90.0f;
-  const float voxel_leaf = (argc >= 5) ? static_cast<float>(std::atof(argv[4]))
-                                       : 0.0f;
+  const std::string method = (argc >= 3) ? argv[2] : "boundary";
+  const int k = (argc >= 4) ? std::atoi(argv[3]) : 30;
+  const float threshold = (argc >= 5)
+                              ? static_cast<float>(std::atof(argv[4]))
+                              : ((method == "curvature") ? 0.1f : 90.0f);
+  const float voxel = (argc >= 6) ? static_cast<float>(std::atof(argv[5])) : 0.0f;
   const unsigned int hw = std::max(1u, std::thread::hardware_concurrency());
-  const unsigned int num_threads =
-      (argc >= 6) ? static_cast<unsigned int>(std::atoi(argv[5])) : hw;
-  const float angle_rad = angle_deg * static_cast<float>(M_PI) / 180.0f;
+  const unsigned int threads =
+      (argc >= 7) ? static_cast<unsigned int>(std::atoi(argv[6])) : hw;
 
-  if (k_neighbors < 3) {
-    std::cerr << "错误：k 邻域至少为 3。" << std::endl;
+  if (k < 3) {
+    std::cerr << "错误：k 至少为 3" << std::endl;
+    return 1;
+  }
+  if (method != "boundary" && method != "curvature") {
+    std::cerr << "错误：method 应为 boundary 或 curvature" << std::endl;
+    printUsage(argv[0]);
     return 1;
   }
 
   const auto t_all = Clock::now();
 
-  // ---------- 1. 读取 ----------
-  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
-  std::cout << "读取点云: " << input_path << " ..." << std::endl;
+  // 1. 读取
+  CloudT::Ptr cloud(new CloudT);
+  std::cout << "[1] 读取: " << input_path << std::endl;
   auto t0 = Clock::now();
   if (!loadCloud(input_path, cloud)) {
     return -1;
   }
-  std::cout << "  原始点数: " << cloud->size()
-            << "  (" << msSince(t0) << " ms)" << std::endl;
+  std::cout << "    点数=" << cloud->size() << " (" << msSince(t0) << " ms)\n";
 
-  // ---------- 2. 降采样（加速 A）----------
+  // 2. 降采样
   t0 = Clock::now();
-  auto work_cloud = downsampleVoxel(cloud, voxel_leaf);
-  if (voxel_leaf > 0.0f) {
-    std::cout << "VoxelGrid leaf=" << voxel_leaf
-              << " → 工作点数: " << work_cloud->size()
-              << "  (" << msSince(t0) << " ms)" << std::endl;
+  auto work = downsampleVoxel(cloud, voxel);
+  if (voxel > 0.0f) {
+    std::cout << "[2] VoxelGrid leaf=" << voxel
+              << " → " << work->size() << " (" << msSince(t0) << " ms)\n";
   } else {
-    std::cout << "未降采样（体素边长=0）" << std::endl;
+    std::cout << "[2] 跳过降采样\n";
   }
 
-  // ---------- 3. 建树一次并复用（加速 C）----------
+  // 3. KdTree
   t0 = Clock::now();
   pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(
       new pcl::search::KdTree<pcl::PointXYZ>);
-  tree->setInputCloud(work_cloud);
-  std::cout << "KdTree 构建: " << msSince(t0) << " ms" << std::endl;
+  tree->setInputCloud(work);
+  std::cout << "[3] KdTree (" << msSince(t0) << " ms)\n";
 
-  // ---------- 4. 并行法向量（加速 B）----------
-  std::cout << "估计法向量 (k=" << k_neighbors << ", threads=" << num_threads
-            << ") ..." << std::endl;
-  t0 = Clock::now();
-  auto normals =
-      estimateNormalsOMP(work_cloud, tree, k_neighbors, num_threads);
-  std::cout << "  法向量: " << msSince(t0) << " ms" << std::endl;
+  CloudT::Ptr edges;
 
-  // ---------- 5. 并行边界估计 ----------
-  std::cout << "提取边缘点 (角度=" << angle_deg << "°) ..." << std::endl;
-  t0 = Clock::now();
-  auto edge_cloud = extractBoundaryCloud(
-      work_cloud, normals, tree, k_neighbors, angle_rad, num_threads);
-  std::cout << "  边缘点数: " << edge_cloud->size() << " / "
-            << work_cloud->size() << "  (" << msSince(t0) << " ms)"
-            << std::endl;
+  if (method == "boundary") {
+    // 4a. 法向量 + 边界算法
+    const float angle_rad = threshold * static_cast<float>(M_PI) / 180.0f;
+    std::cout << "[4] 法向量估计 (OMP, k=" << k << ", threads=" << threads
+              << ")\n";
+    t0 = Clock::now();
+    auto normals = estimateNormals(work, tree, k, threads);
+    std::cout << "    (" << msSince(t0) << " ms)\n";
 
-  if (edge_cloud->empty()) {
-    std::cerr << "警告：未检测到边缘点。可尝试减小角度阈值或调整 k / 体素。"
-              << std::endl;
+    std::cout << "[5] Boundary 边缘提取 (角度>" << threshold << "°)\n";
+    t0 = Clock::now();
+    edges = extractBoundaryEdges(work, normals, tree, k, angle_rad, threads);
+    std::cout << "    边缘点数=" << edges->size() << " (" << msSince(t0)
+              << " ms)\n";
+  } else {
+    // 4b. 曲率算法（内部做 PCA，无需单独法向量）
+    std::cout << "[4] Curvature 边缘提取 (σ>=" << threshold << ", k=" << k
+              << ")\n";
+    t0 = Clock::now();
+    edges = extractCurvatureEdges(work, tree, k, threshold, threads);
+    std::cout << "    边缘点数=" << edges->size() << " (" << msSince(t0)
+              << " ms)\n";
   }
 
-  std::cout << "总耗时(不含可视化): " << msSince(t_all) << " ms" << std::endl;
+  if (edges->empty()) {
+    std::cerr << "警告：未检测到边缘点，请调整 threshold / k / voxel\n";
+  }
 
-  // ---------- 6. 保存 ----------
-  const std::string out_path = "edge_cloud.pcd";
-  pcl::io::savePCDFileBinary(out_path, *edge_cloud);
-  std::cout << "边缘点云已保存: " << out_path << std::endl;
+  std::cout << "总耗时(不含可视化): " << msSince(t_all) << " ms\n";
 
-  // ---------- 7. 可视化 ----------
-  visualize(work_cloud, edge_cloud);
+  pcl::io::savePCDFileBinary("edge_cloud.pcd", *edges);
+  std::cout << "已保存: edge_cloud.pcd\n";
+
+  visualize(work, edges, "Edge Extraction [" + method + "]");
   return 0;
 }
