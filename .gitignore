@@ -1,0 +1,7 @@
+build/
+output_cloud.pcd
+*.pcd
+.vscode/
+.idea/
+*.o
+*.out
