@@ -1,7 +1,5 @@
-// Example: build a weld local frame from a user-selected edge.
-// Requires OpenCASCADE 7.4 or newer.
-//
-// Link against: TKernel TKMath TKBRep TKG3d TKG2d TKGeomBase TKTopAlgo ...
+// Example: discretize a weld edge into DiscretePoint samples (10 mm step).
+// Requires OpenCASCADE 7.4+.
 
 #include "WeldCoordinateSystem.hxx"
 
@@ -12,32 +10,29 @@
 
 int main()
 {
-  // Demo solid — replace with the shape that owns the selected edge.
   const TopoDS_Shape selectShape = BRepPrimAPI_MakeBox(100.0, 50.0, 30.0).Shape();
 
-  // Demo: pick the first edge; in an application this comes from selection.
   TopoDS_Edge edge;
   for (TopExp_Explorer exp(selectShape, TopAbs_EDGE); exp.More(); exp.Next()) {
     edge = TopoDS::Edge(exp.Current());
     break;
   }
 
-  gp_Ax3 weldAxis;
-  if (!ComputeWeldCoordinateSystem(selectShape, edge, weldAxis)) {
-    std::cerr << "Failed to compute weld coordinate system "
-                 "(edge must be shared by exactly two faces).\n";
+  std::vector<DiscretePoint> trajectory;
+  if (!DiscretizeWeldTrajectory(selectShape, edge, trajectory, 10.0)) {
+    std::cerr << "Failed to build weld trajectory.\n";
     return 1;
   }
 
-  const gp_Pnt o = weldAxis.Location();
-  const gp_Dir x = weldAxis.XDirection();
-  const gp_Dir y = weldAxis.YDirection();
-  const gp_Dir z = weldAxis.Direction(); // main axis = Z
-
-  std::cout << "Weld CS origin : " << o.X() << ", " << o.Y() << ", " << o.Z() << '\n'
-            << "X (right-hand) : " << x.X() << ", " << x.Y() << ", " << x.Z() << '\n'
-            << "Y (edge)       : " << y.X() << ", " << y.Y() << ", " << y.Z() << '\n'
-            << "Z (bisector)   : " << z.X() << ", " << z.Y() << ", " << z.Z() << '\n';
-
+  std::cout << "trajectory size: " << trajectory.size() << '\n';
+  for (std::size_t i = 0; i < trajectory.size(); ++i) {
+    const DiscretePoint& s = trajectory[i];
+    std::cout << "[" << i << "] p=("
+              << s.position.X() << ", " << s.position.Y() << ", " << s.position.Z()
+              << ") x=(" << s.xDir.X() << ", " << s.xDir.Y() << ", " << s.xDir.Z()
+              << ") y=(" << s.yDir.X() << ", " << s.yDir.Y() << ", " << s.yDir.Z()
+              << ") z=(" << s.zDir.X() << ", " << s.zDir.Y() << ", " << s.zDir.Z()
+              << ")\n";
+  }
   return 0;
 }

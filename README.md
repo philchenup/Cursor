@@ -1,28 +1,32 @@
 # Weld Coordinate System (OpenCASCADE)
 
-Compute a right-handed local frame for a weld seam from a selected edge.
+Compute a weld local frame and a discretized seam trajectory from a selected edge.
 
-## API
+## Trajectory API
 
 ```cpp
 #include "WeldCoordinateSystem.hxx"
 
-Standard_Boolean ComputeWeldCoordinateSystem(
-    const TopoDS_Shape& selectShape,  // owner solid / shell
-    const TopoDS_Edge&   edge,         // selected weld edge (+Y)
-    gp_Ax3&             weldAxis);    // output frame
+struct DiscretePoint {
+  gp_Pnt position; // point on edge
+  gp_Dir xDir;     // tangent / travel
+  gp_Dir yDir;     // zDir × xDir
+  gp_Dir zDir;     // 45° down vs world XOY, ⊥ xDir
+};
+
+std::vector<DiscretePoint> trajectory;
+DiscretizeWeldTrajectory(selectShape, edge, trajectory, /*spacingMm=*/10.0);
 ```
 
-## Axis convention
+### Frame at each sample
 
 | Axis | Definition |
 |------|------------|
-| **Origin** | Mid-point of the edge |
-| **Y** | Edge tangent in the edge's topological orientation |
-| **Z** | Unit bisector of the two adjacent face normals (open / exterior dihedral side), projected orthogonal to Y |
-| **X** | Right-hand rule: `X = Y × Z` |
+| **X** | Edge tangent (edge orientation) |
+| **Z** | Perpendicular to X; angle with world **XOY** plane = 45°, pointing down. If two solutions exist, pick the one closer to the adjacent-face normal bisector |
+| **Y** | `Z × X` (right-handed: `X × Y = Z`) |
 
-Requires the edge to be shared by **exactly two faces**. OpenCASCADE **7.4+**.
+Samples are spaced by **10 mm** arc length along the edge (endpoints always included). The edge must be shared by exactly two faces. OpenCASCADE **7.4+**.
 
 ## Build
 
