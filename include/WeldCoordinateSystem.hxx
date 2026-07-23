@@ -33,6 +33,12 @@ struct WeldDiscretizeOptions {
   Standard_Real    retractMm = kDefaultArcRetractMm;  // 起弧/收弧沿 -Z 后退距离 (mm); 0 关闭
 };
 
+//! If the oriented start point has smaller Y than the end point, reverse the edge.
+//! Otherwise return @p edge unchanged.
+//!
+//! After this call, travel along the edge goes from larger (or equal) Y to smaller Y.
+TopoDS_Edge OrientEdgeStartYNotLessThanEndY(const TopoDS_Edge& edge);
+
 //! Compute a weld local coordinate system from a selected edge (mid-point sample).
 //!
 //! - Origin: midpoint of the edge

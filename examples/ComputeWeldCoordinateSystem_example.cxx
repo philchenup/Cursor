@@ -24,8 +24,12 @@ int main()
   opt.reverseZ  = Standard_False;
   opt.retractMm = 50.0; // 起弧点、收弧点沿 -Z 后退 50mm
 
+  // Optional: normalize edge so start.Y >= end.Y before discretization
+  // (DiscretizeWeldTrajectory also does this internally).
+  const TopoDS_Edge orientedEdge = OrientEdgeStartYNotLessThanEndY(edge);
+
   std::vector<DiscretePoint> trajectory;
-  if (!DiscretizeWeldTrajectory(selectShape, edge, trajectory, opt)) {
+  if (!DiscretizeWeldTrajectory(selectShape, orientedEdge, trajectory, opt)) {
     std::cerr << "Failed to build weld trajectory.\n";
     return 1;
   }

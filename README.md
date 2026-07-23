@@ -18,6 +18,16 @@ DiscretizeWeldTrajectory(selectShape, edge, trajectory, opt);
 
 Defaults: `kDefaultSeamSpacingMm = 10`, `kDefaultArcRetractMm = 50`.
 
+### Edge orientation
+
+If the oriented start point has **Y smaller than** the end point, the edge is reversed
+(`OrientEdgeStartYNotLessThanEndY`) so travel goes from larger/equal Y to smaller Y.
+This is applied inside `DiscretizeWeldTrajectory` / `ComputeWeldCoordinateSystem`.
+
+```cpp
+TopoDS_Edge e = OrientEdgeStartYNotLessThanEndY(edge);
+```
+
 ### Frame at each sample
 
 | Axis | Definition |

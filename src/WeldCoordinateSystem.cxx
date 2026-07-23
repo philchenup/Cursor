@@ -14,6 +14,7 @@
 #include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
+#include <TopoDS_Vertex.hxx>
 #include <gp_Vec.hxx>
 
 #include <algorithm>
@@ -254,6 +255,29 @@ Standard_Boolean BuildFrameFromFaces(const TopoDS_Face& face1,
 
 } // namespace
 
+TopoDS_Edge OrientEdgeStartYNotLessThanEndY(const TopoDS_Edge& edge)
+{
+  if (edge.IsNull() || BRep_Tool::Degenerated(edge)) {
+    return edge;
+  }
+
+  // CumOri=True: First/Last follow the TopoDS_Edge orientation.
+  const TopoDS_Vertex vStart = TopExp::FirstVertex(edge, Standard_True);
+  const TopoDS_Vertex vEnd   = TopExp::LastVertex(edge, Standard_True);
+  if (vStart.IsNull() || vEnd.IsNull()) {
+    return edge;
+  }
+
+  const gp_Pnt pStart = BRep_Tool::Pnt(vStart);
+  const gp_Pnt pEnd   = BRep_Tool::Pnt(vEnd);
+
+  // 起点 Y < 终点 Y → 首尾反转
+  if (pStart.Y() < pEnd.Y()) {
+    return TopoDS::Edge(edge.Reversed());
+  }
+  return edge;
+}
+
 Standard_Boolean ComputeWeldCoordinateSystem(const TopoDS_Shape& selectShape,
                                              const TopoDS_Edge&   edge,
                                              gp_Ax3&             weldAxis,
@@ -263,8 +287,10 @@ Standard_Boolean ComputeWeldCoordinateSystem(const TopoDS_Shape& selectShape,
     return Standard_False;
   }
 
+  const TopoDS_Edge orientedEdge = OrientEdgeStartYNotLessThanEndY(edge);
+
   TopTools_ListOfShape faceList;
-  CollectAdjacentFaces(selectShape, edge, faceList);
+  CollectAdjacentFaces(selectShape, orientedEdge, faceList);
   if (faceList.Extent() != 2) {
     return Standard_False;
   }
@@ -276,11 +302,11 @@ Standard_Boolean ComputeWeldCoordinateSystem(const TopoDS_Shape& selectShape,
 
   gp_Pnt origin;
   gp_Dir yDir;
-  if (!EdgeFrameSeed(edge, origin, yDir)) {
+  if (!EdgeFrameSeed(orientedEdge, origin, yDir)) {
     return Standard_False;
   }
 
-  return BuildFrameFromFaces(face1, face2, edge, origin, yDir, reverseZ, weldAxis);
+  return BuildFrameFromFaces(face1, face2, orientedEdge, origin, yDir, reverseZ, weldAxis);
 }
 
 Standard_Boolean DiscretizeWeldTrajectory(const TopoDS_Shape&         selectShape,
@@ -301,8 +327,11 @@ Standard_Boolean DiscretizeWeldTrajectory(const TopoDS_Shape&         selectShap
     return Standard_False;
   }
 
+  // Normalize travel: start.Y >= end.Y (reverse edge when start.Y < end.Y).
+  const TopoDS_Edge orientedEdge = OrientEdgeStartYNotLessThanEndY(edge);
+
   TopTools_ListOfShape faceList;
-  CollectAdjacentFaces(selectShape, edge, faceList);
+  CollectAdjacentFaces(selectShape, orientedEdge, faceList);
   if (faceList.Extent() != 2) {
     return Standard_False;
   }
@@ -312,7 +341,7 @@ Standard_Boolean DiscretizeWeldTrajectory(const TopoDS_Shape&         selectShap
   it.Next();
   const TopoDS_Face face2 = TopoDS::Face(it.Value());
 
-  BRepAdaptor_Curve curve(edge);
+  BRepAdaptor_Curve curve(orientedEdge);
   const Standard_Real length =
       GCPnts_AbscissaPoint::Length(curve, curve.FirstParameter(), curve.LastParameter());
   if (length <= Precision::Confusion()) {
@@ -333,7 +362,7 @@ Standard_Boolean DiscretizeWeldTrajectory(const TopoDS_Shape&         selectShap
     DiscretePoint sample;
     if (!BuildDiscretePointAt(face1,
                               face2,
-                              edge,
+                              orientedEdge,
                               curve,
                               sampler.Parameter(i),
                               reverseZ,
