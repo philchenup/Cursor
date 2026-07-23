@@ -8,7 +8,7 @@ Compute a weld local frame and a discretized seam trajectory from a selected edg
 #include "WeldCoordinateSystem.hxx"
 
 struct DiscretePoint {
-  gp_Pnt position; // point on edge
+  gp_Pnt position; // point on edge (or retracted arc point)
   gp_Dir xDir;     // Y × Z (right-hand)
   gp_Dir yDir;     // edge tangent / travel
   gp_Dir zDir;     // bisector of the two adjacent face normals
@@ -16,11 +16,11 @@ struct DiscretePoint {
 
 std::vector<DiscretePoint> trajectory;
 
-// Z along face-normal bisector (default)
-DiscretizeWeldTrajectory(selectShape, edge, trajectory, 10.0);
+// spacing=10, reverseZ=false, retract=50 → 起弧/收弧沿 -Z 后退 50
+DiscretizeWeldTrajectory(selectShape, edge, trajectory, 10.0, Standard_False, 50.0);
 
 // Z along the opposite bisector (二分角反向)
-DiscretizeWeldTrajectory(selectShape, edge, trajectory, 10.0, /*reverseZ=*/Standard_True);
+DiscretizeWeldTrajectory(selectShape, edge, trajectory, 10.0, Standard_True, 50.0);
 ```
 
 ### Frame at each sample
@@ -31,7 +31,17 @@ DiscretizeWeldTrajectory(selectShape, edge, trajectory, 10.0, /*reverseZ=*/Stand
 | **Z** | Unit bisector of the two adjacent face normals, in the plane ⊥ Y; pass `reverseZ=Standard_True` to flip |
 | **X** | `Y × Z` (right-handed: `X × Y = Z`) |
 
-Samples are spaced by **10 mm** arc length along the edge (endpoints always included). The edge must be shared by exactly two faces. OpenCASCADE **7.4+**.
+### Arc start / end points
+
+When `retractMm > 0` (default **50**):
+
+| Point | Index | Position |
+|-------|-------|----------|
+| 起弧点 | `trajectory.front()` | first seam point − `retractMm * zDir` |
+| 焊缝点 | middle | 10 mm arc-length samples on the edge |
+| 收弧点 | `trajectory.back()` | last seam point − `retractMm * zDir` |
+
+Pass `retractMm = 0` to disable. OpenCASCADE **7.4+**.
 
 ## Build
 

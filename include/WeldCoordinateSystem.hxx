@@ -14,7 +14,7 @@
 //! One sample on the weld path with a right-handed local frame.
 //! Y = edge tangent, Z = adjacent-face normal bisector (±), X = Y × Z.
 struct DiscretePoint {
-  gp_Pnt position; // point on the edge
+  gp_Pnt position; // point on the edge (or retracted arc point)
   gp_Dir xDir;     // X: right-hand rule, X = Y × Z
   gp_Dir yDir;     // Y: edge tangent / travel direction
   gp_Dir zDir;     // Z: unit bisector (±) of the two adjacent face normals
@@ -37,11 +37,16 @@ Standard_Boolean ComputeWeldCoordinateSystem(
 
 //! Discretize the selected weld edge by arc length and build a trajectory.
 //!
-//! At each sample:
+//! At each seam sample:
 //! - position: point on the edge
 //! - yDir: edge tangent (edge orientation)
 //! - zDir: unit bisector of the two adjacent face normals (⊥ yDir)
 //! - xDir: yDir × zDir  (right-handed: x × y = z)
+//!
+//! When @p retractMm > 0, two extra points are added:
+//! - front: 起弧点 = first seam point retracted along -Z by @p retractMm
+//! - back:  收弧点 = last  seam point retracted along -Z by @p retractMm
+//!   i.e. position' = position - retractMm * zDir (axes unchanged)
 //!
 //! @param selectShape  solid / shell / compound that owns the edge
 //! @param edge         selected weld edge
@@ -49,12 +54,14 @@ Standard_Boolean ComputeWeldCoordinateSystem(
 //! @param spacingMm    arc-length step in model units (default 10 mm)
 //! @param reverseZ     Standard_False: Z along face-normal bisector;
 //!                     Standard_True:  Z along the opposite bisector
+//! @param retractMm    起弧/收弧 retract distance along -Z (default 50; 0 disables)
 //! @return Standard_True if at least one valid sample was produced
 Standard_Boolean DiscretizeWeldTrajectory(
     const TopoDS_Shape&        selectShape,
     const TopoDS_Edge&          edge,
     std::vector<DiscretePoint>& trajectory,
     Standard_Real               spacingMm = 10.0,
-    Standard_Boolean            reverseZ  = Standard_False);
+    Standard_Boolean            reverseZ  = Standard_False,
+    Standard_Real               retractMm = 50.0);
 
 #endif // WELD_COORDINATE_SYSTEM_HXX

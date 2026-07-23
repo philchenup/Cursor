@@ -19,16 +19,24 @@ int main()
   }
 
   std::vector<DiscretePoint> trajectory;
-  // Last arg reverseZ: Standard_False = bisector, Standard_True = opposite bisector.
-  if (!DiscretizeWeldTrajectory(selectShape, edge, trajectory, 10.0, Standard_False)) {
+  // spacing=10, reverseZ=false, retractMm=50 → prepend 起弧 / append 收弧 along -Z.
+  if (!DiscretizeWeldTrajectory(selectShape, edge, trajectory, 10.0, Standard_False, 50.0)) {
     std::cerr << "Failed to build weld trajectory.\n";
     return 1;
   }
 
-  std::cout << "trajectory size: " << trajectory.size() << '\n';
+  std::cout << "trajectory size: " << trajectory.size()
+            << " (front=起弧, back=收弧)\n";
   for (std::size_t i = 0; i < trajectory.size(); ++i) {
     const DiscretePoint& s = trajectory[i];
-    std::cout << "[" << i << "] p=("
+    const char* tag = "";
+    if (i == 0) {
+      tag = " 起弧";
+    }
+    else if (i + 1 == trajectory.size()) {
+      tag = " 收弧";
+    }
+    std::cout << "[" << i << "]" << tag << " p=("
               << s.position.X() << ", " << s.position.Y() << ", " << s.position.Z()
               << ") x=(" << s.xDir.X() << ", " << s.xDir.Y() << ", " << s.xDir.Z()
               << ") y=(" << s.yDir.X() << ", " << s.yDir.Y() << ", " << s.yDir.Z()

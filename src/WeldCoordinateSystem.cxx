@@ -287,7 +287,8 @@ Standard_Boolean DiscretizeWeldTrajectory(const TopoDS_Shape&        selectShape
                                           const TopoDS_Edge&          edge,
                                           std::vector<DiscretePoint>& trajectory,
                                           Standard_Real               spacingMm,
-                                          Standard_Boolean            reverseZ)
+                                          Standard_Boolean            reverseZ,
+                                          Standard_Real               retractMm)
 {
   trajectory.clear();
 
@@ -322,7 +323,7 @@ Standard_Boolean DiscretizeWeldTrajectory(const TopoDS_Shape&        selectShape
     return Standard_False;
   }
 
-  trajectory.reserve(static_cast<std::size_t>(sampler.NbPoints()));
+  trajectory.reserve(static_cast<std::size_t>(sampler.NbPoints()) + 2);
   const gp_Dir* prevZ = nullptr;
   gp_Dir        lastZ;
 
@@ -344,5 +345,26 @@ Standard_Boolean DiscretizeWeldTrajectory(const TopoDS_Shape&        selectShape
     prevZ = &lastZ;
   }
 
-  return !trajectory.empty();
+  if (trajectory.empty()) {
+    return Standard_False;
+  }
+
+  // 起弧点 / 收弧点: retract the first and last seam points along -Z.
+  if (retractMm > Precision::Confusion()) {
+    const DiscretePoint& seamFirst = trajectory.front();
+    const DiscretePoint& seamLast  = trajectory.back();
+
+    DiscretePoint startArc = seamFirst; // 起弧点
+    startArc.position =
+        seamFirst.position.Translated(gp_Vec(seamFirst.zDir) * (-retractMm));
+
+    DiscretePoint endArc = seamLast; // 收弧点
+    endArc.position =
+        seamLast.position.Translated(gp_Vec(seamLast.zDir) * (-retractMm));
+
+    trajectory.insert(trajectory.begin(), startArc);
+    trajectory.push_back(endArc);
+  }
+
+  return Standard_True;
 }
