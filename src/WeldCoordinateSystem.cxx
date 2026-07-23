@@ -283,14 +283,16 @@ Standard_Boolean ComputeWeldCoordinateSystem(const TopoDS_Shape& selectShape,
   return BuildFrameFromFaces(face1, face2, edge, origin, yDir, reverseZ, weldAxis);
 }
 
-Standard_Boolean DiscretizeWeldTrajectory(const TopoDS_Shape&        selectShape,
-                                          const TopoDS_Edge&          edge,
-                                          std::vector<DiscretePoint>& trajectory,
-                                          Standard_Real               spacingMm,
-                                          Standard_Boolean            reverseZ,
-                                          Standard_Real               retractMm)
+Standard_Boolean DiscretizeWeldTrajectory(const TopoDS_Shape&         selectShape,
+                                          const TopoDS_Edge&           edge,
+                                          std::vector<DiscretePoint>&  trajectory,
+                                          const WeldDiscretizeOptions& options)
 {
   trajectory.clear();
+
+  const Standard_Real    spacingMm = options.spacingMm;
+  const Standard_Boolean reverseZ  = options.reverseZ;
+  const Standard_Real    retractMm = options.retractMm;
 
   if (selectShape.IsNull() || edge.IsNull() || spacingMm <= Precision::Confusion()) {
     return Standard_False;
@@ -349,7 +351,7 @@ Standard_Boolean DiscretizeWeldTrajectory(const TopoDS_Shape&        selectShape
     return Standard_False;
   }
 
-  // 起弧点 / 收弧点: retract the first and last seam points along -Z.
+  // 起弧点 / 收弧点: retract the first and last seam points along -Z by retractMm.
   if (retractMm > Precision::Confusion()) {
     const DiscretePoint& seamFirst = trajectory.front();
     const DiscretePoint& seamLast  = trajectory.back();

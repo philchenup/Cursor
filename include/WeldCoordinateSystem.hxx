@@ -11,6 +11,12 @@
 
 #include <vector>
 
+//! Default 起弧/收弧 retract distance along -Z (mm).
+inline constexpr Standard_Real kDefaultArcRetractMm = 50.0;
+
+//! Default seam sample spacing along the edge (mm).
+inline constexpr Standard_Real kDefaultSeamSpacingMm = 10.0;
+
 //! One sample on the weld path with a right-handed local frame.
 //! Y = edge tangent, Z = adjacent-face normal bisector (±), X = Y × Z.
 struct DiscretePoint {
@@ -18,6 +24,13 @@ struct DiscretePoint {
   gp_Dir xDir;     // X: right-hand rule, X = Y × Z
   gp_Dir yDir;     // Y: edge tangent / travel direction
   gp_Dir zDir;     // Z: unit bisector (±) of the two adjacent face normals
+};
+
+//! Parameters for seam discretization / arc retract.
+struct WeldDiscretizeOptions {
+  Standard_Real    spacingMm = kDefaultSeamSpacingMm; // 轨迹插值间距 (mm)
+  Standard_Boolean reverseZ  = Standard_False;        // true: Z 取二分角反向
+  Standard_Real    retractMm = kDefaultArcRetractMm;  // 起弧/收弧沿 -Z 后退距离 (mm); 0 关闭
 };
 
 //! Compute a weld local coordinate system from a selected edge (mid-point sample).
@@ -35,33 +48,24 @@ Standard_Boolean ComputeWeldCoordinateSystem(
     gp_Ax3&             weldAxis,
     Standard_Boolean    reverseZ = Standard_False);
 
-//! Discretize the selected weld edge by arc length and build a trajectory.
+//! Discretize the selected weld edge and build a trajectory.
 //!
-//! At each seam sample:
-//! - position: point on the edge
-//! - yDir: edge tangent (edge orientation)
-//! - zDir: unit bisector of the two adjacent face normals (⊥ yDir)
-//! - xDir: yDir × zDir  (right-handed: x × y = z)
+//! Seam samples use @p options.spacingMm. When @p options.retractMm > 0:
+//! - front: 起弧点 = first seam point − retractMm * zDir
+//! - back:  收弧点 = last  seam point − retractMm * zDir
 //!
-//! When @p retractMm > 0, two extra points are added:
-//! - front: 起弧点 = first seam point retracted along -Z by @p retractMm
-//! - back:  收弧点 = last  seam point retracted along -Z by @p retractMm
-//!   i.e. position' = position - retractMm * zDir (axes unchanged)
-//!
-//! @param selectShape  solid / shell / compound that owns the edge
-//! @param edge         selected weld edge
-//! @param trajectory   output samples (cleared on entry)
-//! @param spacingMm    arc-length step in model units (default 10 mm)
-//! @param reverseZ     Standard_False: Z along face-normal bisector;
-//!                     Standard_True:  Z along the opposite bisector
-//! @param retractMm    起弧/收弧 retract distance along -Z (default 50; 0 disables)
-//! @return Standard_True if at least one valid sample was produced
+//! Example:
+//! @code
+//!   WeldDiscretizeOptions opt;
+//!   opt.spacingMm = 10.0;
+//!   opt.reverseZ  = Standard_False;
+//!   opt.retractMm = 50.0;   // <-- 起弧/收弧后退距离
+//!   DiscretizeWeldTrajectory(selectShape, edge, trajectory, opt);
+//! @endcode
 Standard_Boolean DiscretizeWeldTrajectory(
-    const TopoDS_Shape&        selectShape,
-    const TopoDS_Edge&          edge,
-    std::vector<DiscretePoint>& trajectory,
-    Standard_Real               spacingMm = 10.0,
-    Standard_Boolean            reverseZ  = Standard_False,
-    Standard_Real               retractMm = 50.0);
+    const TopoDS_Shape&          selectShape,
+    const TopoDS_Edge&            edge,
+    std::vector<DiscretePoint>&   trajectory,
+    const WeldDiscretizeOptions&  options = WeldDiscretizeOptions());
 
 #endif // WELD_COORDINATE_SYSTEM_HXX

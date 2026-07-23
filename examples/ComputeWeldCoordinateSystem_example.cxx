@@ -1,4 +1,4 @@
-// Example: discretize a weld edge into DiscretePoint samples (10 mm step).
+// Example: discretize a weld edge into DiscretePoint samples.
 // Requires OpenCASCADE 7.4+.
 
 #include "WeldCoordinateSystem.hxx"
@@ -18,15 +18,20 @@ int main()
     break;
   }
 
+  // Explicit inputs: spacing / reverseZ / retract (起弧收弧后退距离).
+  WeldDiscretizeOptions opt;
+  opt.spacingMm = 10.0;
+  opt.reverseZ  = Standard_False;
+  opt.retractMm = 50.0; // 起弧点、收弧点沿 -Z 后退 50mm
+
   std::vector<DiscretePoint> trajectory;
-  // spacing=10, reverseZ=false, retractMm=50 → prepend 起弧 / append 收弧 along -Z.
-  if (!DiscretizeWeldTrajectory(selectShape, edge, trajectory, 10.0, Standard_False, 50.0)) {
+  if (!DiscretizeWeldTrajectory(selectShape, edge, trajectory, opt)) {
     std::cerr << "Failed to build weld trajectory.\n";
     return 1;
   }
 
   std::cout << "trajectory size: " << trajectory.size()
-            << " (front=起弧, back=收弧)\n";
+            << " (front=起弧, back=收弧), retractMm=" << opt.retractMm << '\n';
   for (std::size_t i = 0; i < trajectory.size(); ++i) {
     const DiscretePoint& s = trajectory[i];
     const char* tag = "";
