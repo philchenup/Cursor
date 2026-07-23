@@ -12,12 +12,12 @@
 #include <vector>
 
 //! One sample on the weld path with a right-handed local frame.
-//! Y = edge tangent, Z = adjacent-face normal bisector, X = Y × Z.
+//! Y = edge tangent, Z = adjacent-face normal bisector (±), X = Y × Z.
 struct DiscretePoint {
   gp_Pnt position; // point on the edge
   gp_Dir xDir;     // X: right-hand rule, X = Y × Z
   gp_Dir yDir;     // Y: edge tangent / travel direction
-  gp_Dir zDir;     // Z: unit bisector of the two adjacent face normals
+  gp_Dir zDir;     // Z: unit bisector (±) of the two adjacent face normals
 };
 
 //! Compute a weld local coordinate system from a selected edge (mid-point sample).
@@ -26,10 +26,14 @@ struct DiscretePoint {
 //! - Y axis: tangent along the edge orientation
 //! - Z axis: unit bisector of the two adjacent face normals
 //! - X axis: right-hand rule, X = Y × Z
+//!
+//! @param reverseZ  Standard_False: Z along face-normal bisector;
+//!                  Standard_True:  Z along the opposite bisector
 Standard_Boolean ComputeWeldCoordinateSystem(
     const TopoDS_Shape& selectShape,
     const TopoDS_Edge&   edge,
-    gp_Ax3&             weldAxis);
+    gp_Ax3&             weldAxis,
+    Standard_Boolean    reverseZ = Standard_False);
 
 //! Discretize the selected weld edge by arc length and build a trajectory.
 //!
@@ -43,11 +47,14 @@ Standard_Boolean ComputeWeldCoordinateSystem(
 //! @param edge         selected weld edge
 //! @param trajectory   output samples (cleared on entry)
 //! @param spacingMm    arc-length step in model units (default 10 mm)
+//! @param reverseZ     Standard_False: Z along face-normal bisector;
+//!                     Standard_True:  Z along the opposite bisector
 //! @return Standard_True if at least one valid sample was produced
 Standard_Boolean DiscretizeWeldTrajectory(
     const TopoDS_Shape&        selectShape,
     const TopoDS_Edge&          edge,
     std::vector<DiscretePoint>& trajectory,
-    Standard_Real               spacingMm = 10.0);
+    Standard_Real               spacingMm = 10.0,
+    Standard_Boolean            reverseZ  = Standard_False);
 
 #endif // WELD_COORDINATE_SYSTEM_HXX

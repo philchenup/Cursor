@@ -169,12 +169,13 @@ Standard_Boolean BisectorAtParam(const TopoDS_Face& face1,
   return Standard_True;
 }
 
-//! Build one sample: Y along edge, Z = face-normal bisector, X = Y × Z.
+//! Build one sample: Y along edge, Z = ± face-normal bisector, X = Y × Z.
 Standard_Boolean BuildDiscretePointAt(const TopoDS_Face&       face1,
                                       const TopoDS_Face&       face2,
                                       const TopoDS_Edge&       edge,
                                       const BRepAdaptor_Curve& curve,
                                       Standard_Real            u,
+                                      Standard_Boolean         reverseZ,
                                       const gp_Dir*            prevZ,
                                       DiscretePoint&           sample)
 {
@@ -190,6 +191,11 @@ Standard_Boolean BuildDiscretePointAt(const TopoDS_Face&       face1,
   gp_Dir zDir;
   if (!BisectorAtParam(face1, face2, edge, u, yDir, zDir)) {
     return Standard_False;
+  }
+
+  // reverseZ=True → opposite bisector (二分角反向).
+  if (reverseZ) {
+    zDir.Reverse();
   }
 
   // Keep Z continuous along the path (avoids 180° flips / fan artifacts).
@@ -215,6 +221,7 @@ Standard_Boolean BuildFrameFromFaces(const TopoDS_Face& face1,
                                      const TopoDS_Edge& edge,
                                      const gp_Pnt&      origin,
                                      const gp_Dir&      yDir,
+                                     Standard_Boolean   reverseZ,
                                      gp_Ax3&            weldAxis)
 {
   Standard_Real f = 0.0;
@@ -224,6 +231,10 @@ Standard_Boolean BuildFrameFromFaces(const TopoDS_Face& face1,
   gp_Dir zDir;
   if (!BisectorAtParam(face1, face2, edge, 0.5 * (f + l), yDir, zDir)) {
     return Standard_False;
+  }
+
+  if (reverseZ) {
+    zDir.Reverse();
   }
 
   gp_Vec xVec = gp_Vec(yDir).Crossed(gp_Vec(zDir));
@@ -245,7 +256,8 @@ Standard_Boolean BuildFrameFromFaces(const TopoDS_Face& face1,
 
 Standard_Boolean ComputeWeldCoordinateSystem(const TopoDS_Shape& selectShape,
                                              const TopoDS_Edge&   edge,
-                                             gp_Ax3&             weldAxis)
+                                             gp_Ax3&             weldAxis,
+                                             Standard_Boolean    reverseZ)
 {
   if (selectShape.IsNull() || edge.IsNull()) {
     return Standard_False;
@@ -268,13 +280,14 @@ Standard_Boolean ComputeWeldCoordinateSystem(const TopoDS_Shape& selectShape,
     return Standard_False;
   }
 
-  return BuildFrameFromFaces(face1, face2, edge, origin, yDir, weldAxis);
+  return BuildFrameFromFaces(face1, face2, edge, origin, yDir, reverseZ, weldAxis);
 }
 
 Standard_Boolean DiscretizeWeldTrajectory(const TopoDS_Shape&        selectShape,
                                           const TopoDS_Edge&          edge,
                                           std::vector<DiscretePoint>& trajectory,
-                                          Standard_Real               spacingMm)
+                                          Standard_Real               spacingMm,
+                                          Standard_Boolean            reverseZ)
 {
   trajectory.clear();
 
@@ -320,6 +333,7 @@ Standard_Boolean DiscretizeWeldTrajectory(const TopoDS_Shape&        selectShape
                               edge,
                               curve,
                               sampler.Parameter(i),
+                              reverseZ,
                               prevZ,
                               sample)) {
       trajectory.clear();

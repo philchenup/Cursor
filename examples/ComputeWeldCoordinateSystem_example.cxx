@@ -19,7 +19,8 @@ int main()
   }
 
   std::vector<DiscretePoint> trajectory;
-  if (!DiscretizeWeldTrajectory(selectShape, edge, trajectory, 10.0)) {
+  // Last arg reverseZ: Standard_False = bisector, Standard_True = opposite bisector.
+  if (!DiscretizeWeldTrajectory(selectShape, edge, trajectory, 10.0, Standard_False)) {
     std::cerr << "Failed to build weld trajectory.\n";
     return 1;
   }

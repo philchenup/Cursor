@@ -15,7 +15,12 @@ struct DiscretePoint {
 };
 
 std::vector<DiscretePoint> trajectory;
-DiscretizeWeldTrajectory(selectShape, edge, trajectory, /*spacingMm=*/10.0);
+
+// Z along face-normal bisector (default)
+DiscretizeWeldTrajectory(selectShape, edge, trajectory, 10.0);
+
+// Z along the opposite bisector (二分角反向)
+DiscretizeWeldTrajectory(selectShape, edge, trajectory, 10.0, /*reverseZ=*/Standard_True);
 ```
 
 ### Frame at each sample
@@ -23,7 +28,7 @@ DiscretizeWeldTrajectory(selectShape, edge, trajectory, /*spacingMm=*/10.0);
 | Axis | Definition |
 |------|------------|
 | **Y** | Edge tangent (edge orientation) |
-| **Z** | Unit bisector of the two adjacent face normals, in the plane ⊥ Y |
+| **Z** | Unit bisector of the two adjacent face normals, in the plane ⊥ Y; pass `reverseZ=Standard_True` to flip |
 | **X** | `Y × Z` (right-handed: `X × Y = Z`) |
 
 Samples are spaced by **10 mm** arc length along the edge (endpoints always included). The edge must be shared by exactly two faces. OpenCASCADE **7.4+**.
