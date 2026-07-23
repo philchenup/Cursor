@@ -12,10 +12,10 @@
 #include <vector>
 
 //! Default 起弧/收弧 retract distance along -Z (mm).
-inline constexpr Standard_Real kDefaultArcRetractMm = 50.0;
+const Standard_Real kDefaultArcRetractMm = 50.0;
 
 //! Default seam sample spacing along the edge (mm).
-inline constexpr Standard_Real kDefaultSeamSpacingMm = 10.0;
+const Standard_Real kDefaultSeamSpacingMm = 10.0;
 
 //! One sample on the weld path with a right-handed local frame.
 //! Y = edge tangent, Z = adjacent-face normal bisector (±), X = Y × Z.
