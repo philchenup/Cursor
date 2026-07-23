@@ -17,11 +17,8 @@
 #include <gp_Vec.hxx>
 
 #include <algorithm>
-#include <cmath>
 
 namespace {
-
-const Standard_Real kInvSqrt2 = 0.7071067811865476; // √2/2
 
 //! Mid-parameter point and unit tangent of @p edge, respecting edge orientation.
 Standard_Boolean EdgeFrameSeed(const TopoDS_Edge& edge,
@@ -123,13 +120,27 @@ void CollectAdjacentFaces(const TopoDS_Shape&   shape,
   }
 }
 
-//! Open-angle unit bisector of the two face normals at parameter @p u, ⊥ @p xDir.
+//! Project @p v onto the plane perpendicular to unit direction @p axis.
+Standard_Boolean ProjectPerp(const gp_Vec& v, const gp_Dir& axis, gp_Vec& out)
+{
+  const gp_Vec a(axis);
+  out = v - v.Dot(a) * a;
+  if (out.Magnitude() <= Precision::Confusion()) {
+    return Standard_False;
+  }
+  out.Normalize();
+  return Standard_True;
+}
+
+//! Unit dihedral bisector of the two face normals at parameter @p u, ⊥ @p yDir.
+//! Uses projected unit normals so Z lies exactly on the angle bisector in the
+//! plane perpendicular to the edge.
 Standard_Boolean BisectorAtParam(const TopoDS_Face& face1,
                                  const TopoDS_Face& face2,
                                  const TopoDS_Edge& edge,
                                  Standard_Real      u,
-                                 const gp_Dir&      xDir,
-                                 gp_Vec&            bisectorOut)
+                                 const gp_Dir&      yDir,
+                                 gp_Dir&            zDir)
 {
   gp_Dir n1;
   gp_Dir n2;
@@ -138,91 +149,34 @@ Standard_Boolean BisectorAtParam(const TopoDS_Face& face1,
     return Standard_False;
   }
 
-  gp_Vec bisector(gp_Vec(n1.XYZ()) + gp_Vec(n2.XYZ()));
-  if (bisector.Magnitude() <= Precision::Confusion()) {
-    bisector = gp_Vec(n1.XYZ());
+  gp_Vec p1;
+  gp_Vec p2;
+  if (!ProjectPerp(gp_Vec(n1), yDir, p1) || !ProjectPerp(gp_Vec(n2), yDir, p2)) {
+    return Standard_False;
   }
 
-  const gp_Vec x(xDir);
-  bisector -= bisector.Dot(x) * x;
+  gp_Vec bisector = p1 + p2;
+  if (bisector.Magnitude() <= Precision::Confusion()) {
+    // Faces nearly coplanar / opposite: fall back to either projected normal.
+    bisector = p1;
+  }
+
   if (bisector.Magnitude() <= Precision::Confusion()) {
     return Standard_False;
   }
-  bisector.Normalize();
-  bisectorOut = bisector;
+
+  zDir = gp_Dir(bisector);
   return Standard_True;
 }
 
-//! Build Z: ⊥ X, angle with world XOY = 45° (clamped if needed), pointing down.
-//! If two solutions exist, pick the one closer to @p prefer (typically the bisector).
-Standard_Boolean MakeZDir45DownToXOY(const gp_Dir& xDir,
-                                     const gp_Vec& prefer,
-                                     gp_Dir&       zDir)
-{
-  const gp_Vec x(xDir);
-  const gp_Vec k(0.0, 0.0, 1.0); // world +Z, XOY = world horizontal plane
-
-  const Standard_Real xDotK   = x.Dot(k);
-  const Standard_Real maxAbs  = std::sqrt(std::max(0.0, 1.0 - xDotK * xDotK));
-  if (maxAbs <= Precision::Confusion()) {
-    // Travel is vertical: every ⊥X direction lies in XOY (0°). Fall back to prefer.
-    gp_Vec z = prefer - prefer.Dot(x) * x;
-    if (z.Magnitude() <= Precision::Confusion()) {
-      return Standard_False;
-    }
-    zDir = gp_Dir(z);
-    return Standard_True;
-  }
-
-  // Target: angle with XOY plane = 45° downward ⇒ z·k = -sin(45°).
-  const Standard_Real targetDot = -std::min(kInvSqrt2, maxAbs);
-
-  gp_Vec ref = (std::abs(xDotK) < 0.9) ? k : gp_Vec(1.0, 0.0, 0.0);
-  gp_Vec e1  = x.Crossed(ref);
-  if (e1.Magnitude() <= Precision::Confusion()) {
-    return Standard_False;
-  }
-  e1.Normalize();
-  gp_Vec e2 = x.Crossed(e1);
-  e2.Normalize();
-
-  // z = cosθ e1 + sinθ e2, with z·k = targetDot
-  // a cosθ + b sinθ = targetDot, a=e1·k, b=e2·k
-  const Standard_Real a = e1.Dot(k);
-  const Standard_Real b = e2.Dot(k);
-  const Standard_Real R = std::sqrt(a * a + b * b);
-  if (R <= Precision::Confusion() || std::abs(targetDot) > R + Precision::Confusion()) {
-    return Standard_False;
-  }
-
-  const Standard_Real phi   = std::atan2(b, a);
-  const Standard_Real cosV  = std::max(-1.0, std::min(1.0, targetDot / R));
-  const Standard_Real delta = std::acos(cosV);
-
-  auto makeZ = [&](Standard_Real theta) -> gp_Vec {
-    return gp_Vec(std::cos(theta) * e1.XYZ() + std::sin(theta) * e2.XYZ());
-  };
-
-  const gp_Vec z1 = makeZ(phi + delta);
-  const gp_Vec z2 = makeZ(phi - delta);
-
-  gp_Vec pref = prefer - prefer.Dot(x) * x;
-  if (pref.Magnitude() > Precision::Confusion()) {
-    pref.Normalize();
-    zDir = (z1.Dot(pref) >= z2.Dot(pref)) ? gp_Dir(z1) : gp_Dir(z2);
-  }
-  else {
-    zDir = gp_Dir(z1);
-  }
-  return Standard_True;
-}
-
-Standard_Boolean BuildDiscretePointAt(const TopoDS_Face& face1,
-                                      const TopoDS_Face& face2,
-                                      const TopoDS_Edge& edge,
+//! Build one sample: Y along edge, Z = face-normal bisector, X = Y × Z.
+Standard_Boolean BuildDiscretePointAt(const TopoDS_Face&       face1,
+                                      const TopoDS_Face&       face2,
+                                      const TopoDS_Edge&       edge,
                                       const BRepAdaptor_Curve& curve,
-                                      Standard_Real      u,
-                                      DiscretePoint&     sample)
+                                      Standard_Real            u,
+                                      const gp_Dir*            prevZ,
+                                      DiscretePoint&           sample)
 {
   gp_Pnt p;
   gp_Vec d1;
@@ -231,32 +185,59 @@ Standard_Boolean BuildDiscretePointAt(const TopoDS_Face& face1,
     return Standard_False;
   }
 
-  const gp_Dir xDir(d1);
-
-  gp_Vec preferBisector;
-  if (!BisectorAtParam(face1, face2, edge, u, xDir, preferBisector)) {
-    // No reliable bisector: prefer world down projected ⊥ X.
-    preferBisector = gp_Vec(0.0, 0.0, -1.0);
-    preferBisector -= preferBisector.Dot(gp_Vec(xDir)) * gp_Vec(xDir);
-    if (preferBisector.Magnitude() <= Precision::Confusion()) {
-      preferBisector = gp_Vec(1.0, 0.0, 0.0).Crossed(gp_Vec(xDir));
-    }
-  }
+  const gp_Dir yDir(d1); // travel / edge orientation
 
   gp_Dir zDir;
-  if (!MakeZDir45DownToXOY(xDir, preferBisector, zDir)) {
+  if (!BisectorAtParam(face1, face2, edge, u, yDir, zDir)) {
     return Standard_False;
   }
 
-  gp_Vec yVec = gp_Vec(zDir).Crossed(gp_Vec(xDir)); // Y = Z × X
-  if (yVec.Magnitude() <= Precision::Confusion()) {
+  // Keep Z continuous along the path (avoids 180° flips / fan artifacts).
+  if (prevZ != nullptr && zDir.Dot(*prevZ) < 0.0) {
+    zDir.Reverse();
+  }
+
+  // Right-hand rule: X = Y × Z  ⇒  X × Y = Z.
+  gp_Vec xVec = gp_Vec(yDir).Crossed(gp_Vec(zDir));
+  if (xVec.Magnitude() <= Precision::Confusion()) {
     return Standard_False;
   }
 
   sample.position = p;
-  sample.xDir     = xDir;
+  sample.yDir     = yDir;
   sample.zDir     = zDir;
-  sample.yDir     = gp_Dir(yVec);
+  sample.xDir     = gp_Dir(xVec);
+  return Standard_True;
+}
+
+Standard_Boolean BuildFrameFromFaces(const TopoDS_Face& face1,
+                                     const TopoDS_Face& face2,
+                                     const TopoDS_Edge& edge,
+                                     const gp_Pnt&      origin,
+                                     const gp_Dir&      yDir,
+                                     gp_Ax3&            weldAxis)
+{
+  Standard_Real f = 0.0;
+  Standard_Real l = 0.0;
+  BRep_Tool::Range(edge, f, l);
+
+  gp_Dir zDir;
+  if (!BisectorAtParam(face1, face2, edge, 0.5 * (f + l), yDir, zDir)) {
+    return Standard_False;
+  }
+
+  gp_Vec xVec = gp_Vec(yDir).Crossed(gp_Vec(zDir));
+  if (xVec.Magnitude() <= Precision::Confusion()) {
+    return Standard_False;
+  }
+  gp_Dir xDir(xVec);
+
+  // gp_Ax3(P, N=Z, Vx=X) builds Y as Z × X, matching +edge when X = Y × Z.
+  weldAxis = gp_Ax3(origin, zDir, xDir);
+  if (weldAxis.YDirection().Dot(yDir) < 0.0) {
+    xDir.Reverse();
+    weldAxis = gp_Ax3(origin, zDir, xDir);
+  }
   return Standard_True;
 }
 
@@ -287,36 +268,7 @@ Standard_Boolean ComputeWeldCoordinateSystem(const TopoDS_Shape& selectShape,
     return Standard_False;
   }
 
-  gp_Dir n1;
-  gp_Dir n2;
-  if (!FaceNormalAtEdge(face1, edge, n1) || !FaceNormalAtEdge(face2, edge, n2)) {
-    return Standard_False;
-  }
-
-  gp_Vec bisector(gp_Vec(n1.XYZ()) + gp_Vec(n2.XYZ()));
-  if (bisector.Magnitude() <= Precision::Confusion()) {
-    bisector = gp_Vec(n1.XYZ());
-  }
-
-  gp_Vec zVec = bisector - bisector.Dot(gp_Vec(yDir)) * gp_Vec(yDir);
-  if (zVec.Magnitude() <= Precision::Confusion()) {
-    return Standard_False;
-  }
-  const gp_Dir zDir(zVec);
-
-  gp_Vec xVec = gp_Vec(yDir).Crossed(gp_Vec(zDir));
-  if (xVec.Magnitude() <= Precision::Confusion()) {
-    return Standard_False;
-  }
-  gp_Dir xDir(xVec);
-
-  weldAxis = gp_Ax3(origin, zDir, xDir);
-  if (weldAxis.YDirection().Dot(yDir) < 0.0) {
-    xDir.Reverse();
-    weldAxis = gp_Ax3(origin, zDir, xDir);
-  }
-
-  return Standard_True;
+  return BuildFrameFromFaces(face1, face2, edge, origin, yDir, weldAxis);
 }
 
 Standard_Boolean DiscretizeWeldTrajectory(const TopoDS_Shape&        selectShape,
@@ -351,21 +303,31 @@ Standard_Boolean DiscretizeWeldTrajectory(const TopoDS_Shape&        selectShape
     return Standard_False;
   }
 
-  // Arc-length sampling; always includes both endpoints. If length < spacing,
-  // OCC still returns the two endpoints.
+  // Arc-length sampling; always includes both endpoints.
   GCPnts_UniformAbscissa sampler(curve, spacingMm);
   if (!sampler.IsDone() || sampler.NbPoints() < 1) {
     return Standard_False;
   }
 
   trajectory.reserve(static_cast<std::size_t>(sampler.NbPoints()));
+  const gp_Dir* prevZ = nullptr;
+  gp_Dir        lastZ;
+
   for (Standard_Integer i = 1; i <= sampler.NbPoints(); ++i) {
     DiscretePoint sample;
-    if (!BuildDiscretePointAt(face1, face2, edge, curve, sampler.Parameter(i), sample)) {
+    if (!BuildDiscretePointAt(face1,
+                              face2,
+                              edge,
+                              curve,
+                              sampler.Parameter(i),
+                              prevZ,
+                              sample)) {
       trajectory.clear();
       return Standard_False;
     }
     trajectory.push_back(sample);
+    lastZ = sample.zDir;
+    prevZ = &lastZ;
   }
 
   return !trajectory.empty();
