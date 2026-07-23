@@ -1,5 +1,5 @@
 benchmark/build/
-benchmark/data/
+benchmark/data/**
 !benchmark/data/.gitkeep
 benchmark/results/*_run.log
 __pycache__/
