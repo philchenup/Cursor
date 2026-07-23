@@ -1,0 +1,8 @@
+benchmark/build/
+benchmark/data/**
+!benchmark/data/.gitkeep
+benchmark/results/*_run.log
+__pycache__/
+*.o
+*.pyc
+.DS_Store

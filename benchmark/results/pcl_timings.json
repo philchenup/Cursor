@@ -1,0 +1,679 @@
+{
+  "categories": {
+    "geometry_segmentation": {
+      "cluster_dbscan": {
+        "max_ms": 454.268135,
+        "mean_ms": 451.5659826,
+        "min_ms": 449.733893,
+        "samples_ms": [
+          453.516133,
+          450.06653,
+          450.245222,
+          449.733893,
+          454.268135
+        ],
+        "std_ms": 1.9211472166407775,
+        "supported": true
+      },
+      "compute_aabb": {
+        "max_ms": 0.100055,
+        "mean_ms": 0.10002899999999999,
+        "min_ms": 0.100021,
+        "samples_ms": [
+          0.100055,
+          0.100026,
+          0.100021,
+          0.100022,
+          0.100021
+        ],
+        "std_ms": 1.3130118049738021e-05,
+        "supported": true
+      },
+      "compute_centroid": {
+        "max_ms": 3.5e-05,
+        "mean_ms": 3.14e-05,
+        "min_ms": 3e-05,
+        "samples_ms": [
+          3.5e-05,
+          3.1e-05,
+          3e-05,
+          3e-05,
+          3.1e-05
+        ],
+        "std_ms": 1.8547236990991392e-06,
+        "supported": true
+      },
+      "compute_convex_hull": {
+        "max_ms": 10.676664,
+        "mean_ms": 10.132927200000001,
+        "min_ms": 9.898219,
+        "samples_ms": [
+          9.993823,
+          10.001075,
+          9.898219,
+          10.676664,
+          10.094855
+        ],
+        "std_ms": 0.2788985910099944,
+        "supported": true
+      },
+      "compute_obb": {
+        "max_ms": 1.151917,
+        "mean_ms": 1.068768,
+        "min_ms": 1.016098,
+        "samples_ms": [
+          1.151917,
+          1.114235,
+          1.045153,
+          1.016437,
+          1.016098
+        ],
+        "std_ms": 0.0548659001129117,
+        "supported": true
+      },
+      "extract_boundary_points": {
+        "max_ms": 135.919554,
+        "mean_ms": 135.4366532,
+        "min_ms": 135.191549,
+        "samples_ms": [
+          135.435097,
+          135.350406,
+          135.191549,
+          135.28666,
+          135.919554
+        ],
+        "std_ms": 0.2542472075798663,
+        "supported": true
+      },
+      "fit_line": {
+        "max_ms": 10638.128964,
+        "mean_ms": 10629.8414682,
+        "min_ms": 10622.697262,
+        "samples_ms": [
+          10638.128964,
+          10634.653507,
+          10622.697262,
+          10627.260044,
+          10626.467564
+        ],
+        "std_ms": 5.673181941855279,
+        "supported": true
+      },
+      "fit_plane": {
+        "max_ms": 152.56118,
+        "mean_ms": 152.54974040000002,
+        "min_ms": 152.528837,
+        "samples_ms": [
+          152.56118,
+          152.528837,
+          152.54697,
+          152.555766,
+          152.555949
+        ],
+        "std_ms": 0.01140479079334526,
+        "supported": true
+      },
+      "fit_sphere": {
+        "max_ms": 225.854694,
+        "mean_ms": 224.4039704,
+        "min_ms": 223.791869,
+        "samples_ms": [
+          224.231744,
+          223.791869,
+          224.094986,
+          224.046559,
+          225.854694
+        ],
+        "std_ms": 0.7392081288283014,
+        "supported": true
+      },
+      "plane_from_points": {
+        "max_ms": 3.3e-05,
+        "mean_ms": 3.08e-05,
+        "min_ms": 3e-05,
+        "samples_ms": [
+          3.3e-05,
+          3.1e-05,
+          3e-05,
+          3e-05,
+          3e-05
+        ],
+        "std_ms": 1.1661903789690607e-06,
+        "supported": true
+      },
+      "plane_normal": {
+        "max_ms": 154.569205,
+        "mean_ms": 153.8189716,
+        "min_ms": 153.597359,
+        "samples_ms": [
+          153.695804,
+          153.597359,
+          153.630041,
+          154.569205,
+          153.602449
+        ],
+        "std_ms": 0.37675173909915893,
+        "supported": true
+      },
+      "segment_plane": {
+        "max_ms": 154.116431,
+        "mean_ms": 153.7375524,
+        "min_ms": 153.551917,
+        "samples_ms": [
+          153.606524,
+          154.116431,
+          153.551917,
+          153.711354,
+          153.701536
+        ],
+        "std_ms": 0.1985756652307633,
+        "supported": true
+      },
+      "select_by_index": {
+        "max_ms": 0.055377,
+        "mean_ms": 0.0509594,
+        "min_ms": 0.049615,
+        "samples_ms": [
+          0.055377,
+          0.050182,
+          0.049845,
+          0.049778,
+          0.049615
+        ],
+        "std_ms": 0.0022165082991046988,
+        "supported": true
+      },
+      "select_by_mask": {
+        "max_ms": 0.152023,
+        "mean_ms": 0.1349002,
+        "min_ms": 0.124841,
+        "samples_ms": [
+          0.13452,
+          0.124841,
+          0.131302,
+          0.131815,
+          0.152023
+        ],
+        "std_ms": 0.009132226878478216,
+        "supported": true
+      },
+      "split_by_labels": {
+        "max_ms": 456.941827,
+        "mean_ms": 452.33345799999995,
+        "min_ms": 448.987419,
+        "samples_ms": [
+          448.987419,
+          455.700096,
+          456.941827,
+          450.513204,
+          449.524744
+        ],
+        "std_ms": 3.3157048183165494,
+        "supported": true
+      },
+      "split_by_plane": {
+        "max_ms": 154.292795,
+        "mean_ms": 154.1953194,
+        "min_ms": 154.159252,
+        "samples_ms": [
+          154.292795,
+          154.16925,
+          154.189453,
+          154.165847,
+          154.159252
+        ],
+        "std_ms": 0.049769469688154856,
+        "supported": true
+      }
+    },
+    "io_conversion": {
+      "cloud_to_txt": {
+        "max_ms": 50.833826,
+        "mean_ms": 47.22978479999999,
+        "min_ms": 45.189506,
+        "samples_ms": [
+          46.236594,
+          50.833826,
+          45.420016,
+          48.468982,
+          45.189506
+        ],
+        "std_ms": 2.1423889155880556,
+        "supported": true
+      },
+      "concat_clouds": {
+        "max_ms": 0.865162,
+        "mean_ms": 0.393689,
+        "min_ms": 0.274928,
+        "samples_ms": [
+          0.865162,
+          0.277411,
+          0.275324,
+          0.274928,
+          0.27562
+        ],
+        "std_ms": 0.2357380326209583,
+        "supported": true
+      },
+      "depth_to_cloud": {
+        "reason": "Requires organized depth + camera model; not in core one-liner API used here",
+        "supported": false
+      },
+      "extract_cloud_by_mask": {
+        "reason": "Needs organized cloud + image mask pipeline",
+        "supported": false
+      },
+      "load_cloud": {
+        "max_ms": 62.861863,
+        "mean_ms": 62.3253822,
+        "min_ms": 62.108375,
+        "samples_ms": [
+          62.861863,
+          62.229764,
+          62.108375,
+          62.303947,
+          62.122962
+        ],
+        "std_ms": 0.27766167144883264,
+        "supported": true
+      },
+      "rescale_units": {
+        "max_ms": 0.564894,
+        "mean_ms": 0.5560786,
+        "min_ms": 0.553382,
+        "samples_ms": [
+          0.555004,
+          0.564894,
+          0.553689,
+          0.553382,
+          0.553424
+        ],
+        "std_ms": 0.004447353891922695,
+        "supported": true
+      },
+      "rgbd_to_cloud": {
+        "reason": "Requires organized RGB-D conversion pipeline",
+        "supported": false
+      },
+      "save_cloud": {
+        "max_ms": 1.478582,
+        "mean_ms": 1.416839,
+        "min_ms": 1.368481,
+        "samples_ms": [
+          1.478582,
+          1.4491,
+          1.368481,
+          1.38821,
+          1.399822
+        ],
+        "std_ms": 0.04074472791417317,
+        "supported": true
+      },
+      "transform_cloud": {
+        "max_ms": 0.190447,
+        "mean_ms": 0.1881052,
+        "min_ms": 0.183308,
+        "samples_ms": [
+          0.190447,
+          0.183308,
+          0.188949,
+          0.188714,
+          0.189108
+        ],
+        "std_ms": 0.002473273086418078,
+        "supported": true
+      },
+      "txt_to_cloud": {
+        "max_ms": 48.341558,
+        "mean_ms": 48.220311,
+        "min_ms": 47.974157,
+        "samples_ms": [
+          47.974157,
+          48.341558,
+          48.221172,
+          48.336084,
+          48.228584
+        ],
+        "std_ms": 0.1332405329500003,
+        "supported": true
+      }
+    },
+    "preprocess": {
+      "compute_curvature": {
+        "max_ms": 49.11401,
+        "mean_ms": 47.549455,
+        "min_ms": 46.714613,
+        "samples_ms": [
+          47.315536,
+          46.864839,
+          46.714613,
+          49.11401,
+          47.738277
+        ],
+        "std_ms": 0.8606816399447585,
+        "supported": true
+      },
+      "compute_fpfh": {
+        "max_ms": 239.265594,
+        "mean_ms": 226.883556,
+        "min_ms": 220.158597,
+        "samples_ms": [
+          220.158597,
+          239.265594,
+          221.183267,
+          232.400843,
+          221.409479
+        ],
+        "std_ms": 7.634647445834602,
+        "supported": true
+      },
+      "downsample_fps": {
+        "reason": "PCL has no built-in Farthest Point Sampling filter",
+        "supported": false
+      },
+      "downsample_normal_space": {
+        "max_ms": 25.247431,
+        "mean_ms": 25.016426199999998,
+        "min_ms": 24.915172,
+        "samples_ms": [
+          25.247431,
+          24.929068,
+          24.973338,
+          25.017122,
+          24.915172
+        ],
+        "std_ms": 0.12091663480663015,
+        "supported": true
+      },
+      "downsample_random": {
+        "max_ms": 1.383074,
+        "mean_ms": 1.3795502,
+        "min_ms": 1.375861,
+        "samples_ms": [
+          1.378449,
+          1.375861,
+          1.379313,
+          1.383074,
+          1.381054
+        ],
+        "std_ms": 0.0024313651638533987,
+        "supported": true
+      },
+      "downsample_to_count": {
+        "max_ms": 1.339438,
+        "mean_ms": 1.3350393999999999,
+        "min_ms": 1.330994,
+        "samples_ms": [
+          1.335277,
+          1.335081,
+          1.339438,
+          1.330994,
+          1.334407
+        ],
+        "std_ms": 0.002689648943635553,
+        "supported": true
+      },
+      "downsample_uniform": {
+        "max_ms": 4.855879,
+        "mean_ms": 4.8212158,
+        "min_ms": 4.803778,
+        "samples_ms": [
+          4.855879,
+          4.825222,
+          4.81014,
+          4.803778,
+          4.81106
+        ],
+        "std_ms": 0.018694799067120134,
+        "supported": true
+      },
+      "downsample_voxel": {
+        "max_ms": 3.403197,
+        "mean_ms": 3.3885648,
+        "min_ms": 3.365578,
+        "samples_ms": [
+          3.403151,
+          3.380693,
+          3.365578,
+          3.403197,
+          3.390205
+        ],
+        "std_ms": 0.014282205521557149,
+        "supported": true
+      },
+      "estimate_normals": {
+        "max_ms": 370.864569,
+        "mean_ms": 368.3042762,
+        "min_ms": 365.610201,
+        "samples_ms": [
+          365.610201,
+          366.396687,
+          367.96857,
+          370.864569,
+          370.681354
+        ],
+        "std_ms": 2.1547730498089512,
+        "supported": true
+      },
+      "filter_axis_range": {
+        "max_ms": 0.552797,
+        "mean_ms": 0.5310774,
+        "min_ms": 0.510718,
+        "samples_ms": [
+          0.513169,
+          0.527696,
+          0.551007,
+          0.510718,
+          0.552797
+        ],
+        "std_ms": 0.017975426588540257,
+        "supported": true
+      },
+      "filter_axis_threshold": {
+        "max_ms": 0.419773,
+        "mean_ms": 0.41280320000000004,
+        "min_ms": 0.40936,
+        "samples_ms": [
+          0.419773,
+          0.411593,
+          0.410022,
+          0.40936,
+          0.413268
+        ],
+        "std_ms": 0.003737631196359538,
+        "supported": true
+      },
+      "filter_by_direction": {
+        "reason": "No dedicated direction filter in PCL core filters",
+        "supported": false
+      },
+      "flip_normals": {
+        "max_ms": 0.468457,
+        "mean_ms": 0.3825482,
+        "min_ms": 0.359205,
+        "samples_ms": [
+          0.468457,
+          0.359689,
+          0.359205,
+          0.364941,
+          0.360449
+        ],
+        "std_ms": 0.04300269308031766,
+        "supported": true
+      },
+      "orient_normals": {
+        "max_ms": 415.459786,
+        "mean_ms": 385.45466120000003,
+        "min_ms": 370.541691,
+        "samples_ms": [
+          374.005905,
+          376.221458,
+          415.459786,
+          391.044466,
+          370.541691
+        ],
+        "std_ms": 16.554613689309065,
+        "supported": true
+      },
+      "remove_radius_outliers": {
+        "max_ms": 204.17395,
+        "mean_ms": 203.77372379999997,
+        "min_ms": 203.336245,
+        "samples_ms": [
+          203.878886,
+          203.929452,
+          204.17395,
+          203.336245,
+          203.550086
+        ],
+        "std_ms": 0.2955986934304012,
+        "supported": true
+      },
+      "remove_statistical_outliers": {
+        "max_ms": 230.467299,
+        "mean_ms": 229.9948018,
+        "min_ms": 229.677766,
+        "samples_ms": [
+          229.789495,
+          229.677766,
+          229.94557,
+          230.093879,
+          230.467299
+        ],
+        "std_ms": 0.27501136205866283,
+        "supported": true
+      }
+    },
+    "registration": {
+      "evaluate_registration": {
+        "max_ms": 10.583327,
+        "mean_ms": 10.507390599999999,
+        "min_ms": 10.474479,
+        "samples_ms": [
+          10.474479,
+          10.513254,
+          10.475784,
+          10.490109,
+          10.583327
+        ],
+        "std_ms": 0.04045125605268639,
+        "supported": true
+      },
+      "is_registration_valid": {
+        "max_ms": 29.48555,
+        "mean_ms": 29.2804052,
+        "min_ms": 29.036722,
+        "samples_ms": [
+          29.48555,
+          29.137843,
+          29.466908,
+          29.036722,
+          29.275003
+        ],
+        "std_ms": 0.17697590229791144,
+        "supported": true
+      },
+      "make_init_pose": {
+        "max_ms": 4.4e-05,
+        "mean_ms": 3.62e-05,
+        "min_ms": 3.2e-05,
+        "samples_ms": [
+          4.4e-05,
+          3.7e-05,
+          3.2e-05,
+          3.4e-05,
+          3.4e-05
+        ],
+        "std_ms": 4.214261501141095e-06,
+        "supported": true
+      },
+      "register_cpd": {
+        "reason": "CPD not in PCL",
+        "supported": false
+      },
+      "register_fast_global": {
+        "reason": "Fast Global Registration not in PCL",
+        "supported": false
+      },
+      "register_filterreg": {
+        "reason": "FilterReg not in PCL",
+        "supported": false
+      },
+      "register_fpfh_ransac": {
+        "max_ms": 5887.578658,
+        "mean_ms": 5626.293649600001,
+        "min_ms": 5444.796196,
+        "samples_ms": [
+          5887.578658,
+          5444.796196,
+          5867.513955,
+          5468.026269,
+          5463.55317
+        ],
+        "std_ms": 205.3930108244022,
+        "supported": true
+      },
+      "register_gmmtree": {
+        "reason": "GMMTree not in PCL",
+        "supported": false
+      },
+      "register_icp_colored": {
+        "reason": "Colored ICP not in standard PCL",
+        "supported": false
+      },
+      "register_icp_generalized": {
+        "max_ms": 73.114785,
+        "mean_ms": 73.08247659999999,
+        "min_ms": 73.046375,
+        "samples_ms": [
+          73.046375,
+          73.080267,
+          73.075173,
+          73.114785,
+          73.095783
+        ],
+        "std_ms": 0.02272638739087155,
+        "supported": true
+      },
+      "register_icp_point_to_plane": {
+        "max_ms": 148.589005,
+        "mean_ms": 145.959291,
+        "min_ms": 143.768721,
+        "samples_ms": [
+          145.271573,
+          148.246364,
+          148.589005,
+          143.920792,
+          143.768721
+        ],
+        "std_ms": 2.077167772451225,
+        "supported": true
+      },
+      "register_icp_point_to_point": {
+        "max_ms": 140.001837,
+        "mean_ms": 139.5772584,
+        "min_ms": 139.351406,
+        "samples_ms": [
+          139.45657,
+          139.536995,
+          140.001837,
+          139.539484,
+          139.351406
+        ],
+        "std_ms": 0.22310985219536977,
+        "supported": true
+      },
+      "register_ppf": {
+        "reason": "PPF registration module not exercised / may be unavailable in packaged build",
+        "supported": false
+      },
+      "relative_sampling_step": {
+        "reason": "Utility parameter, not a PCL algorithm",
+        "supported": false
+      }
+    }
+  },
+  "library": "PCL",
+  "n_points": 100000,
+  "version": 101400
+}
