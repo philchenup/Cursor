@@ -1,0 +1,2155 @@
+{
+  "env": {
+    "generated_at_utc": "2026-07-23T03:46:28.915830+00:00",
+    "host": "cursor",
+    "platform": "Linux-6.12.94+-x86_64-with-glibc2.39",
+    "processor": "x86_64",
+    "python": "3.12.3",
+    "n_points": 100000,
+    "warmup": 1,
+    "repeats": 5,
+    "open3d_version": "0.19.0",
+    "pcl_version": 101400,
+    "vm3d_timing": "unavailable_in_this_environment",
+    "vm3d_docs": "https://pinfo.hikrobotics.com/hkws/unzip/20240919112534_17943_doc/",
+    "notes": [
+      "同一合成点云 N=100000，相同参数口径尽量对齐（体素0.05、SOR k=20/std=2、ROR r=0.05/n=16 等）",
+      "库不存在的算法不输出耗时（表中为 —）",
+      "海康 VM3D 为 Windows 商业软件（加密狗/授权），本 Linux 环境无法安装实测；仅据官方模块文档标注是否具备对应能力",
+      "部分同名算法实现不同：fit_line(Open3D=PCA, PCL=RANSAC)；downsample_to_count(Open3D=FPS, PCL=RandomSample)；orient_normals(Open3D=consistent tangent plane, PCL=viewpoint)",
+      "配准类 ICP 在体素降采样后的点云上运行（voxel=0.05），迭代上限约 30"
+    ]
+  },
+  "vm3d_availability": {
+    "io_conversion": {
+      "load_cloud": {
+        "supported": true,
+        "module": "3D图像源 / 本地图像",
+        "note": "流程内加载点云/深度图本地文件"
+      },
+      "save_cloud": {
+        "supported": true,
+        "module": "3D输出图像 / 文本保存",
+        "note": "可导出结果图像/数据"
+      },
+      "txt_to_cloud": {
+        "supported": false,
+        "reason": "无独立 txt→点云算子（通常走图像源/脚本）"
+      },
+      "cloud_to_txt": {
+        "supported": false,
+        "reason": "无独立点云→txt算子"
+      },
+      "rescale_units": {
+        "supported": true,
+        "module": "尺度变换",
+        "note": "3D测量类尺度变换"
+      },
+      "transform_cloud": {
+        "supported": true,
+        "module": "点云坐标系转换 / 坐标系变换-深度图"
+      },
+      "depth_to_cloud": {
+        "supported": true,
+        "module": "转点云-深度图"
+      },
+      "rgbd_to_cloud": {
+        "supported": true,
+        "module": "RGBD等间距转换-深度图",
+        "note": "偏深度图/RGBD流程，非通用开源 RGBD→PCD API"
+      },
+      "extract_cloud_by_mask": {
+        "supported": true,
+        "module": "点云截取 / 截取-深度图 / ROI转掩膜"
+      },
+      "concat_clouds": {
+        "supported": true,
+        "module": "点云合并"
+      }
+    },
+    "preprocess": {
+      "downsample_voxel": {
+        "supported": true,
+        "module": "点云降采样",
+        "note": "文档为统一“点云降采样”，未公开细分为 voxel/fps/nss 等独立算子名"
+      },
+      "downsample_uniform": {
+        "supported": "partial",
+        "module": "点云降采样",
+        "note": "可能作为降采样模式，文档未单独列出"
+      },
+      "downsample_random": {
+        "supported": false,
+        "reason": "文档无随机降采样独立算子"
+      },
+      "downsample_fps": {
+        "supported": false,
+        "reason": "文档无 FPS 独立算子"
+      },
+      "downsample_to_count": {
+        "supported": "partial",
+        "module": "点云降采样",
+        "note": "可能通过目标点数参数实现，未单独命名"
+      },
+      "downsample_normal_space": {
+        "supported": false,
+        "reason": "文档无 Normal Space Sampling"
+      },
+      "filter_axis_range": {
+        "supported": true,
+        "module": "点云截取 / 截取-深度图"
+      },
+      "filter_axis_threshold": {
+        "supported": true,
+        "module": "点云截取 / 高度抽取"
+      },
+      "filter_by_direction": {
+        "supported": true,
+        "module": "法向量滤除-深度图",
+        "note": "深度图法向滤除，非通用点云方向滤波 API"
+      },
+      "remove_statistical_outliers": {
+        "supported": "partial",
+        "module": "杂点过滤-深度图 / 滤波-深度图",
+        "note": "深度图域离群点过滤，非 PCL SOR 同名实现"
+      },
+      "remove_radius_outliers": {
+        "supported": "partial",
+        "module": "杂点过滤-深度图"
+      },
+      "estimate_normals": {
+        "supported": true,
+        "module": "法向量灰度图-深度图",
+        "note": "深度图法向可视化/计算，非通用点云 NormalEstimation API"
+      },
+      "orient_normals": {
+        "supported": false,
+        "reason": "文档无法线一致定向独立算子"
+      },
+      "flip_normals": {
+        "supported": false,
+        "reason": "文档无法线翻转独立算子"
+      },
+      "compute_fpfh": {
+        "supported": false,
+        "reason": "文档无 FPFH 特征算子"
+      },
+      "compute_curvature": {
+        "supported": false,
+        "reason": "文档无曲率计算独立算子"
+      }
+    },
+    "geometry_segmentation": {
+      "compute_obb": {
+        "supported": false,
+        "reason": "文档无 OBB 独立算子"
+      },
+      "compute_convex_hull": {
+        "supported": false,
+        "reason": "文档无凸包独立算子"
+      },
+      "compute_centroid": {
+        "supported": true,
+        "module": "平面点云属性计算 / 单团点云几何查找"
+      },
+      "compute_aabb": {
+        "supported": "partial",
+        "module": "单团点云几何查找",
+        "note": "几何属性中可能含包围信息，未单列 AABB"
+      },
+      "select_by_mask": {
+        "supported": true,
+        "module": "点云截取 / ROI / 掩膜相关"
+      },
+      "select_by_index": {
+        "supported": false,
+        "reason": "面向流程算子，无索引选择 API"
+      },
+      "segment_plane": {
+        "supported": true,
+        "module": "平面检测-深度图 / 平面拟合"
+      },
+      "cluster_dbscan": {
+        "supported": false,
+        "reason": "文档无 DBSCAN 点云聚类算子"
+      },
+      "split_by_labels": {
+        "supported": false,
+        "reason": "文档无按标签拆分点云算子"
+      },
+      "fit_line": {
+        "supported": true,
+        "module": "直线查找-深度图 / 直线查找-轮廓图"
+      },
+      "fit_sphere": {
+        "supported": false,
+        "reason": "文档无球体拟合独立算子"
+      },
+      "fit_plane": {
+        "supported": true,
+        "module": "平面拟合 / 平面检测-深度图"
+      },
+      "plane_from_points": {
+        "supported": false,
+        "reason": "无三点构面独立底层 API"
+      },
+      "plane_normal": {
+        "supported": true,
+        "module": "平面拟合 / 平面点云属性计算"
+      },
+      "split_by_plane": {
+        "supported": "partial",
+        "module": "点云截取 + 平面检测组合"
+      },
+      "extract_boundary_points": {
+        "supported": "partial",
+        "module": "轮廓相关 / 边缘类深度图工具",
+        "note": "偏轮廓图/深度图边缘，非通用边界点提取"
+      }
+    },
+    "registration": {
+      "make_init_pose": {
+        "supported": "partial",
+        "module": "位置修正-深度图 / 标定与坐标转换"
+      },
+      "register_fpfh_ransac": {
+        "supported": false,
+        "reason": "无 FPFH+RANSAC 点云配准算子"
+      },
+      "register_fast_global": {
+        "supported": false,
+        "reason": "无 Fast Global Registration"
+      },
+      "register_ppf": {
+        "supported": false,
+        "reason": "无 PPF 配准算子"
+      },
+      "relative_sampling_step": {
+        "supported": false,
+        "reason": "非独立算子"
+      },
+      "register_icp_point_to_point": {
+        "supported": false,
+        "reason": "文档无经典点到点 ICP 点云算子名"
+      },
+      "register_icp_point_to_plane": {
+        "supported": false,
+        "reason": "文档无点到面 ICP 点云算子名"
+      },
+      "register_icp_generalized": {
+        "supported": false,
+        "reason": "无 GICP"
+      },
+      "register_icp_colored": {
+        "supported": false,
+        "reason": "无 Colored ICP"
+      },
+      "register_filterreg": {
+        "supported": false,
+        "reason": "无 FilterReg"
+      },
+      "register_cpd": {
+        "supported": false,
+        "reason": "无 CPD"
+      },
+      "register_gmmtree": {
+        "supported": false,
+        "reason": "无 GMMTree"
+      },
+      "evaluate_registration": {
+        "supported": "partial",
+        "module": "配准定位-深度图 / 数据统计",
+        "note": "深度图配准定位结果评估，非 Open3D evaluate_registration"
+      },
+      "is_registration_valid": {
+        "supported": "partial",
+        "module": "条件检测 / 逻辑工具"
+      },
+      "_vm3d_registration_note": {
+        "supported": true,
+        "module": "配准定位-深度图 / 匹配-深度图 / 尺度匹配-深度图",
+        "note": "VM3D 配准主路径是深度图模板匹配/定位，与 PCL/Open3D 点云 ICP/FPFH 体系不同"
+      }
+    }
+  },
+  "tables": {
+    "io_conversion": [
+      {
+        "algorithm": "cloud_to_txt",
+        "open3d_ms": 108.03853860002164,
+        "pcl_ms": 47.22978479999999,
+        "vm3d": {
+          "supported": false,
+          "reason": "无独立点云→txt算子"
+        }
+      },
+      {
+        "algorithm": "concat_clouds",
+        "open3d_ms": 7.778046599992194,
+        "pcl_ms": 0.393689,
+        "vm3d": {
+          "supported": true,
+          "module": "点云合并"
+        }
+      },
+      {
+        "algorithm": "depth_to_cloud",
+        "open3d_ms": 0.42289699999855657,
+        "pcl_ms": null,
+        "vm3d": {
+          "supported": true,
+          "module": "转点云-深度图"
+        }
+      },
+      {
+        "algorithm": "extract_cloud_by_mask",
+        "open3d_ms": 0.9967569999844272,
+        "pcl_ms": null,
+        "vm3d": {
+          "supported": true,
+          "module": "点云截取 / 截取-深度图 / ROI转掩膜"
+        }
+      },
+      {
+        "algorithm": "load_cloud",
+        "open3d_ms": 13.513460400008626,
+        "pcl_ms": 62.3253822,
+        "vm3d": {
+          "supported": true,
+          "module": "3D图像源 / 本地图像",
+          "note": "流程内加载点云/深度图本地文件"
+        }
+      },
+      {
+        "algorithm": "rescale_units",
+        "open3d_ms": 1.5225005999809582,
+        "pcl_ms": 0.5560786,
+        "vm3d": {
+          "supported": true,
+          "module": "尺度变换",
+          "note": "3D测量类尺度变换"
+        }
+      },
+      {
+        "algorithm": "rgbd_to_cloud",
+        "open3d_ms": 0.4880493999507962,
+        "pcl_ms": null,
+        "vm3d": {
+          "supported": true,
+          "module": "RGBD等间距转换-深度图",
+          "note": "偏深度图/RGBD流程，非通用开源 RGBD→PCD API"
+        }
+      },
+      {
+        "algorithm": "save_cloud",
+        "open3d_ms": 17.577085199991416,
+        "pcl_ms": 1.416839,
+        "vm3d": {
+          "supported": true,
+          "module": "3D输出图像 / 文本保存",
+          "note": "可导出结果图像/数据"
+        }
+      },
+      {
+        "algorithm": "transform_cloud",
+        "open3d_ms": 1.3396087999808515,
+        "pcl_ms": 0.1881052,
+        "vm3d": {
+          "supported": true,
+          "module": "点云坐标系转换 / 坐标系变换-深度图"
+        }
+      },
+      {
+        "algorithm": "txt_to_cloud",
+        "open3d_ms": 14.917367199996079,
+        "pcl_ms": 48.220311,
+        "vm3d": {
+          "supported": false,
+          "reason": "无独立 txt→点云算子（通常走图像源/脚本）"
+        }
+      }
+    ],
+    "preprocess": [
+      {
+        "algorithm": "compute_curvature",
+        "open3d_ms": 424.3328612000141,
+        "pcl_ms": 47.549455,
+        "vm3d": {
+          "supported": false,
+          "reason": "文档无曲率计算独立算子"
+        }
+      },
+      {
+        "algorithm": "compute_fpfh",
+        "open3d_ms": 70.52677579997635,
+        "pcl_ms": 226.883556,
+        "vm3d": {
+          "supported": false,
+          "reason": "文档无 FPFH 特征算子"
+        }
+      },
+      {
+        "algorithm": "downsample_fps",
+        "open3d_ms": 499.68834460000835,
+        "pcl_ms": null,
+        "vm3d": {
+          "supported": false,
+          "reason": "文档无 FPS 独立算子"
+        }
+      },
+      {
+        "algorithm": "downsample_normal_space",
+        "open3d_ms": null,
+        "pcl_ms": 25.016426199999998,
+        "vm3d": {
+          "supported": false,
+          "reason": "文档无 Normal Space Sampling"
+        }
+      },
+      {
+        "algorithm": "downsample_random",
+        "open3d_ms": 1.392766400022083,
+        "pcl_ms": 1.3795502,
+        "vm3d": {
+          "supported": false,
+          "reason": "文档无随机降采样独立算子"
+        }
+      },
+      {
+        "algorithm": "downsample_to_count",
+        "open3d_ms": 798.5250067999914,
+        "pcl_ms": 1.3350393999999999,
+        "vm3d": {
+          "supported": "partial",
+          "module": "点云降采样",
+          "note": "可能通过目标点数参数实现，未单独命名"
+        }
+      },
+      {
+        "algorithm": "downsample_uniform",
+        "open3d_ms": 0.23943119999785267,
+        "pcl_ms": 4.8212158,
+        "vm3d": {
+          "supported": "partial",
+          "module": "点云降采样",
+          "note": "可能作为降采样模式，文档未单独列出"
+        }
+      },
+      {
+        "algorithm": "downsample_voxel",
+        "open3d_ms": 3.853978999973151,
+        "pcl_ms": 3.3885648,
+        "vm3d": {
+          "supported": true,
+          "module": "点云降采样",
+          "note": "文档为统一“点云降采样”，未公开细分为 voxel/fps/nss 等独立算子名"
+        }
+      },
+      {
+        "algorithm": "estimate_normals",
+        "open3d_ms": 124.04181659999267,
+        "pcl_ms": 368.3042762,
+        "vm3d": {
+          "supported": true,
+          "module": "法向量灰度图-深度图",
+          "note": "深度图法向可视化/计算，非通用点云 NormalEstimation API"
+        }
+      },
+      {
+        "algorithm": "filter_axis_range",
+        "open3d_ms": 2.8737201999774697,
+        "pcl_ms": 0.5310774,
+        "vm3d": {
+          "supported": true,
+          "module": "点云截取 / 截取-深度图"
+        }
+      },
+      {
+        "algorithm": "filter_axis_threshold",
+        "open3d_ms": 0.5208923999589388,
+        "pcl_ms": 0.41280320000000004,
+        "vm3d": {
+          "supported": true,
+          "module": "点云截取 / 高度抽取"
+        }
+      },
+      {
+        "algorithm": "filter_by_direction",
+        "open3d_ms": null,
+        "pcl_ms": null,
+        "vm3d": {
+          "supported": true,
+          "module": "法向量滤除-深度图",
+          "note": "深度图法向滤除，非通用点云方向滤波 API"
+        }
+      },
+      {
+        "algorithm": "flip_normals",
+        "open3d_ms": 1.0808333999648312,
+        "pcl_ms": 0.3825482,
+        "vm3d": {
+          "supported": false,
+          "reason": "文档无法线翻转独立算子"
+        }
+      },
+      {
+        "algorithm": "orient_normals",
+        "open3d_ms": 2202.743446400018,
+        "pcl_ms": 385.45466120000003,
+        "vm3d": {
+          "supported": false,
+          "reason": "文档无法线一致定向独立算子"
+        }
+      },
+      {
+        "algorithm": "remove_radius_outliers",
+        "open3d_ms": 167.3150951999787,
+        "pcl_ms": 203.77372379999997,
+        "vm3d": {
+          "supported": "partial",
+          "module": "杂点过滤-深度图"
+        }
+      },
+      {
+        "algorithm": "remove_statistical_outliers",
+        "open3d_ms": 93.5253904000092,
+        "pcl_ms": 229.9948018,
+        "vm3d": {
+          "supported": "partial",
+          "module": "杂点过滤-深度图 / 滤波-深度图",
+          "note": "深度图域离群点过滤，非 PCL SOR 同名实现"
+        }
+      }
+    ],
+    "geometry_segmentation": [
+      {
+        "algorithm": "cluster_dbscan",
+        "open3d_ms": 300.15441759996975,
+        "pcl_ms": 451.5659826,
+        "vm3d": {
+          "supported": false,
+          "reason": "文档无 DBSCAN 点云聚类算子"
+        }
+      },
+      {
+        "algorithm": "compute_aabb",
+        "open3d_ms": 0.2079168000136633,
+        "pcl_ms": 0.10002899999999999,
+        "vm3d": {
+          "supported": "partial",
+          "module": "单团点云几何查找",
+          "note": "几何属性中可能含包围信息，未单列 AABB"
+        }
+      },
+      {
+        "algorithm": "compute_centroid",
+        "open3d_ms": 0.06461399998443085,
+        "pcl_ms": 3.14e-05,
+        "vm3d": {
+          "supported": true,
+          "module": "平面点云属性计算 / 单团点云几何查找"
+        }
+      },
+      {
+        "algorithm": "compute_convex_hull",
+        "open3d_ms": 8.297856399963166,
+        "pcl_ms": 10.132927200000001,
+        "vm3d": {
+          "supported": false,
+          "reason": "文档无凸包独立算子"
+        }
+      },
+      {
+        "algorithm": "compute_obb",
+        "open3d_ms": 8.294692000004034,
+        "pcl_ms": 1.068768,
+        "vm3d": {
+          "supported": false,
+          "reason": "文档无 OBB 独立算子"
+        }
+      },
+      {
+        "algorithm": "extract_boundary_points",
+        "open3d_ms": 155.2488241999754,
+        "pcl_ms": 135.4366532,
+        "vm3d": {
+          "supported": "partial",
+          "module": "轮廓相关 / 边缘类深度图工具",
+          "note": "偏轮廓图/深度图边缘，非通用边界点提取"
+        }
+      },
+      {
+        "algorithm": "fit_line",
+        "open3d_ms": 3.627418399992166,
+        "pcl_ms": 10629.8414682,
+        "vm3d": {
+          "supported": true,
+          "module": "直线查找-深度图 / 直线查找-轮廓图"
+        }
+      },
+      {
+        "algorithm": "fit_plane",
+        "open3d_ms": 70.90168260001519,
+        "pcl_ms": 152.54974040000002,
+        "vm3d": {
+          "supported": true,
+          "module": "平面拟合 / 平面检测-深度图"
+        }
+      },
+      {
+        "algorithm": "fit_sphere",
+        "open3d_ms": null,
+        "pcl_ms": 224.4039704,
+        "vm3d": {
+          "supported": false,
+          "reason": "文档无球体拟合独立算子"
+        }
+      },
+      {
+        "algorithm": "plane_from_points",
+        "open3d_ms": 0.023812000017642276,
+        "pcl_ms": 3.08e-05,
+        "vm3d": {
+          "supported": false,
+          "reason": "无三点构面独立底层 API"
+        }
+      },
+      {
+        "algorithm": "plane_normal",
+        "open3d_ms": 47.914879200016,
+        "pcl_ms": 153.8189716,
+        "vm3d": {
+          "supported": true,
+          "module": "平面拟合 / 平面点云属性计算"
+        }
+      },
+      {
+        "algorithm": "segment_plane",
+        "open3d_ms": 117.45081519998166,
+        "pcl_ms": 153.7375524,
+        "vm3d": {
+          "supported": true,
+          "module": "平面检测-深度图 / 平面拟合"
+        }
+      },
+      {
+        "algorithm": "select_by_index",
+        "open3d_ms": 2.8618177999987893,
+        "pcl_ms": 0.0509594,
+        "vm3d": {
+          "supported": false,
+          "reason": "面向流程算子，无索引选择 API"
+        }
+      },
+      {
+        "algorithm": "select_by_mask",
+        "open3d_ms": 6.9194609999840395,
+        "pcl_ms": 0.1349002,
+        "vm3d": {
+          "supported": true,
+          "module": "点云截取 / ROI / 掩膜相关"
+        }
+      },
+      {
+        "algorithm": "split_by_labels",
+        "open3d_ms": 316.14188919998014,
+        "pcl_ms": 452.33345799999995,
+        "vm3d": {
+          "supported": false,
+          "reason": "文档无按标签拆分点云算子"
+        }
+      },
+      {
+        "algorithm": "split_by_plane",
+        "open3d_ms": 73.34132379996845,
+        "pcl_ms": 154.1953194,
+        "vm3d": {
+          "supported": "partial",
+          "module": "点云截取 + 平面检测组合"
+        }
+      }
+    ],
+    "registration": [
+      {
+        "algorithm": "evaluate_registration",
+        "open3d_ms": 2.141587599999184,
+        "pcl_ms": 10.507390599999999,
+        "vm3d": {
+          "supported": "partial",
+          "module": "配准定位-深度图 / 数据统计",
+          "note": "深度图配准定位结果评估，非 Open3D evaluate_registration"
+        }
+      },
+      {
+        "algorithm": "is_registration_valid",
+        "open3d_ms": 2.13900079997984,
+        "pcl_ms": 29.2804052,
+        "vm3d": {
+          "supported": "partial",
+          "module": "条件检测 / 逻辑工具"
+        }
+      },
+      {
+        "algorithm": "make_init_pose",
+        "open3d_ms": 0.001598199992258742,
+        "pcl_ms": 3.62e-05,
+        "vm3d": {
+          "supported": "partial",
+          "module": "位置修正-深度图 / 标定与坐标转换"
+        }
+      },
+      {
+        "algorithm": "register_fast_global",
+        "open3d_ms": 781.4580944000227,
+        "pcl_ms": null,
+        "vm3d": {
+          "supported": false,
+          "reason": "无 Fast Global Registration"
+        }
+      },
+      {
+        "algorithm": "register_fpfh_ransac",
+        "open3d_ms": 832.2472724000136,
+        "pcl_ms": 5626.293649600001,
+        "vm3d": {
+          "supported": false,
+          "reason": "无 FPFH+RANSAC 点云配准算子"
+        }
+      },
+      {
+        "algorithm": "register_icp_colored",
+        "open3d_ms": 40.320559400015554,
+        "pcl_ms": null,
+        "vm3d": {
+          "supported": false,
+          "reason": "无 Colored ICP"
+        }
+      },
+      {
+        "algorithm": "register_icp_generalized",
+        "open3d_ms": 15.979014399977132,
+        "pcl_ms": 73.08247659999999,
+        "vm3d": {
+          "supported": false,
+          "reason": "无 GICP"
+        }
+      },
+      {
+        "algorithm": "register_icp_point_to_plane",
+        "open3d_ms": 16.217238600029305,
+        "pcl_ms": 145.959291,
+        "vm3d": {
+          "supported": false,
+          "reason": "文档无点到面 ICP 点云算子名"
+        }
+      },
+      {
+        "algorithm": "register_icp_point_to_point",
+        "open3d_ms": 15.484918399965864,
+        "pcl_ms": 139.5772584,
+        "vm3d": {
+          "supported": false,
+          "reason": "文档无经典点到点 ICP 点云算子名"
+        }
+      }
+    ]
+  },
+  "open3d": {
+    "library": "Open3D",
+    "version": "0.19.0",
+    "n_points": 100000,
+    "categories": {
+      "io_conversion": {
+        "load_cloud": {
+          "mean_ms": 13.513460400008626,
+          "std_ms": 1.5390178710252986,
+          "min_ms": 11.885709000011957,
+          "max_ms": 16.01084300000366,
+          "samples_ms": [
+            14.059109000072567,
+            16.01084300000366,
+            11.885709000011957,
+            13.71607999999469,
+            11.895560999960253
+          ],
+          "supported": true
+        },
+        "save_cloud": {
+          "mean_ms": 17.577085199991416,
+          "std_ms": 1.4617151189869437,
+          "min_ms": 15.708952999943904,
+          "max_ms": 19.22546200000852,
+          "samples_ms": [
+            19.22546200000852,
+            15.92602200003057,
+            18.51306300000033,
+            15.708952999943904,
+            18.511925999973755
+          ],
+          "supported": true
+        },
+        "txt_to_cloud": {
+          "mean_ms": 14.917367199996079,
+          "std_ms": 0.5201287004377237,
+          "min_ms": 14.490196999986438,
+          "max_ms": 15.929747999962274,
+          "samples_ms": [
+            14.638799000067593,
+            14.86569500002588,
+            14.490196999986438,
+            15.929747999962274,
+            14.66239699993821
+          ],
+          "supported": true
+        },
+        "cloud_to_txt": {
+          "mean_ms": 108.03853860002164,
+          "std_ms": 3.728266300492404,
+          "min_ms": 104.85400000004574,
+          "max_ms": 115.12428800006091,
+          "samples_ms": [
+            107.92046100004882,
+            105.15180200002305,
+            107.14214199992966,
+            104.85400000004574,
+            115.12428800006091
+          ],
+          "supported": true
+        },
+        "rescale_units": {
+          "mean_ms": 1.5225005999809582,
+          "std_ms": 0.998408084564469,
+          "min_ms": 0.6500209999558137,
+          "max_ms": 3.2455759999265865,
+          "samples_ms": [
+            0.8069689999956609,
+            3.2455759999265865,
+            0.8496680000007473,
+            2.0602690000259827,
+            0.6500209999558137
+          ],
+          "supported": true
+        },
+        "transform_cloud": {
+          "mean_ms": 1.3396087999808515,
+          "std_ms": 0.4741361180800554,
+          "min_ms": 0.810684999919431,
+          "max_ms": 2.1169730000565323,
+          "samples_ms": [
+            0.810684999919431,
+            2.1169730000565323,
+            1.1014909999857991,
+            1.6371159999835072,
+            1.0317789999589877
+          ],
+          "supported": true
+        },
+        "depth_to_cloud": {
+          "mean_ms": 0.42289699999855657,
+          "std_ms": 0.0212535849228964,
+          "min_ms": 0.39308099997015233,
+          "max_ms": 0.4470889999765859,
+          "samples_ms": [
+            0.44266600002629275,
+            0.40371099998992577,
+            0.42793800002982607,
+            0.4470889999765859,
+            0.39308099997015233
+          ],
+          "supported": true
+        },
+        "rgbd_to_cloud": {
+          "mean_ms": 0.4880493999507962,
+          "std_ms": 0.0384419741798082,
+          "min_ms": 0.4531379998979901,
+          "max_ms": 0.5619639999849824,
+          "samples_ms": [
+            0.48548299992035027,
+            0.46556799998143106,
+            0.5619639999849824,
+            0.4740939999692273,
+            0.4531379998979901
+          ],
+          "supported": true
+        },
+        "extract_cloud_by_mask": {
+          "mean_ms": 0.9967569999844272,
+          "std_ms": 0.015300697812392036,
+          "min_ms": 0.9829969999373134,
+          "max_ms": 1.0238499999104533,
+          "samples_ms": [
+            1.0238499999104533,
+            0.9898470000280213,
+            0.9840900000881447,
+            1.0030009999582035,
+            0.9829969999373134
+          ],
+          "supported": true
+        },
+        "concat_clouds": {
+          "mean_ms": 7.778046599992194,
+          "std_ms": 2.1650979856299974,
+          "min_ms": 5.4206600000270555,
+          "max_ms": 11.716644999978598,
+          "samples_ms": [
+            7.690303000003951,
+            11.716644999978598,
+            7.820455999990372,
+            5.4206600000270555,
+            6.242168999960995
+          ],
+          "supported": true
+        }
+      },
+      "preprocess": {
+        "downsample_voxel": {
+          "mean_ms": 3.853978999973151,
+          "std_ms": 0.0270024740156533,
+          "min_ms": 3.816298999936407,
+          "max_ms": 3.8998070000388907,
+          "samples_ms": [
+            3.8998070000388907,
+            3.816298999936407,
+            3.84478199998739,
+            3.8590059999705772,
+            3.8500009999324902
+          ],
+          "supported": true
+        },
+        "downsample_uniform": {
+          "mean_ms": 0.23943119999785267,
+          "std_ms": 0.002902707339688064,
+          "min_ms": 0.23567400000956695,
+          "max_ms": 0.2421530000447092,
+          "samples_ms": [
+            0.24207499996009574,
+            0.24110900005780422,
+            0.2421530000447092,
+            0.23614499991708726,
+            0.23567400000956695
+          ],
+          "supported": true
+        },
+        "downsample_random": {
+          "mean_ms": 1.392766400022083,
+          "std_ms": 0.03404609106865442,
+          "min_ms": 1.3598320000483,
+          "max_ms": 1.454670000043734,
+          "samples_ms": [
+            1.3687870000467228,
+            1.454670000043734,
+            1.3781989999870348,
+            1.4023439999846232,
+            1.3598320000483
+          ],
+          "supported": true
+        },
+        "downsample_fps": {
+          "mean_ms": 499.68834460000835,
+          "std_ms": 2.130204627120725,
+          "min_ms": 497.01376699999855,
+          "max_ms": 502.74023400004353,
+          "samples_ms": [
+            497.01376699999855,
+            502.74023400004353,
+            500.5055999999968,
+            500.6467059999977,
+            497.53541600000517
+          ],
+          "supported": true
+        },
+        "downsample_to_count": {
+          "mean_ms": 798.5250067999914,
+          "std_ms": 2.9327403571242154,
+          "min_ms": 794.8538409999628,
+          "max_ms": 801.4553269999851,
+          "samples_ms": [
+            800.8759660000351,
+            795.0631329999851,
+            800.3767669999888,
+            801.4553269999851,
+            794.8538409999628
+          ],
+          "supported": true
+        },
+        "downsample_normal_space": {
+          "supported": false,
+          "reason": "Open3D has no Normal Space Sampling (NSS) API"
+        },
+        "filter_axis_range": {
+          "mean_ms": 2.8737201999774697,
+          "std_ms": 1.4624339370006698,
+          "min_ms": 1.852598999903421,
+          "max_ms": 5.6931459999987055,
+          "samples_ms": [
+            1.852598999903421,
+            5.6931459999987055,
+            1.9631750000144166,
+            2.919004999967001,
+            1.9406760000038048
+          ],
+          "supported": true
+        },
+        "filter_axis_threshold": {
+          "mean_ms": 0.5208923999589388,
+          "std_ms": 0.010426145602910141,
+          "min_ms": 0.5052349999914441,
+          "max_ms": 0.5338019999499011,
+          "samples_ms": [
+            0.5299829999785288,
+            0.5139159999316689,
+            0.5052349999914441,
+            0.5338019999499011,
+            0.521525999943151
+          ],
+          "supported": true
+        },
+        "filter_by_direction": {
+          "supported": false,
+          "reason": "No dedicated direction-filter; would require custom normal/dot logic"
+        },
+        "remove_statistical_outliers": {
+          "mean_ms": 93.5253904000092,
+          "std_ms": 1.4587581405596175,
+          "min_ms": 91.50152900008379,
+          "max_ms": 95.54291199992804,
+          "samples_ms": [
+            95.54291199992804,
+            94.3070240000452,
+            92.25400799994077,
+            94.0214790000482,
+            91.50152900008379
+          ],
+          "supported": true
+        },
+        "remove_radius_outliers": {
+          "mean_ms": 167.3150951999787,
+          "std_ms": 19.405349788427042,
+          "min_ms": 156.1620119999816,
+          "max_ms": 205.99783099999058,
+          "samples_ms": [
+            160.52313700004106,
+            157.63035599991326,
+            156.26213999996708,
+            205.99783099999058,
+            156.1620119999816
+          ],
+          "supported": true
+        },
+        "estimate_normals": {
+          "mean_ms": 124.04181659999267,
+          "std_ms": 0.43744841105881666,
+          "min_ms": 123.3236709999801,
+          "max_ms": 124.50463699997272,
+          "samples_ms": [
+            124.38237399999252,
+            124.23077999994803,
+            123.76762100007,
+            124.50463699997272,
+            123.3236709999801
+          ],
+          "supported": true
+        },
+        "orient_normals": {
+          "mean_ms": 2202.743446400018,
+          "std_ms": 12.14589452105677,
+          "min_ms": 2184.9297000001116,
+          "max_ms": 2216.1795189999793,
+          "samples_ms": [
+            2184.9297000001116,
+            2207.833122000011,
+            2192.053087999966,
+            2212.721803000022,
+            2216.1795189999793
+          ],
+          "supported": true
+        },
+        "flip_normals": {
+          "mean_ms": 1.0808333999648312,
+          "std_ms": 0.1945573955802782,
+          "min_ms": 0.8737559999190125,
+          "max_ms": 1.3130789999422632,
+          "samples_ms": [
+            1.3066609999441425,
+            1.3130789999422632,
+            0.8848149999494126,
+            1.025856000069325,
+            0.8737559999190125
+          ],
+          "supported": true
+        },
+        "compute_fpfh": {
+          "mean_ms": 70.52677579997635,
+          "std_ms": 0.17825184377724365,
+          "min_ms": 70.29561599995304,
+          "max_ms": 70.8349949999274,
+          "samples_ms": [
+            70.29561599995304,
+            70.4412789999651,
+            70.8349949999274,
+            70.57029700001749,
+            70.4916920000187
+          ],
+          "supported": true
+        },
+        "compute_curvature": {
+          "mean_ms": 424.3328612000141,
+          "std_ms": 0.8865215556221111,
+          "min_ms": 423.3193329999949,
+          "max_ms": 425.96678400002475,
+          "samples_ms": [
+            425.96678400002475,
+            424.1590000000315,
+            424.33623900001294,
+            423.3193329999949,
+            423.88295000000653
+          ],
+          "supported": true
+        }
+      },
+      "geometry_segmentation": {
+        "compute_obb": {
+          "mean_ms": 8.294692000004034,
+          "std_ms": 0.019413903883930057,
+          "min_ms": 8.272491000070659,
+          "max_ms": 8.328265000045576,
+          "samples_ms": [
+            8.302408999952604,
+            8.328265000045576,
+            8.2885179999721,
+            8.272491000070659,
+            8.281776999979229
+          ],
+          "supported": true
+        },
+        "compute_convex_hull": {
+          "mean_ms": 8.297856399963166,
+          "std_ms": 0.020244542969894763,
+          "min_ms": 8.261672000003273,
+          "max_ms": 8.318698999914886,
+          "samples_ms": [
+            8.291228999951272,
+            8.305660000019088,
+            8.318698999914886,
+            8.31202199992731,
+            8.261672000003273
+          ],
+          "supported": true
+        },
+        "compute_centroid": {
+          "mean_ms": 0.06461399998443085,
+          "std_ms": 0.004749977839043311,
+          "min_ms": 0.060885999914717104,
+          "max_ms": 0.07393600003524625,
+          "samples_ms": [
+            0.06356699998377735,
+            0.0628789999836954,
+            0.07393600003524625,
+            0.06180200000471814,
+            0.060885999914717104
+          ],
+          "supported": true
+        },
+        "compute_aabb": {
+          "mean_ms": 0.2079168000136633,
+          "std_ms": 0.00025514732082672673,
+          "min_ms": 0.20765099998243386,
+          "max_ms": 0.2083709999851635,
+          "samples_ms": [
+            0.2083709999851635,
+            0.20785499998510204,
+            0.20765099998243386,
+            0.20798900004592724,
+            0.20771800006968988
+          ],
+          "supported": true
+        },
+        "select_by_mask": {
+          "mean_ms": 6.9194609999840395,
+          "std_ms": 0.03240309619313995,
+          "min_ms": 6.878533999952197,
+          "max_ms": 6.9621760000018185,
+          "samples_ms": [
+            6.9621760000018185,
+            6.951171999958206,
+            6.89313200007291,
+            6.912290999935067,
+            6.878533999952197
+          ],
+          "supported": true
+        },
+        "select_by_index": {
+          "mean_ms": 2.8618177999987893,
+          "std_ms": 0.0192307163789497,
+          "min_ms": 2.8365709999889077,
+          "max_ms": 2.893425000024763,
+          "samples_ms": [
+            2.857489000007263,
+            2.893425000024763,
+            2.8365709999889077,
+            2.870596999969166,
+            2.8510070000038468
+          ],
+          "supported": true
+        },
+        "segment_plane": {
+          "mean_ms": 117.45081519998166,
+          "std_ms": 0.43024461805962017,
+          "min_ms": 116.9120260000227,
+          "max_ms": 118.1765970000015,
+          "samples_ms": [
+            116.9120260000227,
+            117.63705599992136,
+            117.21858099997462,
+            118.1765970000015,
+            117.30981599998813
+          ],
+          "supported": true
+        },
+        "cluster_dbscan": {
+          "mean_ms": 300.15441759996975,
+          "std_ms": 0.47519105612527757,
+          "min_ms": 299.6702440000263,
+          "max_ms": 300.74649699997735,
+          "samples_ms": [
+            300.7010019999825,
+            300.74649699997735,
+            299.95190699992236,
+            299.6702440000263,
+            299.70243799994023
+          ],
+          "supported": true
+        },
+        "split_by_labels": {
+          "mean_ms": 316.14188919998014,
+          "std_ms": 1.3555655924842813,
+          "min_ms": 314.26680699996723,
+          "max_ms": 318.1795719999627,
+          "samples_ms": [
+            316.31644599997344,
+            314.26680699996723,
+            315.127025000038,
+            318.1795719999627,
+            316.81959599995935
+          ],
+          "supported": true
+        },
+        "fit_line": {
+          "mean_ms": 3.627418399992166,
+          "std_ms": 0.043580148102333835,
+          "min_ms": 3.5795679999637287,
+          "max_ms": 3.705089000050066,
+          "samples_ms": [
+            3.705089000050066,
+            3.6334689999648617,
+            3.625196000029973,
+            3.593769999952201,
+            3.5795679999637287
+          ],
+          "supported": true
+        },
+        "fit_sphere": {
+          "supported": false,
+          "reason": "Open3D has no built-in sphere RANSAC fit API"
+        },
+        "fit_plane": {
+          "mean_ms": 70.90168260001519,
+          "std_ms": 0.378700477042461,
+          "min_ms": 70.51400600005309,
+          "max_ms": 71.47668100003557,
+          "samples_ms": [
+            70.59476300003098,
+            71.22109900001306,
+            71.47668100003557,
+            70.70186399994327,
+            70.51400600005309
+          ],
+          "supported": true
+        },
+        "plane_from_points": {
+          "mean_ms": 0.023812000017642276,
+          "std_ms": 0.0053729882594513185,
+          "min_ms": 0.01849600005243701,
+          "max_ms": 0.03329100002247287,
+          "samples_ms": [
+            0.03329100002247287,
+            0.025979000042752887,
+            0.019780000002356246,
+            0.021513999968192365,
+            0.01849600005243701
+          ],
+          "supported": true
+        },
+        "plane_normal": {
+          "mean_ms": 47.914879200016,
+          "std_ms": 0.2323306810517327,
+          "min_ms": 47.65555699998458,
+          "max_ms": 48.3468920000405,
+          "samples_ms": [
+            47.80852099997901,
+            47.65555699998458,
+            48.3468920000405,
+            47.84641000003376,
+            47.91701600004217
+          ],
+          "supported": true
+        },
+        "split_by_plane": {
+          "mean_ms": 73.34132379996845,
+          "std_ms": 0.09822428237651168,
+          "min_ms": 73.21534599998358,
+          "max_ms": 73.44047300000511,
+          "samples_ms": [
+            73.37701899996318,
+            73.44047300000511,
+            73.43990899994424,
+            73.23387199994613,
+            73.21534599998358
+          ],
+          "supported": true
+        },
+        "extract_boundary_points": {
+          "mean_ms": 155.2488241999754,
+          "std_ms": 0.7251803935639204,
+          "min_ms": 153.92925000003288,
+          "max_ms": 155.91322999989643,
+          "samples_ms": [
+            155.18038999994133,
+            153.92925000003288,
+            155.31042700001763,
+            155.91082399998868,
+            155.91322999989643
+          ],
+          "supported": true
+        }
+      },
+      "registration": {
+        "make_init_pose": {
+          "mean_ms": 0.001598199992258742,
+          "std_ms": 0.0010026503399880211,
+          "min_ms": 0.0008539999498680118,
+          "max_ms": 0.0035649999290399137,
+          "samples_ms": [
+            0.0035649999290399137,
+            0.0013670000953425188,
+            0.000930000055632263,
+            0.0008539999498680118,
+            0.0012749999314110028
+          ],
+          "supported": true
+        },
+        "register_fpfh_ransac": {
+          "mean_ms": 832.2472724000136,
+          "std_ms": 60.79708363685723,
+          "min_ms": 744.9634409999817,
+          "max_ms": 896.8099380000467,
+          "samples_ms": [
+            853.6464290000367,
+            777.0700099999885,
+            888.7465440000142,
+            744.9634409999817,
+            896.8099380000467
+          ],
+          "supported": true
+        },
+        "register_fast_global": {
+          "mean_ms": 781.4580944000227,
+          "std_ms": 3.2516370796572502,
+          "min_ms": 777.0147579999502,
+          "max_ms": 785.1510280000866,
+          "samples_ms": [
+            777.0147579999502,
+            784.7013110000489,
+            785.1510280000866,
+            781.923296000059,
+            778.5000789999685
+          ],
+          "supported": true
+        },
+        "register_ppf": {
+          "supported": false,
+          "reason": "Open3D has no PPF registration pipeline API"
+        },
+        "relative_sampling_step": {
+          "supported": false,
+          "reason": "Parameter utility, not a standalone Open3D algorithm"
+        },
+        "register_icp_point_to_point": {
+          "mean_ms": 15.484918399965864,
+          "std_ms": 0.018616747389228444,
+          "min_ms": 15.461458999993738,
+          "max_ms": 15.507260999925165,
+          "samples_ms": [
+            15.50521599995136,
+            15.481939999972383,
+            15.461458999993738,
+            15.46871599998667,
+            15.507260999925165
+          ],
+          "supported": true
+        },
+        "register_icp_point_to_plane": {
+          "mean_ms": 16.217238600029305,
+          "std_ms": 0.03940374983543531,
+          "min_ms": 16.18326600009823,
+          "max_ms": 16.27688099995339,
+          "samples_ms": [
+            16.18326600009823,
+            16.18526100003237,
+            16.27688099995339,
+            16.188694999982545,
+            16.25209000007999
+          ],
+          "supported": true
+        },
+        "register_icp_generalized": {
+          "mean_ms": 15.979014399977132,
+          "std_ms": 0.01633866367554399,
+          "min_ms": 15.965153000024657,
+          "max_ms": 16.010684000093534,
+          "samples_ms": [
+            15.970763999916926,
+            16.010684000093534,
+            15.965153000024657,
+            15.977834999944207,
+            15.970635999906335
+          ],
+          "supported": true
+        },
+        "register_icp_colored": {
+          "mean_ms": 40.320559400015554,
+          "std_ms": 0.02341985639342552,
+          "min_ms": 40.28408600004241,
+          "max_ms": 40.34975700005816,
+          "samples_ms": [
+            40.30943199995818,
+            40.28408600004241,
+            40.31821800003854,
+            40.34130399998048,
+            40.34975700005816
+          ],
+          "supported": true
+        },
+        "register_filterreg": {
+          "supported": false,
+          "reason": "FilterReg not in Open3D"
+        },
+        "register_cpd": {
+          "supported": false,
+          "reason": "CPD not in Open3D core"
+        },
+        "register_gmmtree": {
+          "supported": false,
+          "reason": "GMMTree registration not in Open3D"
+        },
+        "evaluate_registration": {
+          "mean_ms": 2.141587599999184,
+          "std_ms": 0.00676910727483495,
+          "min_ms": 2.1292879999919023,
+          "max_ms": 2.1485240000629346,
+          "samples_ms": [
+            2.1444069999461135,
+            2.1292879999919023,
+            2.1485240000629346,
+            2.1398159999534982,
+            2.1459030000414714
+          ],
+          "supported": true
+        },
+        "is_registration_valid": {
+          "mean_ms": 2.13900079997984,
+          "std_ms": 0.00873740460999968,
+          "min_ms": 2.1269860000074914,
+          "max_ms": 2.1483539999280765,
+          "samples_ms": [
+            2.1483539999280765,
+            2.1435050000491174,
+            2.1269860000074914,
+            2.1460759999172296,
+            2.130082999997285
+          ],
+          "supported": true
+        }
+      }
+    }
+  },
+  "pcl": {
+    "categories": {
+      "geometry_segmentation": {
+        "cluster_dbscan": {
+          "max_ms": 454.268135,
+          "mean_ms": 451.5659826,
+          "min_ms": 449.733893,
+          "samples_ms": [
+            453.516133,
+            450.06653,
+            450.245222,
+            449.733893,
+            454.268135
+          ],
+          "std_ms": 1.9211472166407775,
+          "supported": true
+        },
+        "compute_aabb": {
+          "max_ms": 0.100055,
+          "mean_ms": 0.10002899999999999,
+          "min_ms": 0.100021,
+          "samples_ms": [
+            0.100055,
+            0.100026,
+            0.100021,
+            0.100022,
+            0.100021
+          ],
+          "std_ms": 1.3130118049738021e-05,
+          "supported": true
+        },
+        "compute_centroid": {
+          "max_ms": 3.5e-05,
+          "mean_ms": 3.14e-05,
+          "min_ms": 3e-05,
+          "samples_ms": [
+            3.5e-05,
+            3.1e-05,
+            3e-05,
+            3e-05,
+            3.1e-05
+          ],
+          "std_ms": 1.8547236990991392e-06,
+          "supported": true
+        },
+        "compute_convex_hull": {
+          "max_ms": 10.676664,
+          "mean_ms": 10.132927200000001,
+          "min_ms": 9.898219,
+          "samples_ms": [
+            9.993823,
+            10.001075,
+            9.898219,
+            10.676664,
+            10.094855
+          ],
+          "std_ms": 0.2788985910099944,
+          "supported": true
+        },
+        "compute_obb": {
+          "max_ms": 1.151917,
+          "mean_ms": 1.068768,
+          "min_ms": 1.016098,
+          "samples_ms": [
+            1.151917,
+            1.114235,
+            1.045153,
+            1.016437,
+            1.016098
+          ],
+          "std_ms": 0.0548659001129117,
+          "supported": true
+        },
+        "extract_boundary_points": {
+          "max_ms": 135.919554,
+          "mean_ms": 135.4366532,
+          "min_ms": 135.191549,
+          "samples_ms": [
+            135.435097,
+            135.350406,
+            135.191549,
+            135.28666,
+            135.919554
+          ],
+          "std_ms": 0.2542472075798663,
+          "supported": true
+        },
+        "fit_line": {
+          "max_ms": 10638.128964,
+          "mean_ms": 10629.8414682,
+          "min_ms": 10622.697262,
+          "samples_ms": [
+            10638.128964,
+            10634.653507,
+            10622.697262,
+            10627.260044,
+            10626.467564
+          ],
+          "std_ms": 5.673181941855279,
+          "supported": true
+        },
+        "fit_plane": {
+          "max_ms": 152.56118,
+          "mean_ms": 152.54974040000002,
+          "min_ms": 152.528837,
+          "samples_ms": [
+            152.56118,
+            152.528837,
+            152.54697,
+            152.555766,
+            152.555949
+          ],
+          "std_ms": 0.01140479079334526,
+          "supported": true
+        },
+        "fit_sphere": {
+          "max_ms": 225.854694,
+          "mean_ms": 224.4039704,
+          "min_ms": 223.791869,
+          "samples_ms": [
+            224.231744,
+            223.791869,
+            224.094986,
+            224.046559,
+            225.854694
+          ],
+          "std_ms": 0.7392081288283014,
+          "supported": true
+        },
+        "plane_from_points": {
+          "max_ms": 3.3e-05,
+          "mean_ms": 3.08e-05,
+          "min_ms": 3e-05,
+          "samples_ms": [
+            3.3e-05,
+            3.1e-05,
+            3e-05,
+            3e-05,
+            3e-05
+          ],
+          "std_ms": 1.1661903789690607e-06,
+          "supported": true
+        },
+        "plane_normal": {
+          "max_ms": 154.569205,
+          "mean_ms": 153.8189716,
+          "min_ms": 153.597359,
+          "samples_ms": [
+            153.695804,
+            153.597359,
+            153.630041,
+            154.569205,
+            153.602449
+          ],
+          "std_ms": 0.37675173909915893,
+          "supported": true
+        },
+        "segment_plane": {
+          "max_ms": 154.116431,
+          "mean_ms": 153.7375524,
+          "min_ms": 153.551917,
+          "samples_ms": [
+            153.606524,
+            154.116431,
+            153.551917,
+            153.711354,
+            153.701536
+          ],
+          "std_ms": 0.1985756652307633,
+          "supported": true
+        },
+        "select_by_index": {
+          "max_ms": 0.055377,
+          "mean_ms": 0.0509594,
+          "min_ms": 0.049615,
+          "samples_ms": [
+            0.055377,
+            0.050182,
+            0.049845,
+            0.049778,
+            0.049615
+          ],
+          "std_ms": 0.0022165082991046988,
+          "supported": true
+        },
+        "select_by_mask": {
+          "max_ms": 0.152023,
+          "mean_ms": 0.1349002,
+          "min_ms": 0.124841,
+          "samples_ms": [
+            0.13452,
+            0.124841,
+            0.131302,
+            0.131815,
+            0.152023
+          ],
+          "std_ms": 0.009132226878478216,
+          "supported": true
+        },
+        "split_by_labels": {
+          "max_ms": 456.941827,
+          "mean_ms": 452.33345799999995,
+          "min_ms": 448.987419,
+          "samples_ms": [
+            448.987419,
+            455.700096,
+            456.941827,
+            450.513204,
+            449.524744
+          ],
+          "std_ms": 3.3157048183165494,
+          "supported": true
+        },
+        "split_by_plane": {
+          "max_ms": 154.292795,
+          "mean_ms": 154.1953194,
+          "min_ms": 154.159252,
+          "samples_ms": [
+            154.292795,
+            154.16925,
+            154.189453,
+            154.165847,
+            154.159252
+          ],
+          "std_ms": 0.049769469688154856,
+          "supported": true
+        }
+      },
+      "io_conversion": {
+        "cloud_to_txt": {
+          "max_ms": 50.833826,
+          "mean_ms": 47.22978479999999,
+          "min_ms": 45.189506,
+          "samples_ms": [
+            46.236594,
+            50.833826,
+            45.420016,
+            48.468982,
+            45.189506
+          ],
+          "std_ms": 2.1423889155880556,
+          "supported": true
+        },
+        "concat_clouds": {
+          "max_ms": 0.865162,
+          "mean_ms": 0.393689,
+          "min_ms": 0.274928,
+          "samples_ms": [
+            0.865162,
+            0.277411,
+            0.275324,
+            0.274928,
+            0.27562
+          ],
+          "std_ms": 0.2357380326209583,
+          "supported": true
+        },
+        "depth_to_cloud": {
+          "reason": "Requires organized depth + camera model; not in core one-liner API used here",
+          "supported": false
+        },
+        "extract_cloud_by_mask": {
+          "reason": "Needs organized cloud + image mask pipeline",
+          "supported": false
+        },
+        "load_cloud": {
+          "max_ms": 62.861863,
+          "mean_ms": 62.3253822,
+          "min_ms": 62.108375,
+          "samples_ms": [
+            62.861863,
+            62.229764,
+            62.108375,
+            62.303947,
+            62.122962
+          ],
+          "std_ms": 0.27766167144883264,
+          "supported": true
+        },
+        "rescale_units": {
+          "max_ms": 0.564894,
+          "mean_ms": 0.5560786,
+          "min_ms": 0.553382,
+          "samples_ms": [
+            0.555004,
+            0.564894,
+            0.553689,
+            0.553382,
+            0.553424
+          ],
+          "std_ms": 0.004447353891922695,
+          "supported": true
+        },
+        "rgbd_to_cloud": {
+          "reason": "Requires organized RGB-D conversion pipeline",
+          "supported": false
+        },
+        "save_cloud": {
+          "max_ms": 1.478582,
+          "mean_ms": 1.416839,
+          "min_ms": 1.368481,
+          "samples_ms": [
+            1.478582,
+            1.4491,
+            1.368481,
+            1.38821,
+            1.399822
+          ],
+          "std_ms": 0.04074472791417317,
+          "supported": true
+        },
+        "transform_cloud": {
+          "max_ms": 0.190447,
+          "mean_ms": 0.1881052,
+          "min_ms": 0.183308,
+          "samples_ms": [
+            0.190447,
+            0.183308,
+            0.188949,
+            0.188714,
+            0.189108
+          ],
+          "std_ms": 0.002473273086418078,
+          "supported": true
+        },
+        "txt_to_cloud": {
+          "max_ms": 48.341558,
+          "mean_ms": 48.220311,
+          "min_ms": 47.974157,
+          "samples_ms": [
+            47.974157,
+            48.341558,
+            48.221172,
+            48.336084,
+            48.228584
+          ],
+          "std_ms": 0.1332405329500003,
+          "supported": true
+        }
+      },
+      "preprocess": {
+        "compute_curvature": {
+          "max_ms": 49.11401,
+          "mean_ms": 47.549455,
+          "min_ms": 46.714613,
+          "samples_ms": [
+            47.315536,
+            46.864839,
+            46.714613,
+            49.11401,
+            47.738277
+          ],
+          "std_ms": 0.8606816399447585,
+          "supported": true
+        },
+        "compute_fpfh": {
+          "max_ms": 239.265594,
+          "mean_ms": 226.883556,
+          "min_ms": 220.158597,
+          "samples_ms": [
+            220.158597,
+            239.265594,
+            221.183267,
+            232.400843,
+            221.409479
+          ],
+          "std_ms": 7.634647445834602,
+          "supported": true
+        },
+        "downsample_fps": {
+          "reason": "PCL has no built-in Farthest Point Sampling filter",
+          "supported": false
+        },
+        "downsample_normal_space": {
+          "max_ms": 25.247431,
+          "mean_ms": 25.016426199999998,
+          "min_ms": 24.915172,
+          "samples_ms": [
+            25.247431,
+            24.929068,
+            24.973338,
+            25.017122,
+            24.915172
+          ],
+          "std_ms": 0.12091663480663015,
+          "supported": true
+        },
+        "downsample_random": {
+          "max_ms": 1.383074,
+          "mean_ms": 1.3795502,
+          "min_ms": 1.375861,
+          "samples_ms": [
+            1.378449,
+            1.375861,
+            1.379313,
+            1.383074,
+            1.381054
+          ],
+          "std_ms": 0.0024313651638533987,
+          "supported": true
+        },
+        "downsample_to_count": {
+          "max_ms": 1.339438,
+          "mean_ms": 1.3350393999999999,
+          "min_ms": 1.330994,
+          "samples_ms": [
+            1.335277,
+            1.335081,
+            1.339438,
+            1.330994,
+            1.334407
+          ],
+          "std_ms": 0.002689648943635553,
+          "supported": true
+        },
+        "downsample_uniform": {
+          "max_ms": 4.855879,
+          "mean_ms": 4.8212158,
+          "min_ms": 4.803778,
+          "samples_ms": [
+            4.855879,
+            4.825222,
+            4.81014,
+            4.803778,
+            4.81106
+          ],
+          "std_ms": 0.018694799067120134,
+          "supported": true
+        },
+        "downsample_voxel": {
+          "max_ms": 3.403197,
+          "mean_ms": 3.3885648,
+          "min_ms": 3.365578,
+          "samples_ms": [
+            3.403151,
+            3.380693,
+            3.365578,
+            3.403197,
+            3.390205
+          ],
+          "std_ms": 0.014282205521557149,
+          "supported": true
+        },
+        "estimate_normals": {
+          "max_ms": 370.864569,
+          "mean_ms": 368.3042762,
+          "min_ms": 365.610201,
+          "samples_ms": [
+            365.610201,
+            366.396687,
+            367.96857,
+            370.864569,
+            370.681354
+          ],
+          "std_ms": 2.1547730498089512,
+          "supported": true
+        },
+        "filter_axis_range": {
+          "max_ms": 0.552797,
+          "mean_ms": 0.5310774,
+          "min_ms": 0.510718,
+          "samples_ms": [
+            0.513169,
+            0.527696,
+            0.551007,
+            0.510718,
+            0.552797
+          ],
+          "std_ms": 0.017975426588540257,
+          "supported": true
+        },
+        "filter_axis_threshold": {
+          "max_ms": 0.419773,
+          "mean_ms": 0.41280320000000004,
+          "min_ms": 0.40936,
+          "samples_ms": [
+            0.419773,
+            0.411593,
+            0.410022,
+            0.40936,
+            0.413268
+          ],
+          "std_ms": 0.003737631196359538,
+          "supported": true
+        },
+        "filter_by_direction": {
+          "reason": "No dedicated direction filter in PCL core filters",
+          "supported": false
+        },
+        "flip_normals": {
+          "max_ms": 0.468457,
+          "mean_ms": 0.3825482,
+          "min_ms": 0.359205,
+          "samples_ms": [
+            0.468457,
+            0.359689,
+            0.359205,
+            0.364941,
+            0.360449
+          ],
+          "std_ms": 0.04300269308031766,
+          "supported": true
+        },
+        "orient_normals": {
+          "max_ms": 415.459786,
+          "mean_ms": 385.45466120000003,
+          "min_ms": 370.541691,
+          "samples_ms": [
+            374.005905,
+            376.221458,
+            415.459786,
+            391.044466,
+            370.541691
+          ],
+          "std_ms": 16.554613689309065,
+          "supported": true
+        },
+        "remove_radius_outliers": {
+          "max_ms": 204.17395,
+          "mean_ms": 203.77372379999997,
+          "min_ms": 203.336245,
+          "samples_ms": [
+            203.878886,
+            203.929452,
+            204.17395,
+            203.336245,
+            203.550086
+          ],
+          "std_ms": 0.2955986934304012,
+          "supported": true
+        },
+        "remove_statistical_outliers": {
+          "max_ms": 230.467299,
+          "mean_ms": 229.9948018,
+          "min_ms": 229.677766,
+          "samples_ms": [
+            229.789495,
+            229.677766,
+            229.94557,
+            230.093879,
+            230.467299
+          ],
+          "std_ms": 0.27501136205866283,
+          "supported": true
+        }
+      },
+      "registration": {
+        "evaluate_registration": {
+          "max_ms": 10.583327,
+          "mean_ms": 10.507390599999999,
+          "min_ms": 10.474479,
+          "samples_ms": [
+            10.474479,
+            10.513254,
+            10.475784,
+            10.490109,
+            10.583327
+          ],
+          "std_ms": 0.04045125605268639,
+          "supported": true
+        },
+        "is_registration_valid": {
+          "max_ms": 29.48555,
+          "mean_ms": 29.2804052,
+          "min_ms": 29.036722,
+          "samples_ms": [
+            29.48555,
+            29.137843,
+            29.466908,
+            29.036722,
+            29.275003
+          ],
+          "std_ms": 0.17697590229791144,
+          "supported": true
+        },
+        "make_init_pose": {
+          "max_ms": 4.4e-05,
+          "mean_ms": 3.62e-05,
+          "min_ms": 3.2e-05,
+          "samples_ms": [
+            4.4e-05,
+            3.7e-05,
+            3.2e-05,
+            3.4e-05,
+            3.4e-05
+          ],
+          "std_ms": 4.214261501141095e-06,
+          "supported": true
+        },
+        "register_cpd": {
+          "reason": "CPD not in PCL",
+          "supported": false
+        },
+        "register_fast_global": {
+          "reason": "Fast Global Registration not in PCL",
+          "supported": false
+        },
+        "register_filterreg": {
+          "reason": "FilterReg not in PCL",
+          "supported": false
+        },
+        "register_fpfh_ransac": {
+          "max_ms": 5887.578658,
+          "mean_ms": 5626.293649600001,
+          "min_ms": 5444.796196,
+          "samples_ms": [
+            5887.578658,
+            5444.796196,
+            5867.513955,
+            5468.026269,
+            5463.55317
+          ],
+          "std_ms": 205.3930108244022,
+          "supported": true
+        },
+        "register_gmmtree": {
+          "reason": "GMMTree not in PCL",
+          "supported": false
+        },
+        "register_icp_colored": {
+          "reason": "Colored ICP not in standard PCL",
+          "supported": false
+        },
+        "register_icp_generalized": {
+          "max_ms": 73.114785,
+          "mean_ms": 73.08247659999999,
+          "min_ms": 73.046375,
+          "samples_ms": [
+            73.046375,
+            73.080267,
+            73.075173,
+            73.114785,
+            73.095783
+          ],
+          "std_ms": 0.02272638739087155,
+          "supported": true
+        },
+        "register_icp_point_to_plane": {
+          "max_ms": 148.589005,
+          "mean_ms": 145.959291,
+          "min_ms": 143.768721,
+          "samples_ms": [
+            145.271573,
+            148.246364,
+            148.589005,
+            143.920792,
+            143.768721
+          ],
+          "std_ms": 2.077167772451225,
+          "supported": true
+        },
+        "register_icp_point_to_point": {
+          "max_ms": 140.001837,
+          "mean_ms": 139.5772584,
+          "min_ms": 139.351406,
+          "samples_ms": [
+            139.45657,
+            139.536995,
+            140.001837,
+            139.539484,
+            139.351406
+          ],
+          "std_ms": 0.22310985219536977,
+          "supported": true
+        },
+        "register_ppf": {
+          "reason": "PPF registration module not exercised / may be unavailable in packaged build",
+          "supported": false
+        },
+        "relative_sampling_step": {
+          "reason": "Utility parameter, not a PCL algorithm",
+          "supported": false
+        }
+      }
+    },
+    "library": "PCL",
+    "n_points": 100000,
+    "version": 101400
+  }
+}

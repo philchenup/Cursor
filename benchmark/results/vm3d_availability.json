@@ -1,0 +1,252 @@
+{
+  "io_conversion": {
+    "load_cloud": {
+      "supported": true,
+      "module": "3D图像源 / 本地图像",
+      "note": "流程内加载点云/深度图本地文件"
+    },
+    "save_cloud": {
+      "supported": true,
+      "module": "3D输出图像 / 文本保存",
+      "note": "可导出结果图像/数据"
+    },
+    "txt_to_cloud": {
+      "supported": false,
+      "reason": "无独立 txt→点云算子（通常走图像源/脚本）"
+    },
+    "cloud_to_txt": {
+      "supported": false,
+      "reason": "无独立点云→txt算子"
+    },
+    "rescale_units": {
+      "supported": true,
+      "module": "尺度变换",
+      "note": "3D测量类尺度变换"
+    },
+    "transform_cloud": {
+      "supported": true,
+      "module": "点云坐标系转换 / 坐标系变换-深度图"
+    },
+    "depth_to_cloud": {
+      "supported": true,
+      "module": "转点云-深度图"
+    },
+    "rgbd_to_cloud": {
+      "supported": true,
+      "module": "RGBD等间距转换-深度图",
+      "note": "偏深度图/RGBD流程，非通用开源 RGBD→PCD API"
+    },
+    "extract_cloud_by_mask": {
+      "supported": true,
+      "module": "点云截取 / 截取-深度图 / ROI转掩膜"
+    },
+    "concat_clouds": {
+      "supported": true,
+      "module": "点云合并"
+    }
+  },
+  "preprocess": {
+    "downsample_voxel": {
+      "supported": true,
+      "module": "点云降采样",
+      "note": "文档为统一“点云降采样”，未公开细分为 voxel/fps/nss 等独立算子名"
+    },
+    "downsample_uniform": {
+      "supported": "partial",
+      "module": "点云降采样",
+      "note": "可能作为降采样模式，文档未单独列出"
+    },
+    "downsample_random": {
+      "supported": false,
+      "reason": "文档无随机降采样独立算子"
+    },
+    "downsample_fps": {
+      "supported": false,
+      "reason": "文档无 FPS 独立算子"
+    },
+    "downsample_to_count": {
+      "supported": "partial",
+      "module": "点云降采样",
+      "note": "可能通过目标点数参数实现，未单独命名"
+    },
+    "downsample_normal_space": {
+      "supported": false,
+      "reason": "文档无 Normal Space Sampling"
+    },
+    "filter_axis_range": {
+      "supported": true,
+      "module": "点云截取 / 截取-深度图"
+    },
+    "filter_axis_threshold": {
+      "supported": true,
+      "module": "点云截取 / 高度抽取"
+    },
+    "filter_by_direction": {
+      "supported": true,
+      "module": "法向量滤除-深度图",
+      "note": "深度图法向滤除，非通用点云方向滤波 API"
+    },
+    "remove_statistical_outliers": {
+      "supported": "partial",
+      "module": "杂点过滤-深度图 / 滤波-深度图",
+      "note": "深度图域离群点过滤，非 PCL SOR 同名实现"
+    },
+    "remove_radius_outliers": {
+      "supported": "partial",
+      "module": "杂点过滤-深度图"
+    },
+    "estimate_normals": {
+      "supported": true,
+      "module": "法向量灰度图-深度图",
+      "note": "深度图法向可视化/计算，非通用点云 NormalEstimation API"
+    },
+    "orient_normals": {
+      "supported": false,
+      "reason": "文档无法线一致定向独立算子"
+    },
+    "flip_normals": {
+      "supported": false,
+      "reason": "文档无法线翻转独立算子"
+    },
+    "compute_fpfh": {
+      "supported": false,
+      "reason": "文档无 FPFH 特征算子"
+    },
+    "compute_curvature": {
+      "supported": false,
+      "reason": "文档无曲率计算独立算子"
+    }
+  },
+  "geometry_segmentation": {
+    "compute_obb": {
+      "supported": false,
+      "reason": "文档无 OBB 独立算子"
+    },
+    "compute_convex_hull": {
+      "supported": false,
+      "reason": "文档无凸包独立算子"
+    },
+    "compute_centroid": {
+      "supported": true,
+      "module": "平面点云属性计算 / 单团点云几何查找"
+    },
+    "compute_aabb": {
+      "supported": "partial",
+      "module": "单团点云几何查找",
+      "note": "几何属性中可能含包围信息，未单列 AABB"
+    },
+    "select_by_mask": {
+      "supported": true,
+      "module": "点云截取 / ROI / 掩膜相关"
+    },
+    "select_by_index": {
+      "supported": false,
+      "reason": "面向流程算子，无索引选择 API"
+    },
+    "segment_plane": {
+      "supported": true,
+      "module": "平面检测-深度图 / 平面拟合"
+    },
+    "cluster_dbscan": {
+      "supported": false,
+      "reason": "文档无 DBSCAN 点云聚类算子"
+    },
+    "split_by_labels": {
+      "supported": false,
+      "reason": "文档无按标签拆分点云算子"
+    },
+    "fit_line": {
+      "supported": true,
+      "module": "直线查找-深度图 / 直线查找-轮廓图"
+    },
+    "fit_sphere": {
+      "supported": false,
+      "reason": "文档无球体拟合独立算子"
+    },
+    "fit_plane": {
+      "supported": true,
+      "module": "平面拟合 / 平面检测-深度图"
+    },
+    "plane_from_points": {
+      "supported": false,
+      "reason": "无三点构面独立底层 API"
+    },
+    "plane_normal": {
+      "supported": true,
+      "module": "平面拟合 / 平面点云属性计算"
+    },
+    "split_by_plane": {
+      "supported": "partial",
+      "module": "点云截取 + 平面检测组合"
+    },
+    "extract_boundary_points": {
+      "supported": "partial",
+      "module": "轮廓相关 / 边缘类深度图工具",
+      "note": "偏轮廓图/深度图边缘，非通用边界点提取"
+    }
+  },
+  "registration": {
+    "make_init_pose": {
+      "supported": "partial",
+      "module": "位置修正-深度图 / 标定与坐标转换"
+    },
+    "register_fpfh_ransac": {
+      "supported": false,
+      "reason": "无 FPFH+RANSAC 点云配准算子"
+    },
+    "register_fast_global": {
+      "supported": false,
+      "reason": "无 Fast Global Registration"
+    },
+    "register_ppf": {
+      "supported": false,
+      "reason": "无 PPF 配准算子"
+    },
+    "relative_sampling_step": {
+      "supported": false,
+      "reason": "非独立算子"
+    },
+    "register_icp_point_to_point": {
+      "supported": false,
+      "reason": "文档无经典点到点 ICP 点云算子名"
+    },
+    "register_icp_point_to_plane": {
+      "supported": false,
+      "reason": "文档无点到面 ICP 点云算子名"
+    },
+    "register_icp_generalized": {
+      "supported": false,
+      "reason": "无 GICP"
+    },
+    "register_icp_colored": {
+      "supported": false,
+      "reason": "无 Colored ICP"
+    },
+    "register_filterreg": {
+      "supported": false,
+      "reason": "无 FilterReg"
+    },
+    "register_cpd": {
+      "supported": false,
+      "reason": "无 CPD"
+    },
+    "register_gmmtree": {
+      "supported": false,
+      "reason": "无 GMMTree"
+    },
+    "evaluate_registration": {
+      "supported": "partial",
+      "module": "配准定位-深度图 / 数据统计",
+      "note": "深度图配准定位结果评估，非 Open3D evaluate_registration"
+    },
+    "is_registration_valid": {
+      "supported": "partial",
+      "module": "条件检测 / 逻辑工具"
+    },
+    "_vm3d_registration_note": {
+      "supported": true,
+      "module": "配准定位-深度图 / 匹配-深度图 / 尺度匹配-深度图",
+      "note": "VM3D 配准主路径是深度图模板匹配/定位，与 PCL/Open3D 点云 ICP/FPFH 体系不同"
+    }
+  }
+}
