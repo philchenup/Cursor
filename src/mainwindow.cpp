@@ -1590,10 +1590,8 @@ void MainWindow::robotGoHome() {
 	p.q_home = this->mdl->getHomePosition();
 	p.T_flange_to_tcp = tcp_transform;
 	p.tcpBackDistance = 100.0;  // TCP -Z 后退 100mm
-	p.baseUpDistance = 100.0;   // Base 抬升 100mm
 	p.jointStepRad = M_PI / 180.0;
-	p.railStepLen = 5.0;
-	p.cartStepLen = 10.0;       // TCP 后退按 10mm 一段插值
+	p.railStepLen = 10.0;       // TCP 后退 / 地轨插值步长
 	p.timeoutMs = 500;
 
 	QMetaObject::invokeMethod(ikwork, "doReturnHome", Qt::QueuedConnection, Q_ARG(IKReturnHomeParams, p));

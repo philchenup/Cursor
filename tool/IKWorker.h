@@ -38,8 +38,8 @@ public slots:
     void doSolve(const IKSolveParams& params);
 
     /**
-     * 回 Home：TCP -Z 后退按 cartStepLen 分段 IK 插值，再 Base 抬升，
-     * 随后关节/地轨/J5 分段插值到 Home。
+     * 回 Home：仅沿 TCP -Z 后退（按 railStepLen 分段 IK），
+     * 再关节/地轨/J5 分段插值到 Home。无 Base 抬升步骤。
      */
     void doReturnHome(const IKReturnHomeParams& params);
 
