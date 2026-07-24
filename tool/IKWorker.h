@@ -38,8 +38,8 @@ public slots:
     void doSolve(const IKSolveParams& params);
 
     /**
-     * 回 Home：当前 TCP 距 Home < tcpBackDistance 时跳过回退，直接关节/地轨/J5 插值；
-     * 否则先沿 TCP -Z 按 railStepLen 后退，再插值到 Home。
+     * 回 Home：TCP 距 Home < tcpBackDistance 时，直接 q_current→q_home 关节插值；
+     * 否则先沿 TCP -Z 按 railStepLen 后退，再分步插值到 Home。
      */
     void doReturnHome(const IKReturnHomeParams& params);
 
