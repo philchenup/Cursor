@@ -227,7 +227,6 @@ private:
     bool isSimulation = false;
     int m_counter = 0;
     int m_counter_home = 0;
-    std::vector<rl::math::Vector> m_jointTrajectory;
     std::vector<rl::math::Vector> m_jointTrajectory_home;
     std::vector<rl::math::Vector> wholeTrajectory;
     TopoDS_Shape m_selectShape;

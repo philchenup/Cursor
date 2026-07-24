@@ -295,8 +295,10 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
             throw std::runtime_error("q_home size mismatch with model DOF.");
         if (dof < 1)
             throw std::runtime_error("Model DOF < 1.");
-        if (params.jointStepRad <= 0.0 || params.railStepLen <= 0.0)
+        if (params.jointStepRad <= 0.0 || params.railStepLen <= 0.0 || params.cartStepLen <= 0.0)
             throw std::runtime_error("Interpolation step must be positive.");
+        if (params.tcpBackDistance <= 0.0)
+            throw std::runtime_error("tcpBackDistance must be positive.");
 
         emit started();
 
@@ -381,7 +383,7 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
         // 把当前关节也作为轨迹首点，便于下游平滑播放
         jointTrajectory.push_back(params.q_current);
 
-        // —— 第 1 步：沿 TCP -Z 后退 tcpBackDistance（地轨锁定）——
+        // —— 第 1 步：沿 TCP -Z 后退 tcpBackDistance，按 cartStepLen（默认 10mm）分段 IK 插值 ——
         if (m_stopRequested.load())
         {
             restoreRail();
@@ -392,20 +394,43 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
 
         lockRailAt(params.q_current(0));
 
-        rl::math::Transform T_back_in_tcp = rl::math::Transform::Identity();
-        T_back_in_tcp.translation() = rl::math::Vector3(0.0, 0.0, -params.tcpBackDistance);
-        const rl::math::Transform T_world_tcp_step1 = T_world_tcp_now * T_back_in_tcp;
+        const double backDist = std::abs(params.tcpBackDistance);
+        const int seg1 = std::max(1, static_cast<int>(std::ceil(backDist / params.cartStepLen)));
 
-        rl::math::Vector q_step1;
-        if (!solveTcpGoal(T_world_tcp_step1, params.q_current, q_step1))
+        rl::math::Vector q_seed = params.q_current;
+        rl::math::Vector q_step1 = params.q_current;
+        rl::math::Transform T_world_tcp_step1 = T_world_tcp_now;
+
+        for (int i = 1; i <= seg1; ++i)
         {
-            restoreRail();
-            m_running.store(false);
-            emit failed(QStringLiteral("IK failed: TCP -Z back-off (step 1)."));
-            return;
+            if (m_stopRequested.load())
+            {
+                restoreRail();
+                m_running.store(false);
+                emit aborted();
+                return;
+            }
+
+            const double t = static_cast<double>(i) / static_cast<double>(seg1);
+            rl::math::Transform T_back_in_tcp = rl::math::Transform::Identity();
+            T_back_in_tcp.translation() = rl::math::Vector3(0.0, 0.0, -t * backDist);
+            T_world_tcp_step1 = T_world_tcp_now * T_back_in_tcp;
+
+            if (!solveTcpGoal(T_world_tcp_step1, q_seed, q_step1))
+            {
+                restoreRail();
+                m_running.store(false);
+                emit failed(QStringLiteral("IK failed: TCP -Z back-off (step 1)."));
+                return;
+            }
+            // 地轨保持锁定值，避免 IK 窗口 eps 漂移
+            q_step1(0) = params.q_current(0);
+            jointTrajectory.push_back(q_step1);
+            q_seed = q_step1;
+
+            // 0% → 15%
+            reportProgress(static_cast<int>(15.0 * i / seg1));
         }
-        jointTrajectory.push_back(q_step1);
-        reportProgress(15);
 
         // —— 第 2 步：在第 1 步基础上沿 Base/World +Z 上移 baseUpDistance（地轨仍锁定）——
         if (m_stopRequested.load())
@@ -427,6 +452,7 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
             emit failed(QStringLiteral("IK failed: Base +Z lift (step 2)."));
             return;
         }
+        q_step2(0) = params.q_current(0);
         jointTrajectory.push_back(q_step2);
         reportProgress(30);
 
@@ -543,6 +569,256 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
         emit failed(QStringLiteral("Unknown exception in IK worker (return home)."));
     }
 }
+
+//void IKWorker::doGoToStart(const IKGoToStartParams& params)
+//{
+//    m_running.store(true);
+//    m_stopRequested.store(false);
+//
+//    std::shared_ptr<rl::mdl::Kinematic> kinematic;
+//    {
+//        QMutexLocker locker(&m_kinMutex);
+//        kinematic = m_kinematic;
+//    }
+//
+//    try
+//    {
+//        if (!kinematic)
+//            throw std::runtime_error(
+//                "Kinematic not set. Call setKinematic() before doGoToStart().");
+//
+//        const std::size_t dof = kinematic->getDof();
+//
+//        if (params.q_home.size() != static_cast<Eigen::Index>(dof))
+//            throw std::runtime_error("q_home size mismatch with model DOF.");
+//        if (params.q_target_start.size() != static_cast<Eigen::Index>(dof))
+//            throw std::runtime_error("q_target_start size mismatch with model DOF.");
+//        if (dof < 1)
+//            throw std::runtime_error("Model DOF < 1.");
+//        if (params.jointStepRad <= 0.0 || params.railStepLen <= 0.0 || params.cartStepLen <= 0.0)
+//            throw std::runtime_error("Interpolation step must be positive.");
+//
+//        emit started();
+//
+//        const rl::math::Transform T_tcp_to_flange = params.T_flange_to_tcp.inverse();
+//
+//        // ★ 焊接起点 TCP 位姿（由 startPoint 直接换算）
+//        const rl::math::Transform T_world_tcp_start = pointToTransform(params.startPoint);
+//
+//        // ★ 沿 Base +Z 抬起/下降距离 = 100mm
+//        //   注意：单位必须与模型长度单位一致！模型用 mm → 100.0；模型用 m → 0.1。
+//        //   若 params.baseUpDistance 当前就是 100mm，可直接改成 const double approachUp = params.baseUpDistance;
+//        const double approachUp = -100.0;
+//
+//        // 备份地轨原始限位
+//        rl::mdl::Joint* railJoint = (dof >= 1) ? kinematic->getJoint(0) : nullptr;
+//        rl::math::Vector railMin0, railMax0;
+//        if (railJoint)
+//        {
+//            railMin0 = railJoint->getMinimum();
+//            railMax0 = railJoint->getMaximum();
+//        }
+//
+//        auto restoreRail = [&]() {
+//            if (railJoint)
+//            {
+//                railJoint->setMinimum(railMin0);
+//                railJoint->setMaximum(railMax0);
+//            }
+//        };
+//
+//        auto lockRailAt = [&](double railValue) {
+//            if (!railJoint || railJoint->getDofPosition() != 1) return;
+//            const double eps = 1e-6;
+//            const double v = std::min(std::max(railValue, railMin0(0)), railMax0(0));
+//            rl::math::Vector lo(1), hi(1);
+//            lo << (v - eps);
+//            hi << (v + eps);
+//            railJoint->setMinimum(lo);
+//            railJoint->setMaximum(hi);
+//        };
+//
+//        std::vector<rl::math::Vector> jointTrajectory;
+//        jointTrajectory.reserve(256);
+//
+//        int successCount = 0, failCount = 0;
+//        int lastReportedPercent = -1;
+//
+//        auto reportProgress = [&](int percent) {
+//            if (percent < 0) percent = 0;
+//            if (percent > 100) percent = 100;
+//            if (percent != lastReportedPercent)
+//            {
+//                emit progress(percent);
+//                lastReportedPercent = percent;
+//            }
+//        };
+//
+//        auto solveTcpGoal = [&](const rl::math::Transform& T_world_tcp,
+//            const rl::math::Vector& seed,
+//            rl::math::Vector& q_out) -> bool
+//        {
+//            const rl::math::Transform T_world_flange = T_world_tcp * T_tcp_to_flange;
+//
+//            rl::mdl::JacobianInverseKinematics ik(kinematic.get());
+//            ik.setDuration(std::chrono::milliseconds(params.timeoutMs));
+//            ik.addGoal(T_world_flange, 0);
+//
+//            kinematic->setPosition(seed);
+//            const bool ok = ik.solve();
+//            if (ok)
+//            {
+//                q_out = kinematic->getPosition();
+//                ++successCount;
+//                return true;
+//            }
+//            ++failCount;
+//            return false;
+//        };
+//
+//        // 把 Home 关节作为轨迹首点
+//        jointTrajectory.push_back(params.q_home);
+//
+//        const double railHome = params.q_home(0);
+//        const double railTarget = params.q_target_start(0);
+//
+//        // ========== 预备：在 地轨=railTarget 下，求“焊接点正上方 100mm”的接近姿态 ==========
+//        // 先把地轨锁在目标位，保证解出的是手臂在到位后该有的接近姿态（手臂关节即最终接近姿态）。
+//        lockRailAt(railTarget);
+//
+//        rl::math::Transform T_world_tcp_above = T_world_tcp_start;
+//        T_world_tcp_above.translation().z() += approachUp; // Base +Z 抬高 100mm
+//
+//        // 求 IK 的 seed：用 Home 姿态但地轨置于目标位，便于收敛
+//        rl::math::Vector q_seed_above = params.q_home;
+//        q_seed_above(0) = railTarget;
+//
+//        rl::math::Vector q_above;
+//        if (!solveTcpGoal(T_world_tcp_above, q_seed_above, q_above))
+//        {
+//            restoreRail();
+//            m_running.store(false);
+//            emit failed(QStringLiteral("IK failed: above weld point (+100mm Base Z)."));
+//            return;
+//        }
+//        q_above(0) = railTarget; // 地轨锁定窗口有 eps，这里写死为目标值更干净
+//
+//        // 同一套手臂姿态、但地轨仍在 Home —— 作为“第 1 步”要先摆到的位置
+//        rl::math::Vector q_above_atHome = q_above;
+//        q_above_atHome(0) = railHome;
+//
+//        // ========== 第 1 步：手臂先摆到“接近姿态”（地轨保持 Home，纯关节插值）==========
+//        // 这一步把手臂展开成正上方接近姿态；TCP 此时沿地轨轴方向偏了一个 railDelta，
+//        // 待第 2 步地轨平移后即对准焊接点正上方。
+//        double maxJointDelta = 0.0;
+//        for (Eigen::Index j = 1; j < q_above_atHome.size(); ++j) // j 从 1：跳过地轨
+//        {
+//            const double d = std::abs(q_above_atHome(j) - params.q_home(j));
+//            if (d > maxJointDelta) maxJointDelta = d;
+//        }
+//        const int seg1 = std::max(1, static_cast<int>(std::ceil(maxJointDelta / params.jointStepRad)));
+//
+//        for (int i = 1; i <= seg1; ++i)
+//        {
+//            if (m_stopRequested.load())
+//            {
+//                restoreRail();
+//                m_running.store(false);
+//                emit aborted();
+//                return;
+//            }
+//            const double t = static_cast<double>(i) / static_cast<double>(seg1);
+//            rl::math::Vector q_interp = (1.0 - t) * params.q_home + t * q_above_atHome;
+//            q_interp(0) = railHome; // 地轨严格保持 Home
+//            jointTrajectory.push_back(q_interp);
+//
+//            // 0% → 40%
+//            reportProgress(static_cast<int>(40.0 * i / seg1));
+//        }
+//
+//        // ========== 第 2 步：移动地轨 railHome → railTarget（手臂姿态保持不变）==========
+//        const double railDelta = std::abs(railTarget - railHome);
+//        const int seg2 = std::max(1, static_cast<int>(std::ceil(railDelta / params.railStepLen)));
+//
+//        for (int i = 1; i <= seg2; ++i)
+//        {
+//            if (m_stopRequested.load())
+//            {
+//                restoreRail();
+//                m_running.store(false);
+//                emit aborted();
+//                return;
+//            }
+//            const double t = static_cast<double>(i) / static_cast<double>(seg2);
+//            rl::math::Vector q = q_above;                          // 手臂关节即接近姿态
+//            q(0) = (1.0 - t) * railHome + t * railTarget;          // 仅地轨线性移动
+//            jointTrajectory.push_back(q);
+//
+//            // 40% → 70%
+//            reportProgress(40 + static_cast<int>(30.0 * i / seg2));
+//        }
+//        // 第 2 步结束时轨迹末点恰为 q_above（地轨已在 railTarget，TCP 在焊接点正上方 100mm）
+//
+//        // ========== 第 3 步：笛卡尔直线下降 100mm 到焊接点（地轨锁定在 railTarget）==========
+//        const int seg3 = std::max(1, static_cast<int>(std::ceil(approachUp / params.cartStepLen)));
+//
+//        rl::math::Vector q_seed = q_above;
+//        rl::math::Vector q_step;
+//
+//        for (int i = 1; i <= seg3; ++i)
+//        {
+//            if (m_stopRequested.load())
+//            {
+//                restoreRail();
+//                m_running.store(false);
+//                emit aborted();
+//                return;
+//            }
+//            const double t = static_cast<double>(i) / static_cast<double>(seg3);
+//
+//            // 从“正上方 +approachUp”直线降到焊接点：z 偏移 (1-t)*approachUp，t=1 时落到焊点
+//            rl::math::Transform T_target = T_world_tcp_start;
+//            T_target.translation().z() += (1.0 - t) * approachUp;
+//
+//            if (!solveTcpGoal(T_target, q_seed, q_step))
+//            {
+//                restoreRail();
+//                m_running.store(false);
+//                emit failed(QStringLiteral("IK failed: descending to weld point (step 3)."));
+//                return;
+//            }
+//            jointTrajectory.push_back(q_step);
+//            q_seed = q_step;
+//
+//            // 70% → 100%
+//            reportProgress(70 + static_cast<int>(30.0 * i / seg3));
+//        }
+//
+//        reportProgress(100);
+//
+//        restoreRail();
+//
+//        const int attempts = successCount + failCount;
+//        const double ratio = (attempts > 0)
+//            ? (static_cast<double>(successCount) / attempts) : 1.0;
+//
+//        kinematic->setPosition(kinematic->getHomePosition());
+//        kinematic->forwardPosition();
+//
+//        m_running.store(false);
+//        emit finished_start(jointTrajectory, ratio * 100);
+//    }
+//    catch (const std::exception& e)
+//    {
+//        m_running.store(false);
+//        emit failed(QString::fromUtf8(e.what()));
+//    }
+//    catch (...)
+//    {
+//        m_running.store(false);
+//        emit failed(QStringLiteral("Unknown exception in IK worker (go to start)."));
+//    }
+//}
 
 void IKWorker::doGoToStart(const IKGoToStartParams& params)
 {

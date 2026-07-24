@@ -36,7 +36,6 @@
 #include "robot_control/OperationalDelegate.h"
 #include "robot_control/OperationalModel.h"
 
-
 Quantity_Color grayColor(194 / 255.0f, 186 / 255.0f, 181 / 255.0f, Quantity_TOC_RGB);
 Quantity_Color kukaColor(1.0, 0.5, 0.0, Quantity_TOC_RGB);
 Quantity_Color balckColor(0.2, 0.2, 0.2, Quantity_TOC_RGB);
@@ -1381,7 +1380,6 @@ void MainWindow::on_actionGoOrigin_triggered() {
 void MainWindow::flushWeldList(const TopoDS_Shape& selectShape, const std::vector<TopoDS_Edge>& weldEdges) {
 	ui->weldTableWidget->setRowCount(0);
 
-	m_jointTrajectory.clear();
 	wholeTrajectory.clear();
 
 	if (weldEdges.size() == 0) {
@@ -1528,12 +1526,10 @@ void MainWindow::initSimulation() {
 
 	connect(ikwork, &IKWorker::finished_start, this, [=](const std::vector<rl::math::Vector>& jointTrajectory,
 		const double& ratio) {
-			/*if (m_jointTrajectory.size() > 0) {
-				size_t totalSize = m_jointTrajectory.size() + jointTrajectory.size();
-				wholeTrajectory.reserve(totalSize);
-				wholeTrajectory.insert(wholeTrajectory.end(), jointTrajectory.begin(), jointTrajectory.end());
-				wholeTrajectory.insert(wholeTrajectory.end(), m_jointTrajectory.begin(), m_jointTrajectory.end());
-			}*/
+			if(jointTrajectory.size() < 1){return;}
+
+			wholeTrajectory.reserve(jointTrajectory.size());
+			wholeTrajectory.insert(wholeTrajectory.end(), jointTrajectory.begin(), jointTrajectory.end());
 
 			IKSolveParams params;
 			params.trajectory = mergedTraj;
@@ -1550,13 +1546,15 @@ void MainWindow::initSimulation() {
 			ui->console->print(ct::LOG_INFO, QString("Trajctory home to start done, Completion rate %1%").arg(QString::number(ratio)));
 		}, Qt::QueuedConnection);
 
-	/*connect(ikwork, &IKWorker::finished, this, [=](const std::vector<rl::math::Vector>& jointTrajectory,
+	connect(ikwork, &IKWorker::finished, this, [=](const std::vector<rl::math::Vector>& jointTrajectory,
 		const double& ratio, const DiscretePoint& start) {
-			m_jointTrajectory = jointTrajectory;
+			if (jointTrajectory.size() < 1) { return; }
 			ui->trajProgressBar->setValue(100);
 			ui->console->print(ct::LOG_INFO, QString("Trajctory weld done, Completion rate %1%").arg(QString::number(ratio)));
-		}, Qt::QueuedConnection);*/
 
+			wholeTrajectory.reserve(wholeTrajectory.size() + jointTrajectory.size());
+			wholeTrajectory.insert(wholeTrajectory.end(), jointTrajectory.begin(), jointTrajectory.end());
+		}, Qt::QueuedConnection);
 
 	connect(ikwork, &IKWorker::failed, this, [=](const QString& errorMessage) {
 		ui->console->print(ct::LOG_ERROR, errorMessage);
@@ -1591,10 +1589,11 @@ void MainWindow::robotGoHome() {
 	p.q_current = this->mdl->getPosition();
 	p.q_home = this->mdl->getHomePosition();
 	p.T_flange_to_tcp = tcp_transform;
-	p.tcpBackDistance = 30.0;   // 30 cm
-	p.baseUpDistance = 100.0;   // 10 cm
+	p.tcpBackDistance = 100.0;  // TCP -Z 后退 100mm
+	p.baseUpDistance = 100.0;   // Base 抬升 100mm
 	p.jointStepRad = M_PI / 180.0;
 	p.railStepLen = 5.0;
+	p.cartStepLen = 10.0;       // TCP 后退按 10mm 一段插值
 	p.timeoutMs = 500;
 
 	QMetaObject::invokeMethod(ikwork, "doReturnHome", Qt::QueuedConnection, Q_ARG(IKReturnHomeParams, p));
@@ -1705,7 +1704,6 @@ void MainWindow::Trajectory() {
 	if (mergedTraj.size() > 2) {
 		IKGoToStartParams p;
 		p.q_home = this->mdl->getHomePosition();
-		// 仅需 Home 关节 + 起点 TCP；地轨/接近姿态由 doGoToStart 内部 IK 求解
 		p.startPoint = mergedTraj[0];
 		p.T_flange_to_tcp = tcp_transform;
 		p.baseUpDistance = 100.0;

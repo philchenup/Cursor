@@ -37,13 +37,12 @@ public:
 public slots:
     void doSolve(const IKSolveParams& params);
 
+    /**
+     * 回 Home：TCP -Z 后退按 cartStepLen 分段 IK 插值，再 Base 抬升，
+     * 随后关节/地轨/J5 分段插值到 Home。
+     */
     void doReturnHome(const IKReturnHomeParams& params);
 
-    /**
-     * Home → 焊接起点关节轨迹。
-     * 输入仅需 q_home + startPoint(TCP)；内部 IK 求解接近姿态并发现目标地轨，
-     * 不再依赖预先给出的 q_target_start。
-     */
     void doGoToStart(const IKGoToStartParams& params);
 signals:
     void started();
