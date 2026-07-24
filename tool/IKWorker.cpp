@@ -374,35 +374,30 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
             return false;
         };
 
-        // —— 第 0 步：取“当前 TCP 位姿” ——
+        // —— 第 0 步：取“当前 TCP 位姿”，并判断是否已靠近 Home ——
         kinematic->setPosition(params.q_current);
         kinematic->forwardPosition();
         const rl::math::Transform T_world_flange_now = kinematic->getOperationalPosition(0);
         const rl::math::Transform T_world_tcp_now = T_world_flange_now * params.T_flange_to_tcp;
 
+        kinematic->setPosition(params.q_home);
+        kinematic->forwardPosition();
+        const rl::math::Transform T_world_flange_home = kinematic->getOperationalPosition(0);
+        const rl::math::Transform T_world_tcp_home = T_world_flange_home * params.T_flange_to_tcp;
+
+        // 与 Home 的 TCP 平移距离；小于 tcpBackDistance(100) 则跳过 TCP 回退
+        const double distToHome =
+            (T_world_tcp_now.translation() - T_world_tcp_home.translation()).norm();
+        const bool nearHome = (distToHome < std::abs(params.tcpBackDistance));
+
         // 把当前关节也作为轨迹首点，便于下游平滑播放
         jointTrajectory.push_back(params.q_current);
 
-        // —— 第 1 步：沿 TCP -Z 后退 tcpBackDistance，按 railStepLen 分段 IK 插值 ——
-        // 不再做 Base/World 抬升；不另设 cartStepLen。
-        if (m_stopRequested.load())
-        {
-            restoreRail();
-            m_running.store(false);
-            emit aborted();
-            return;
-        }
-
-        lockRailAt(params.q_current(0));
-
-        const double backDist = std::abs(params.tcpBackDistance);
-        const int seg1 = std::max(1, static_cast<int>(std::ceil(backDist / params.railStepLen)));
-
-        rl::math::Vector q_seed = params.q_current;
         rl::math::Vector q_step1 = params.q_current;
 
-        for (int i = 1; i <= seg1; ++i)
+        if (!nearHome)
         {
+            // —— 第 1 步：沿 TCP -Z 后退 tcpBackDistance，按 railStepLen 分段 IK 插值 ——
             if (m_stopRequested.load())
             {
                 restoreRail();
@@ -411,29 +406,52 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
                 return;
             }
 
-            const double t = static_cast<double>(i) / static_cast<double>(seg1);
-            rl::math::Transform T_back_in_tcp = rl::math::Transform::Identity();
-            T_back_in_tcp.translation() = rl::math::Vector3(0.0, 0.0, -t * backDist);
-            const rl::math::Transform T_world_tcp_back = T_world_tcp_now * T_back_in_tcp;
+            lockRailAt(params.q_current(0));
 
-            if (!solveTcpGoal(T_world_tcp_back, q_seed, q_step1))
+            const double backDist = std::abs(params.tcpBackDistance);
+            const int seg1 = std::max(1, static_cast<int>(std::ceil(backDist / params.railStepLen)));
+
+            rl::math::Vector q_seed = params.q_current;
+
+            for (int i = 1; i <= seg1; ++i)
             {
-                restoreRail();
-                m_running.store(false);
-                emit failed(QStringLiteral("IK failed: TCP -Z back-off (step 1)."));
-                return;
+                if (m_stopRequested.load())
+                {
+                    restoreRail();
+                    m_running.store(false);
+                    emit aborted();
+                    return;
+                }
+
+                const double t = static_cast<double>(i) / static_cast<double>(seg1);
+                rl::math::Transform T_back_in_tcp = rl::math::Transform::Identity();
+                T_back_in_tcp.translation() = rl::math::Vector3(0.0, 0.0, -t * backDist);
+                const rl::math::Transform T_world_tcp_back = T_world_tcp_now * T_back_in_tcp;
+
+                if (!solveTcpGoal(T_world_tcp_back, q_seed, q_step1))
+                {
+                    restoreRail();
+                    m_running.store(false);
+                    emit failed(QStringLiteral("IK failed: TCP -Z back-off (step 1)."));
+                    return;
+                }
+                // 地轨保持锁定值，避免 IK 窗口 eps 漂移
+                q_step1(0) = params.q_current(0);
+                jointTrajectory.push_back(q_step1);
+                q_seed = q_step1;
+
+                // 0% → 30%
+                reportProgress(static_cast<int>(30.0 * i / seg1));
             }
-            // 地轨保持锁定值，避免 IK 窗口 eps 漂移
-            q_step1(0) = params.q_current(0);
-            jointTrajectory.push_back(q_step1);
-            q_seed = q_step1;
 
-            // 0% → 30%
-            reportProgress(static_cast<int>(30.0 * i / seg1));
+            // 后续是关节空间插值，无需再约束地轨；恢复原始限位
+            restoreRail();
         }
-
-        // 后续是关节空间插值，无需再约束地轨；恢复原始限位
-        restoreRail();
+        else
+        {
+            // 已靠近 Home：跳过 TCP 回退，直接从当前关节进入后续插值
+            reportProgress(30);
+        }
 
         // ===== Joint5 分段控制相关常量 =====
         // Joint5 在 RL 模型中的索引（地轨=0，机械臂 J1..J6 = 1..6 → Joint5 = 5）
