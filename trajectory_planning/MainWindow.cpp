@@ -1159,8 +1159,10 @@ void MainWindow::loadRobotWidget(const QString& filename) {
 	this->model->scene = this->scene.get();
 
 	this->verifier = std::make_shared<rl::plan::RecursiveVerifier>();
-	this->verifier->delta = path.eval("number((/rl/plan|/rlplan)//advancedOptimizer/recursiveVerifier/delta)").getValue<rl::math::Real>(1);
-	if ("deg" == path.eval("string((/rl/plan|/rlplan)//advancedOptimizer/recursiveVerifier/delta/@unit)").getValue<std::string>()) {
+	// 注意: 混合单位空间(地轨mm + 关节rad)下 delta 是碰撞检测步长, 过小会导致优化器极慢;
+	// 建议与规划器 delta 同量级(如 0.1~0.2), 不要用 deg 单位的 1°(=0.0175)
+	this->verifier->delta = path.eval("number((/rl/plan|/rlplan)//advancedOptimizer/recursiveVerifier/delta|(/rl/plan|/rlplan)//simpleOptimizer/recursiveVerifier/delta)").getValue<rl::math::Real>(1);
+	if ("deg" == path.eval("string((/rl/plan|/rlplan)//advancedOptimizer/recursiveVerifier/delta/@unit|(/rl/plan|/rlplan)//simpleOptimizer/recursiveVerifier/delta/@unit)").getValue<std::string>()) {
 		this->verifier->delta *= rl::math::DEG2RAD;
 	}
 
@@ -1169,13 +1171,20 @@ void MainWindow::loadRobotWidget(const QString& filename) {
 	}
 
 	this->optimizer.reset();
-	this->optimizer = std::make_shared<rl::plan::AdvancedOptimizer>();
-	rl::plan::AdvancedOptimizer* advancedOptimizer = static_cast<rl::plan::AdvancedOptimizer*>(this->optimizer.get());
-	advancedOptimizer->length = path.eval("number((/rl/plan|/rlplan)//advancedOptimizer/length)").getValue<rl::math::Real>(1);
-	if ("deg" == path.eval("string((/rl/plan|/rlplan)//advancedOptimizer/length/@unit)").getValue<std::string>()) {
-		advancedOptimizer->length *= rl::math::DEG2RAD;
+	// XML 中配置 <simpleOptimizer> 则使用轻量优化器(只做去点捷径, 无细分, 速度远快于 AdvancedOptimizer)
+	rl::xml::NodeSet simpleOptimizerNode = path.eval("(/rl/plan|/rlplan)//simpleOptimizer").getValue<rl::xml::NodeSet>();
+	if (simpleOptimizerNode.size() > 0) {
+		this->optimizer = std::make_shared<rl::plan::SimpleOptimizer>();
 	}
-	advancedOptimizer->ratio = path.eval("number((/rl/plan|/rlplan)//advancedOptimizer/ratio)").getValue<rl::math::Real>(0.1f);
+	else {
+		this->optimizer = std::make_shared<rl::plan::AdvancedOptimizer>();
+		rl::plan::AdvancedOptimizer* advancedOptimizer = static_cast<rl::plan::AdvancedOptimizer*>(this->optimizer.get());
+		advancedOptimizer->length = path.eval("number((/rl/plan|/rlplan)//advancedOptimizer/length)").getValue<rl::math::Real>(1);
+		if ("deg" == path.eval("string((/rl/plan|/rlplan)//advancedOptimizer/length/@unit)").getValue<std::string>()) {
+			advancedOptimizer->length *= rl::math::DEG2RAD;
+		}
+		advancedOptimizer->ratio = path.eval("number((/rl/plan|/rlplan)//advancedOptimizer/ratio)").getValue<rl::math::Real>(0.1f);
+	}
 
 	if (nullptr != this->optimizer) {
 		this->optimizer->model = this->model.get();

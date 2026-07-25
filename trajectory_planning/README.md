@@ -67,7 +67,35 @@ finished(trajectory, ms) ◀─────────────────�
 3. 按本目录下的 `MainWindow.h / MainWindow.cpp` 同步集成改动。
 4. 若工程尚未注册元类型,`PlanWorker` 构造函数已调用 `qRegisterMetaType<PlanToPreWeldParams>` 与 `qRegisterMetaType<std::vector<rl::math::Vector>>`,无需额外处理。
 
-## 五、可调参数
+## 五、优化器调优:`optimizer->process(path)` 慢的根因与参数设置
+
+`AdvancedOptimizer::process` 的实际算法(RL 源码):先把路径所有段**细分到 ≤ `length`**,然后反复扫描所有相邻三点 `(i, j, k)`,**每个三元组都先调一次 `verifier->isColliding(i, k)`**(RecursiveVerifier 以 `delta` 步长做碰撞检测),可行且中间点偏离直连线超过 `ratio·|ik|` 时删除 `j`;去点、细分交替进行直至收敛。
+
+本工程关节空间是**混合单位**(地轨 mm + 6 转轴 rad),`model->distance` 被 mm 量级的地轨行程主导,而原配置的参数带 `unit="deg"`(按纯转轴机器人写的),换算后严重失配:
+
+| 参数 | 原值 | 实际含义 | 后果 |
+| --- | --- | --- | --- |
+| `recursiveVerifier/delta` | 1° = **0.0175** | 地轨方向每 0.017mm 碰撞检测一次 | 每条候选捷径上万次碰撞查询;比规划器自身的检测分辨率(`delta` 10° = 0.175)还细 10 倍,毫无必要 |
+| `length` | 500° = **8.73** | 每 ~9 单位(≈9mm 地轨)插一个细分点 | 几米长的路径 → 数百个路点,三元组数量爆炸,且每遍扫描每个三元组都要做一次完整 verifier 检测 |
+| `ratio` | 0.3 | 偏差超过 30% 才去点 | 合理,保持 |
+
+**推荐配置(见 `config/kuka16.xml`)**:
+
+```xml
+<advancedOptimizer>
+    <recursiveVerifier>
+        <delta>0.15</delta>   <!-- 原 0.0175, 与规划器分辨率同量级; 可调 0.1~0.2 -->
+    </recursiveVerifier>
+    <length>150</length>      <!-- 原 8.73, 约 150mm 一段; 可调 100~300 -->
+    <ratio>0.3</ratio>
+</advancedOptimizer>
+```
+
+碰撞查询量约下降 `(0.15/0.0175) × (150/8.73) ≈ 8.6 × 17 ≈ 150 倍`,优化耗时从"分钟级"降到"亚秒~秒级"。路径变粗不影响回放:`PlanWorker` 输出前会按 `interpStep` 重新做稠密插值。
+
+**更快的选项**:`loadRobotWidget` 已支持在 XML 中用 `<simpleOptimizer>` 节点替换 `<advancedOptimizer>`,`SimpleOptimizer` 只做贪心去点(无细分、无 ratio 判断),通常几十次碰撞查询即可完成,适合对路径长度最优性要求不高的场合;也可在 `PlanToPreWeldParams` 中直接置 `optimize = false` 跳过优化。
+
+## 六、可调参数
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
