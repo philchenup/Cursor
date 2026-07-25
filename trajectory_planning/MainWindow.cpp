@@ -1,5 +1,7 @@
 #include "mainwindow.h"
 
+#include <rl/plan/RrtConCon.h>
+
 #include "edit/coordinate.h"
 #include "edit/cutting.h"
 #include "edit/sampling.h"
@@ -1197,37 +1199,51 @@ void MainWindow::loadRobotWidget(const QString& filename) {
 		this->sampler->model = this->model.get();
 	}
 
-	rl::xml::NodeSet planners = path.eval("(/rl/plan|/rlplan)//addRrtConCon|(/rl/plan|/rlplan)//eet|(/rl/plan|/rlplan)//rrt|(/rl/plan|/rlplan)//rrtCon|(/rl/plan|/rlplan)//rrtConCon|(/rl/plan|/rlplan)//rrtConExt|(/rl/plan|/rlplan)//rrtDual|(/rl/plan|/rlplan)//rrtExtCon").getValue<rl::xml::NodeSet>();
+	// 规划器按 XML 节点名选择(原实现无视节点名, 一律硬编码 AddRrtConCon):
+	//   rrtConCon    - RRT-Connect 双树(焊接场景推荐): 静态已知环境下单查询最快最稳, 仅需 delta/epsilon 两个参数;
+	//   addRrtConCon - 自适应动态域 RRT(兼容保留): 仅窄通道场景占优, 额外的 alpha/lower/radius 在混合单位空间下难以整定;
+	//   eet 等依赖距离查询(DistanceModel)的算法在 ODE 引擎(SimpleScene)下不可用, 故不提供。
+	rl::xml::NodeSet planners = path.eval("(/rl/plan|/rlplan)//rrtConCon|(/rl/plan|/rlplan)//addRrtConCon").getValue<rl::xml::NodeSet>();
 	for (int i = 0; i < std::min(1, planners.size()); ++i) {
 		rl::xml::Path path(document, planners[i]);
-		this->planner = std::make_shared<rl::plan::AddRrtConCon>();
-		rl::plan::AddRrtConCon* addRrtConCon = static_cast<rl::plan::AddRrtConCon*>(this->planner.get());
-		addRrtConCon->alpha = path.eval("number(alpha)").getValue<rl::math::Real>(0.5f);
-		addRrtConCon->delta = path.eval("number(delta)").getValue<rl::math::Real>(20);
+		const std::string plannerName = planners[i].getName();
+
+		if ("rrtConCon" == plannerName) {
+			this->planner = std::make_shared<rl::plan::RrtConCon>();
+		}
+		else {
+			this->planner = std::make_shared<rl::plan::AddRrtConCon>();
+			rl::plan::AddRrtConCon* addRrtConCon = static_cast<rl::plan::AddRrtConCon*>(this->planner.get());
+			addRrtConCon->alpha = path.eval("number(alpha)").getValue<rl::math::Real>(0.5f);
+
+			addRrtConCon->lower = path.eval("number(lower)").getValue<rl::math::Real>(20);
+
+			if ("deg" == path.eval("string(lower/@unit)").getValue<std::string>()) {
+				addRrtConCon->lower *= rl::math::DEG2RAD;
+			}
+
+			addRrtConCon->radius = path.eval("number(radius)").getValue<rl::math::Real>(200);
+
+			if ("deg" == path.eval("string(radius/@unit)").getValue<std::string>()) {
+				addRrtConCon->radius *= rl::math::DEG2RAD;
+			}
+		}
+
+		// delta/epsilon/sampler 为 Rrt 系列公共参数
+		rl::plan::Rrt* rrt = static_cast<rl::plan::Rrt*>(this->planner.get());
+		rrt->delta = path.eval("number(delta)").getValue<rl::math::Real>(20);
 
 		if ("deg" == path.eval("string(delta/@unit)").getValue<std::string>()) {
-			addRrtConCon->delta *= rl::math::DEG2RAD;
+			rrt->delta *= rl::math::DEG2RAD;
 		}
 
-		addRrtConCon->epsilon = path.eval("number(epsilon)").getValue<rl::math::Real>(1.0e-1f);
+		rrt->epsilon = path.eval("number(epsilon)").getValue<rl::math::Real>(1.0e-1f);
 
 		if ("deg" == path.eval("string(epsilon/@unit)").getValue<std::string>()) {
-			addRrtConCon->epsilon *= rl::math::DEG2RAD;
+			rrt->epsilon *= rl::math::DEG2RAD;
 		}
 
-		addRrtConCon->lower = path.eval("number(lower)").getValue<rl::math::Real>(20);
-
-		if ("deg" == path.eval("string(lower/@unit)").getValue<std::string>()) {
-			addRrtConCon->lower *= rl::math::DEG2RAD;
-		}
-
-		addRrtConCon->radius = path.eval("number(radius)").getValue<rl::math::Real>(200);
-
-		if ("deg" == path.eval("string(radius/@unit)").getValue<std::string>()) {
-			addRrtConCon->radius *= rl::math::DEG2RAD;
-		}
-
-		addRrtConCon->sampler = this->sampler.get();
+		rrt->sampler = this->sampler.get();
 	}
 
 	std::size_t nearestNeighborsSize = 1;

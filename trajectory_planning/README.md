@@ -67,7 +67,23 @@ finished(trajectory, ms) ◀─────────────────�
 3. 按本目录下的 `MainWindow.h / MainWindow.cpp` 同步集成改动。
 4. 若工程尚未注册元类型,`PlanWorker` 构造函数已调用 `qRegisterMetaType<PlanToPreWeldParams>` 与 `qRegisterMetaType<std::vector<rl::math::Vector>>`,无需额外处理。
 
-## 五、优化器调优:`optimizer->process(path)` 慢的根因与参数设置
+## 五、规划/优化算法选型(基于 [roboticslibrary/rl](https://github.com/roboticslibrary/rl))
+
+约束条件:焊接场景为**静态已知环境**(工件 + 龙门 KR16),任务是**单查询**(起点 → 预焊接点)规划;`loadRobotWidget` 使用 **ODE 碰撞引擎**(`rl::sg::ode::Scene` 为 `SimpleScene`),只支持布尔碰撞查询,**不支持距离查询**。
+
+| RL 算法 | 评估 | 结论 |
+| --- | --- | --- |
+| `RrtConCon`(RRT-Connect 双树) | 起点/目标各长一棵树交替贪心互连,静态场景单查询收敛最快、成功率最高,仅 `delta`/`epsilon` 两个参数 | **规划器选用** |
+| `AddRrtConCon`(原用) | 自适应动态域采样只在窄通道场景占优;额外的 `alpha/lower/radius` 在混合单位空间难以整定(原 `radius=500°` 即失配值) | 兼容保留,窄通道时回退 |
+| `Prm` / `PrmUtilityGuided` | 多查询路线图,工件更换即失效,前期采样开销大 | 不选 |
+| `Rrt` / `RrtGoalBias` / `RrtCon` / `RrtExtCon` / `RrtExtExt` | 单树或保守双树,收敛慢于 Con-Con | 不选 |
+| `Eet` | 面向工业场景的工作空间引导规划,但依赖 `DistanceModel` 距离查询与 `WorkspaceSphereExplorer`,ODE 引擎下不可用 | 换 PQP/Bullet/FCL 引擎后可再评估 |
+| `AdvancedOptimizer` | RL 中唯一带细分的部分捷径优化,路径质量最好,mm 尺度调参后耗时可控 | **优化器选用**(参数见下节) |
+| `SimpleOptimizer` | 贪心去点,最快但路径较长 | XML `<simpleOptimizer>` 开关备选 |
+
+`loadRobotWidget` 现按 XML 节点名实例化规划器(`rrtConCon` / `addRrtConCon`),不再硬编码;`RrtConCon` 与 `AddRrtConCon` 同属 `RrtDual` 派生体系,近邻结构(双 GNAT)与 `PlanWorker` 调用的 `Planner` 接口均无需改动。
+
+## 六、优化器调优:`optimizer->process(path)` 慢的根因与参数设置
 
 `AdvancedOptimizer::process` 的实际算法(RL 源码):先把路径所有段**细分到 ≤ `length`**,然后反复扫描所有相邻三点 `(i, j, k)`,**每个三元组都先调一次 `verifier->isColliding(i, k)`**(RecursiveVerifier 以 `delta` 步长做碰撞检测),可行且中间点偏离直连线超过 `ratio·|ik|` 时删除 `j`;去点、细分交替进行直至收敛。
 
@@ -95,7 +111,7 @@ finished(trajectory, ms) ◀─────────────────�
 
 **更快的选项**:`loadRobotWidget` 已支持在 XML 中用 `<simpleOptimizer>` 节点替换 `<advancedOptimizer>`,`SimpleOptimizer` 只做贪心去点(无细分、无 ratio 判断),通常几十次碰撞查询即可完成,适合对路径长度最优性要求不高的场合;也可在 `PlanToPreWeldParams` 中直接置 `optimize = false` 跳过优化。
 
-## 六、可调参数
+## 七、可调参数
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |

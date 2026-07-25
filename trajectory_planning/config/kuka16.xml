@@ -1,5 +1,38 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <rlplan xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="rlplan.xsd">
+	<!--
+		规划算法选型(焊接场景: 静态已知环境, 单查询 起点->预焊接点, ODE 碰撞引擎):
+
+		rrtConCon (RRT-Connect 双树, 本配置采用)
+		    从起点和目标各长一棵树, 交替贪心互连; 静态场景单查询收敛最快、成功率最高,
+		    只有 delta/epsilon 两个参数, 是工业机器人取放/接近规划的标准做法。
+
+		替代方案说明:
+		  - addRrtConCon(原配置): 自适应动态域 RRT, 只在夹具密集的窄通道场景占优,
+		    额外的 alpha/lower/radius 在混合单位(地轨mm+转轴rad)下难以整定(原 radius=500° 即为失配值);
+		  - prm/prmUtilityGuided: 多查询路线图, 工件每次更换场景即失效, 不适用;
+		  - eet: 面向工业场景的工作空间引导规划, 但依赖距离查询(DistanceModel),
+		    当前 ODE 引擎只支持布尔碰撞(SimpleModel), 需切换 PQP/Bullet/FCL 引擎后方可使用。
+
+		参数说明(混合单位空间):
+		  delta    树扩展步长, 也是扩展过程的碰撞检测分辨率。10° = 0.175, 转轴方向足够安全;
+		           地轨长行程时若规划偏慢可增大到 unit 省略的 0.3~0.5。
+		  epsilon  目标连接容差(0.1 混合单位)。
+	-->
+	<rrtConCon>
+		<duration>100</duration>
+		<model>
+			<kinematics href="./wrl/KR16_1610_2_gantry.xml" type="mdl"/>
+			<model>0</model>
+			<scene href="./wrl/KR16_1610_2_boxes_gantry.xml"/>
+		</model>
+		<delta unit="deg">10</delta>
+		<epsilon>0.1</epsilon>
+		<uniformSampler/>
+	</rrtConCon>
+	<!--
+		窄通道场景可回退到自适应动态域 RRT(loadRobotWidget 按节点名自动识别):
+
 	<addRrtConCon>
 		<duration>100</duration>
 		<model>
@@ -12,8 +45,9 @@
 		<uniformSampler/>
 		<alpha>10</alpha>
 		<lower unit="deg">2</lower>
-		<radius unit="deg">500</radius>
+		<radius>300</radius>
 	</addRrtConCon>
+	-->
 	<!--
 		优化器参数说明(场景为 mm, 关节空间 = 地轨[mm] + 6转轴[rad] 的混合单位):
 
