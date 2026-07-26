@@ -297,36 +297,15 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
             throw std::runtime_error("Model DOF < 1.");
         if (params.jointStepRad <= 0.0 || params.railStepLen <= 0.0)
             throw std::runtime_error("Interpolation step must be positive.");
-        if (params.tcpBackDistance <= 0.0)
-            throw std::runtime_error("tcpBackDistance must be positive.");
+
+        // 输入保持兼容：不再做沿 TCP 后退；tcpBackDistance / T_flange_to_tcp 本函数内不使用
 
         emit started();
-
-        const rl::math::Transform T_tcp_to_flange = params.T_flange_to_tcp.inverse();
-
-        // 备份地轨原始限位（结束/异常时还原）
-        rl::mdl::Joint* railJoint = (dof >= 1) ? kinematic->getJoint(0) : nullptr;
-        rl::math::Vector railMin0, railMax0;
-        if (railJoint)
-        {
-            railMin0 = railJoint->getMinimum();
-            railMax0 = railJoint->getMaximum();
-        }
-
-        auto restoreRail = [&]() {
-            if (railJoint)
-            {
-                railJoint->setMinimum(railMin0);
-                railJoint->setMaximum(railMax0);
-            }
-        };
 
         std::vector<rl::math::Vector> jointTrajectory;
         jointTrajectory.reserve(256);
 
-        int successCount = 0, failCount = 0;
         int lastReportedPercent = -1;
-
         auto reportProgress = [&](int percent) {
             if (percent < 0) percent = 0;
             if (percent > 100) percent = 100;
@@ -337,94 +316,9 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
             }
         };
 
-        // 回退段专用：增量雅可比 IK（无 random restart / 无整段 solve）。
-        // 地轨在更新律中冻结（dq(0)=0），避免极窄地轨限位导致前 seg1 个点关节发散跳动。
-        auto retreatTcpGoalIncremental = [&](const rl::math::Transform& T_world_tcp,
-            const rl::math::Vector& seed,
-            const double railFixed,
-            rl::math::Vector& q_out) -> bool
-        {
-            const rl::math::Transform T_world_flange = T_world_tcp * T_tcp_to_flange;
-
-            rl::math::Vector q = seed;
-            q(0) = railFixed;
-
-            const std::size_t maxIter = 80;
-            // 与模型单位一致：railStepLen 量级下用相对宽松收敛，保证轨迹连续优先
-            const double eps = std::max(1e-4, 0.05 * params.railStepLen);
-            const double maxStep = std::max(params.jointStepRad, 1e-3);
-
-            for (std::size_t iter = 0; iter < maxIter; ++iter)
-            {
-                if (m_stopRequested.load())
-                    return false;
-
-                kinematic->setPosition(q);
-                kinematic->forwardPosition();
-
-                rl::math::Vector dx(6 * kinematic->getOperationalDof());
-                dx.setZero();
-                dx.segment(0, 6) =
-                    kinematic->getOperationalPosition(0).toDelta(T_world_flange);
-
-                if (dx.norm() < eps)
-                {
-                    q(0) = railFixed;
-                    q_out = q;
-                    ++successCount;
-                    return true;
-                }
-
-                kinematic->calculateJacobian();
-                kinematic->calculateJacobianInverse(0.0, true);
-                rl::math::Vector dq = kinematic->getJacobianInverse() * dx;
-
-                // 冻结地轨，只动手臂
-                if (dq.size() > 0)
-                    dq(0) = 0.0;
-
-                if (dq.size() != q.size())
-                {
-                    ++failCount;
-                    return false;
-                }
-
-                const double n = dq.norm();
-                if (n > maxStep)
-                    dq *= (maxStep / n);
-
-                q += dq;
-                q(0) = railFixed;
-            }
-
-            // 末轮再判一次：未到 eps 则失败，避免把发散点写进前 seg1 个轨迹点
-            kinematic->setPosition(q);
-            kinematic->forwardPosition();
-            {
-                rl::math::Vector dx(6 * kinematic->getOperationalDof());
-                dx.setZero();
-                dx.segment(0, 6) =
-                    kinematic->getOperationalPosition(0).toDelta(T_world_flange);
-                if (dx.norm() < 2.0 * eps)
-                {
-                    q(0) = railFixed;
-                    q_out = q;
-                    ++successCount;
-                    return true;
-                }
-            }
-
-            ++failCount;
-            return false;
-        };
-
-        // —— 当前 TCP 位姿 ——
-        kinematic->setPosition(params.q_current);
-        kinematic->forwardPosition();
-        const rl::math::Transform T_world_flange_now = kinematic->getOperationalPosition(0);
-        const rl::math::Transform T_world_tcp_now = T_world_flange_now * params.T_flange_to_tcp;
-
-        jointTrajectory.push_back(params.q_current);
+        // 轨迹起点：当前关节（无 TCP 回退）
+        const rl::math::Vector q_start = params.q_current;
+        jointTrajectory.push_back(q_start);
 
         if (m_stopRequested.load())
         {
@@ -441,63 +335,7 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
         constexpr double kPi = 3.14159265358979323846;
         const double kJoint5FinalRad = -kPi / 2.0; // -90°
 
-        // ========== 第 1 步：沿 TCP -Z 回退 tcpBackDistance → 回退点 q_retracted ==========
-        // 注意：不再 lockRailAt；前 seg1(默认 100/10=10) 个点用增量雅可比，消除目测跳动
-        const double railFixed = params.q_current(0);
-        const double backDist = std::abs(params.tcpBackDistance);
-        const int seg1 = std::max(1, static_cast<int>(std::ceil(backDist / params.railStepLen)));
-
-        rl::math::Vector q_seed = params.q_current;
-        rl::math::Vector q_retracted = params.q_current;
-
-        for (int i = 1; i <= seg1; ++i)
-        {
-            if (m_stopRequested.load())
-            {
-                restoreRail();
-                m_running.store(false);
-                emit aborted();
-                return;
-            }
-
-            const double t = static_cast<double>(i) / static_cast<double>(seg1);
-            rl::math::Transform T_back_in_tcp = rl::math::Transform::Identity();
-            T_back_in_tcp.translation() = rl::math::Vector3(0.0, 0.0, -t * backDist);
-            const rl::math::Transform T_world_tcp_back = T_world_tcp_now * T_back_in_tcp;
-
-            if (!retreatTcpGoalIncremental(T_world_tcp_back, q_seed, railFixed, q_retracted))
-            {
-                restoreRail();
-                m_running.store(false);
-                emit failed(QStringLiteral("IK failed: TCP -Z back-off (step 1)."));
-                return;
-            }
-
-            // 相邻点关节跳变保护（防止前 10 点中单点飞掉）
-            const double jump = (q_retracted - q_seed).cwiseAbs().maxCoeff();
-            const double maxJump = std::max(5.0 * params.jointStepRad, 0.2);
-            if (jump > maxJump)
-            {
-                restoreRail();
-                m_running.store(false);
-                emit failed(QStringLiteral(
-                    "IK discontinuous jump during TCP -Z back-off (step 1)."));
-                return;
-            }
-
-            q_retracted(0) = railFixed;
-            jointTrajectory.push_back(q_retracted);
-            q_seed = q_retracted;
-
-            reportProgress(static_cast<int>(30.0 * i / seg1)); // 0% → 30%
-        }
-
-        restoreRail();
-
-        // ========== 后续插值：一律以回退点 q_retracted 为起点串联 ==========
-        const rl::math::Vector q_start = q_retracted; // 后续轨迹起点（回退位姿）
-
-        // —— 第 2 步：q_start → 暂存 Home（地轨保持回退值，Joint5 先到 0）——
+        // —— 第 1 步：q_start → 暂存 Home（地轨保持当前值，Joint5 先到 0）——
         rl::math::Vector q_staging = params.q_home;
         q_staging(0) = q_start(0);
         q_staging(J5_INDEX) = 0.0;
@@ -508,11 +346,36 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
             const double d = std::abs(q_staging(j) - q_start(j));
             if (d > maxJointDelta) maxJointDelta = d;
         }
-        // delta≈0 时不插值，避免把回退点再重复 push 一次
-        const int seg2 = (maxJointDelta <= 1e-12)
+        const int seg1 = (maxJointDelta <= 1e-12)
             ? 0
             : std::max(1, static_cast<int>(std::ceil(maxJointDelta / params.jointStepRad)));
 
+        for (int i = 1; i <= seg1; ++i)
+        {
+            if (m_stopRequested.load())
+            {
+                m_running.store(false);
+                emit aborted();
+                return;
+            }
+            const double t = static_cast<double>(i) / static_cast<double>(seg1);
+            rl::math::Vector q_interp = (1.0 - t) * q_start + t * q_staging;
+            jointTrajectory.push_back(q_interp);
+            reportProgress(static_cast<int>(50.0 * i / seg1)); // 0% → 50%
+        }
+        if (seg1 == 0)
+            reportProgress(50);
+
+        // —— 第 2 步：只动地轨到 q_home(0)，手臂保持 staging ——
+        const rl::math::Vector q_rail_start = q_staging;
+        const double railStart = q_rail_start(0);
+        const double railEnd = params.q_home(0);
+        const double railDelta = std::abs(railEnd - railStart);
+        const int seg2 = (railDelta <= 1e-12)
+            ? 0
+            : std::max(1, static_cast<int>(std::ceil(railDelta / params.railStepLen)));
+
+        rl::math::Vector q_after_rail = q_rail_start;
         for (int i = 1; i <= seg2; ++i)
         {
             if (m_stopRequested.load())
@@ -522,26 +385,24 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
                 return;
             }
             const double t = static_cast<double>(i) / static_cast<double>(seg2);
-            // 明确从回退点 q_start 插值，不从 q_current / q_home 起算
-            rl::math::Vector q_interp = (1.0 - t) * q_start + t * q_staging;
-            jointTrajectory.push_back(q_interp);
-
-            reportProgress(30 + static_cast<int>(40.0 * i / seg2)); // 30% → 70%
+            q_after_rail = q_rail_start;
+            q_after_rail(0) = (1.0 - t) * railStart + t * railEnd;
+            q_after_rail(J5_INDEX) = 0.0;
+            jointTrajectory.push_back(q_after_rail);
+            reportProgress(50 + static_cast<int>(30.0 * i / seg2)); // 50% → 80%
         }
         if (seg2 == 0)
-            reportProgress(70);
+            reportProgress(80);
 
-        // —— 第 3 步：从 staging（回退链上的当前点）只动地轨到 Home ——
-        const rl::math::Vector q_rail_start = q_staging; // 承接第 2 步终点
-        const double railStart = q_rail_start(0);
-        const double railEnd = params.q_home(0);
-        const double railDelta = std::abs(railEnd - railStart);
-        // delta≈0 时不插值，避免重复点
-        const int seg3 = (railDelta <= 1e-12)
+        // —— 第 3 步：Joint5 0 → -90°，最后对齐 q_home ——
+        const rl::math::Vector q_j5_start = q_after_rail;
+        const double j5Start = q_j5_start(J5_INDEX);
+        const double j5End = kJoint5FinalRad;
+        const double j5Delta = std::abs(j5End - j5Start);
+        const int seg3 = (j5Delta <= 1e-12)
             ? 0
-            : std::max(1, static_cast<int>(std::ceil(railDelta / params.railStepLen)));
+            : std::max(1, static_cast<int>(std::ceil(j5Delta / params.jointStepRad)));
 
-        rl::math::Vector q_after_rail = q_rail_start;
         for (int i = 1; i <= seg3; ++i)
         {
             if (m_stopRequested.load())
@@ -551,57 +412,22 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
                 return;
             }
             const double t = static_cast<double>(i) / static_cast<double>(seg3);
-            q_after_rail = q_rail_start;                 // 手臂保持 staging（源自回退点）
-            q_after_rail(0) = (1.0 - t) * railStart + t * railEnd;
-            q_after_rail(J5_INDEX) = 0.0;
-            jointTrajectory.push_back(q_after_rail);
-
-            reportProgress(70 + static_cast<int>(20.0 * i / seg3)); // 70% → 90%
-        }
-        if (seg3 == 0)
-            reportProgress(90);
-
-        // —— 第 4 步：从地轨到位后的位姿，Joint5 0 → -90° ——
-        const rl::math::Vector q_j5_start = q_after_rail; // 承接第 3 步终点
-        const double j5Start = q_j5_start(J5_INDEX);     // 应为 0
-        const double j5End = kJoint5FinalRad;
-        const double j5Delta = std::abs(j5End - j5Start);
-        const int seg4 = (j5Delta <= 1e-12)
-            ? 0
-            : std::max(1, static_cast<int>(std::ceil(j5Delta / params.jointStepRad)));
-
-        for (int i = 1; i <= seg4; ++i)
-        {
-            if (m_stopRequested.load())
-            {
-                m_running.store(false);
-                emit aborted();
-                return;
-            }
-            const double t = static_cast<double>(i) / static_cast<double>(seg4);
             rl::math::Vector q_interp = q_j5_start;
             q_interp(J5_INDEX) = (1.0 - t) * j5Start + t * j5End;
-            // 最后一拍对齐完整 Home（地轨/其余关节已到位）
-            if (i == seg4)
+            if (i == seg3)
                 q_interp = params.q_home;
             jointTrajectory.push_back(q_interp);
-
-            reportProgress(90 + static_cast<int>(10.0 * i / seg4)); // 90% → 100%
+            reportProgress(80 + static_cast<int>(20.0 * i / seg3)); // 80% → 100%
         }
-        // 无 J5 位移时仍保证终点为 Home
-        if (seg4 == 0 && (jointTrajectory.empty()
+        if (seg3 == 0 && (jointTrajectory.empty()
             || (jointTrajectory.back() - params.q_home).cwiseAbs().maxCoeff() > 1e-12))
         {
             jointTrajectory.push_back(params.q_home);
         }
 
         reportProgress(100);
-
-        const int attempts = successCount + failCount;
-        const double ratio = (attempts > 0) ? (static_cast<double>(successCount) / attempts) : 1.0;
-
         m_running.store(false);
-        emit finished_return(jointTrajectory, ratio * 100);
+        emit finished_return(jointTrajectory, 100.0);
     }
     catch (const std::exception& e)
     {
