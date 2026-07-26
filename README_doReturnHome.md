@@ -13,6 +13,8 @@
 
 Signals unchanged: `finished_return(jointTrajectory, ratio)`, `failed`, `aborted`, `progress`.
 
+Call site: rename `p.tcpBackDistance` → `p.tcpStepBack` (default 100 already set in struct).
+
 ## Path
 
 1. **TCP -Z retreat** `tcpStepBack` with IK every `railStepLen` → **point A** (rail locked at `q_current(0)`).
