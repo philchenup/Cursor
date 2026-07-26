@@ -1,17 +1,14 @@
-# doReturnHome: TCP -Z retreat, then interpolate from retracted pose
+# doReturnHome: joint / rail / J5 staging (no TCP retreat)
 
 ## I/O
 
 Unchanged: `IKReturnHomeParams` in → `finished_return` / `failed` / `aborted` out.
+`tcpBackDistance` and `T_flange_to_tcp` remain in the params struct for API compatibility but are unused.
 
 ## Behavior
 
-1. **TCP -Z retreat** by `tcpBackDistance` (default 100) → `q_retracted`.
-   - Default `railStepLen=10` ⇒ **first ~10 trajectory points** are this segment.
-   - Uses **incremental Jacobian IK** (no `JacobianInverseKinematics::solve` / no random restart).
-   - Rail DOF frozen via `dq(0)=0` (no ultra-tight joint-limit lock).
-   - Rejects a waypoint if joint jump from the previous seed is too large.
-2. **Subsequent interpolation starts from `q_retracted`**:
-   - `q_retracted` → staging home (rail fixed, J5 = 0)
-   - rail → `q_home(0)`
-   - J5 0 → -90°, final point = `q_home`
+Starts from `q_current` (no TCP -Z back-off):
+
+1. Joint interpolate to staging home (rail fixed at `q_current(0)`, J5 = 0)
+2. Rail → `q_home(0)` (arm held at staging)
+3. J5 0 → -90°, final point = `q_home`
