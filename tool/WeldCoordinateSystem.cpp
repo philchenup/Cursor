@@ -1,8 +1,30 @@
 #include "WeldCoordinateSystem.h"
 
+#include <TopExp.hxx>
+
 namespace {
 
-    //! Mid-parameter point and unit tangent of @p edge, respecting edge orientation.
+    //! Align @p tangent with the topological edge sense FirstVertex → LastVertex.
+    //! BRepAdaptor_Curve::D1 can come out anti-parallel to that sense; flip if needed.
+    void AlignTangentWithEdgeOrientation(const TopoDS_Edge& edge, gp_Dir& tangent)
+    {
+        const TopoDS_Vertex vFirst = TopExp::FirstVertex(edge, Standard_True);
+        const TopoDS_Vertex vLast = TopExp::LastVertex(edge, Standard_True);
+        if (vFirst.IsNull() || vLast.IsNull()) {
+            return;
+        }
+
+        const gp_Vec chord(BRep_Tool::Pnt(vFirst), BRep_Tool::Pnt(vLast));
+        if (chord.Magnitude() <= Precision::Confusion()) {
+            return;
+        }
+
+        if (tangent.Dot(gp_Dir(chord)) < 0.0) {
+            tangent.Reverse();
+        }
+    }
+
+    //! Mid-parameter point and unit tangent of @p edge, matching edge orientation.
     Standard_Boolean EdgeFrameSeed(const TopoDS_Edge& edge,
         gp_Pnt& origin,
         gp_Dir& yDir)
@@ -29,6 +51,7 @@ namespace {
 
         origin = p;
         yDir = gp_Dir(d1);
+        AlignTangentWithEdgeOrientation(edge, yDir);
         return Standard_True;
     }
 
@@ -114,14 +137,14 @@ namespace {
         return Standard_True;
     }
 
-    //! Unit dihedral bisector of the two face normals at parameter @p u, ⊥ @p edgeDir.
+    //! Unit dihedral bisector of the two face normals at parameter @p u, ⊥ @p yDir.
     //! Uses projected unit normals so Z lies exactly on the angle bisector in the
     //! plane perpendicular to the edge.
     Standard_Boolean BisectorAtParam(const TopoDS_Face& face1,
         const TopoDS_Face& face2,
         const TopoDS_Edge& edge,
         Standard_Real      u,
-        const gp_Dir& edgeDir,
+        const gp_Dir& yDir,
         gp_Dir& zDir)
     {
         gp_Dir n1;
@@ -133,7 +156,7 @@ namespace {
 
         gp_Vec p1;
         gp_Vec p2;
-        if (!ProjectPerp(gp_Vec(n1), edgeDir, p1) || !ProjectPerp(gp_Vec(n2), edgeDir, p2)) {
+        if (!ProjectPerp(gp_Vec(n1), yDir, p1) || !ProjectPerp(gp_Vec(n2), yDir, p2)) {
             return Standard_False;
         }
 
@@ -151,7 +174,7 @@ namespace {
         return Standard_True;
     }
 
-    //! Build one sample: X along edge, Z = ± face-normal bisector, Y = Z × X.
+    //! Build one sample: Y along edge, Z = ± face-normal bisector, X = Y × Z.
     Standard_Boolean BuildDiscretePointAt(const TopoDS_Face& face1,
         const TopoDS_Face& face2,
         const TopoDS_Edge& edge,
@@ -168,10 +191,12 @@ namespace {
             return Standard_False;
         }
 
-        const gp_Dir xDir(d1); // travel / edge tangent → X
+        gp_Dir yDir(d1); // travel / edge orientation
+        // 保证 Y 与 TopoDS_Edge 拓扑方向（First→Last）一致，而不是其反方向
+        AlignTangentWithEdgeOrientation(edge, yDir);
 
         gp_Dir zDir;
-        if (!BisectorAtParam(face1, face2, edge, u, xDir, zDir)) {
+        if (!BisectorAtParam(face1, face2, edge, u, yDir, zDir)) {
             return Standard_False;
         }
 
@@ -185,16 +210,16 @@ namespace {
             zDir.Reverse();
         }
 
-        // Right-hand rule with X = edge tangent: Y = Z × X  ⇒  X × Y = Z.
-        gp_Vec yVec = gp_Vec(zDir).Crossed(gp_Vec(xDir));
-        if (yVec.Magnitude() <= Precision::Confusion()) {
+        // Right-hand rule: X = Y × Z  ⇒  X × Y = Z.
+        gp_Vec xVec = gp_Vec(yDir).Crossed(gp_Vec(zDir));
+        if (xVec.Magnitude() <= Precision::Confusion()) {
             return Standard_False;
         }
 
         sample.position = p;
-        sample.xDir = xDir;
+        sample.yDir = yDir;
         sample.zDir = zDir;
-        sample.yDir = gp_Dir(yVec);
+        sample.xDir = gp_Dir(xVec);
         return Standard_True;
     }
 

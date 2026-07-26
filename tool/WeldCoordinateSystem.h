@@ -11,9 +11,9 @@ Standard_Boolean ComputeWeldCoordinateSystem(
 //!
 //! At each sample:
 //! - position: point on the edge
-//! - xDir: edge tangent (edge orientation)
-//! - zDir: unit bisector of the two adjacent face normals (⊥ xDir)
-//! - yDir: zDir × xDir  (right-handed: x × y = z)
+//! - yDir: edge tangent, same sense as TopoDS_Edge (FirstVertex → LastVertex)
+//! - zDir: unit bisector of the two adjacent face normals (⊥ yDir)
+//! - xDir: yDir × zDir  (right-handed: x × y = z)
 //!
 //! @param selectShape  solid / shell / compound that owns the edge
 //! @param edge         selected weld edge
