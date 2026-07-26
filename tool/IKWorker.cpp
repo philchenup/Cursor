@@ -321,17 +321,6 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
             }
         };
 
-        auto lockRailAt = [&](double railValue) {
-            if (!railJoint || railJoint->getDofPosition() != 1) return;
-            const double eps = 1e-6;
-            rl::math::Vector lo(1), hi(1);
-            const double v = std::min(std::max(railValue, railMin0(0)), railMax0(0));
-            lo << (v - eps);
-            hi << (v + eps);
-            railJoint->setMinimum(lo);
-            railJoint->setMaximum(hi);
-        };
-
         std::vector<rl::math::Vector> jointTrajectory;
         jointTrajectory.reserve(256);
 
@@ -348,26 +337,83 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
             }
         };
 
-        // 轨迹 IK：禁用 random restart，保证从 seed 连续，避免回退段跳动
-        auto solveTcpGoal = [&](const rl::math::Transform& T_world_tcp,
+        // 回退段专用：增量雅可比 IK（无 random restart / 无整段 solve）。
+        // 地轨在更新律中冻结（dq(0)=0），避免极窄地轨限位导致前 seg1 个点关节发散跳动。
+        auto retreatTcpGoalIncremental = [&](const rl::math::Transform& T_world_tcp,
             const rl::math::Vector& seed,
+            const double railFixed,
             rl::math::Vector& q_out) -> bool
         {
             const rl::math::Transform T_world_flange = T_world_tcp * T_tcp_to_flange;
 
-            rl::mdl::JacobianInverseKinematics ik(kinematic.get());
-            ik.setDuration(std::chrono::milliseconds(params.timeoutMs));
-            ik.setRandomRestarts(0);
-            ik.addGoal(T_world_flange, 0);
+            rl::math::Vector q = seed;
+            q(0) = railFixed;
 
-            kinematic->setPosition(seed);
-            const bool ok = ik.solve();
-            if (ok)
+            const std::size_t maxIter = 80;
+            // 与模型单位一致：railStepLen 量级下用相对宽松收敛，保证轨迹连续优先
+            const double eps = std::max(1e-4, 0.05 * params.railStepLen);
+            const double maxStep = std::max(params.jointStepRad, 1e-3);
+
+            for (std::size_t iter = 0; iter < maxIter; ++iter)
             {
-                q_out = kinematic->getPosition();
-                ++successCount;
-                return true;
+                if (m_stopRequested.load())
+                    return false;
+
+                kinematic->setPosition(q);
+                kinematic->forwardPosition();
+
+                rl::math::Vector dx(6 * kinematic->getOperationalDof());
+                dx.setZero();
+                dx.segment(0, 6) =
+                    kinematic->getOperationalPosition(0).toDelta(T_world_flange);
+
+                if (dx.norm() < eps)
+                {
+                    q(0) = railFixed;
+                    q_out = q;
+                    ++successCount;
+                    return true;
+                }
+
+                kinematic->calculateJacobian();
+                kinematic->calculateJacobianInverse(0.0, true);
+                rl::math::Vector dq = kinematic->getJacobianInverse() * dx;
+
+                // 冻结地轨，只动手臂
+                if (dq.size() > 0)
+                    dq(0) = 0.0;
+
+                if (dq.size() != q.size())
+                {
+                    ++failCount;
+                    return false;
+                }
+
+                const double n = dq.norm();
+                if (n > maxStep)
+                    dq *= (maxStep / n);
+
+                q += dq;
+                q(0) = railFixed;
             }
+
+            // 末轮再判一次：未到 eps 则失败，避免把发散点写进前 seg1 个轨迹点
+            kinematic->setPosition(q);
+            kinematic->forwardPosition();
+            {
+                rl::math::Vector dx(6 * kinematic->getOperationalDof());
+                dx.setZero();
+                dx.segment(0, 6) =
+                    kinematic->getOperationalPosition(0).toDelta(T_world_flange);
+                if (dx.norm() < 2.0 * eps)
+                {
+                    q(0) = railFixed;
+                    q_out = q;
+                    ++successCount;
+                    return true;
+                }
+            }
+
             ++failCount;
             return false;
         };
@@ -396,8 +442,8 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
         const double kJoint5FinalRad = -kPi / 2.0; // -90°
 
         // ========== 第 1 步：沿 TCP -Z 回退 tcpBackDistance → 回退点 q_retracted ==========
-        lockRailAt(params.q_current(0));
-
+        // 注意：不再 lockRailAt；前 seg1(默认 100/10=10) 个点用增量雅可比，消除目测跳动
+        const double railFixed = params.q_current(0);
         const double backDist = std::abs(params.tcpBackDistance);
         const int seg1 = std::max(1, static_cast<int>(std::ceil(backDist / params.railStepLen)));
 
@@ -419,14 +465,27 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
             T_back_in_tcp.translation() = rl::math::Vector3(0.0, 0.0, -t * backDist);
             const rl::math::Transform T_world_tcp_back = T_world_tcp_now * T_back_in_tcp;
 
-            if (!solveTcpGoal(T_world_tcp_back, q_seed, q_retracted))
+            if (!retreatTcpGoalIncremental(T_world_tcp_back, q_seed, railFixed, q_retracted))
             {
                 restoreRail();
                 m_running.store(false);
                 emit failed(QStringLiteral("IK failed: TCP -Z back-off (step 1)."));
                 return;
             }
-            q_retracted(0) = params.q_current(0);
+
+            // 相邻点关节跳变保护（防止前 10 点中单点飞掉）
+            const double jump = (q_retracted - q_seed).cwiseAbs().maxCoeff();
+            const double maxJump = std::max(5.0 * params.jointStepRad, 0.2);
+            if (jump > maxJump)
+            {
+                restoreRail();
+                m_running.store(false);
+                emit failed(QStringLiteral(
+                    "IK discontinuous jump during TCP -Z back-off (step 1)."));
+                return;
+            }
+
+            q_retracted(0) = railFixed;
             jointTrajectory.push_back(q_retracted);
             q_seed = q_retracted;
 
