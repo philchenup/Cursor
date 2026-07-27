@@ -12,10 +12,9 @@
 //   void          setConnected(bool connected);  // updates UI + m_comm_connected
 //
 // Notes:
+//   - Calling InitializeComm() again disconnects previous UI connects and
+//     tears down any active session before rewiring.
 //   - All three modes run SocketWorker on m_thread_comm.
-//   - TCP Server binds to ip (or 0.0.0.0 if empty) : port, listens, accepts.
-//   - TCP Client connects to ip:port.
-//   - UDP binds 0.0.0.0:port locally and sendto/recvfrom peer ip:port.
 // =============================================================================
 
 #include "mainwindow.h"
@@ -27,15 +26,41 @@
 
 void MainWindow::InitializeComm()
 {
+    // ── Re-init: disconnect previous UI hooks + tear down active session ───
+    disconnect(ui->connectBtn, &QPushButton::clicked, this, nullptr);
+    disconnect(ui->commSendBtn, &QPushButton::clicked, this, nullptr);
+    disconnect(ui->sendEdit, &QLineEdit::returnPressed, this, nullptr);
+
+    if (m_worker_comm)
+    {
+        disconnect(m_worker_comm, nullptr, this, nullptr);
+        m_worker_comm->stopReceiving();
+    }
+
+    if (m_thread_comm)
+    {
+        m_thread_comm->quit();
+        m_thread_comm->wait(3000);
+        m_thread_comm->deleteLater();
+        m_thread_comm = nullptr;
+        m_worker_comm = nullptr; // deleted via finished → deleteLater
+    }
+
+    if (m_comm_connected)
+        setConnected(false);
+
+    // ── Helpers ────────────────────────────────────────────────────────────
     auto cleanupComm = [this]() {
         if (m_worker_comm)
+        {
+            disconnect(m_worker_comm, nullptr, this, nullptr);
             m_worker_comm->stopReceiving();
+        }
 
         if (m_thread_comm)
         {
             m_thread_comm->quit();
             m_thread_comm->wait(3000);
-            // Worker is deleted via QThread::finished → deleteLater
             m_thread_comm->deleteLater();
             m_thread_comm = nullptr;
             m_worker_comm = nullptr;
@@ -74,12 +99,27 @@ void MainWindow::InitializeComm()
 
         try
         {
+            // Clear any leftover objects from a previous failed attempt
+            if (m_worker_comm)
+            {
+                disconnect(m_worker_comm, nullptr, this, nullptr);
+                m_worker_comm->stopReceiving();
+                m_worker_comm->deleteLater();
+                m_worker_comm = nullptr;
+            }
+            if (m_thread_comm)
+            {
+                m_thread_comm->quit();
+                m_thread_comm->wait(1000);
+                m_thread_comm->deleteLater();
+                m_thread_comm = nullptr;
+            }
+
             m_thread_comm = new QThread(this);
             m_worker_comm = new SocketWorker(); // no parent; owned by thread via deleteLater
 
             if (isUdp)
             {
-                // Bind locally on the given port; peer = remote ip:port for sendto.
                 const auto localAddr = rl::hal::Socket::Address::Ipv4(
                     std::string("0.0.0.0"), portStr.toStdString());
                 const auto peerAddr = rl::hal::Socket::Address::Ipv4(
@@ -137,9 +177,11 @@ void MainWindow::InitializeComm()
             });
 
             connect(m_worker_comm, &SocketWorker::disconnected, this, [=]() {
-                // Peer closed (TCP Client). Tear down the same way as Disconnect.
                 if (m_worker_comm)
+                {
+                    disconnect(m_worker_comm, nullptr, this, nullptr);
                     m_worker_comm->stopReceiving();
+                }
 
                 if (m_thread_comm)
                 {
@@ -168,6 +210,7 @@ void MainWindow::InitializeComm()
         {
             if (m_worker_comm)
             {
+                disconnect(m_worker_comm, nullptr, this, nullptr);
                 delete m_worker_comm;
                 m_worker_comm = nullptr;
             }
