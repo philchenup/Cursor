@@ -1,0 +1,6 @@
+*.ply
+__pycache__/
+*.pyc
+.python-version
+output/
+.open3d_data/
