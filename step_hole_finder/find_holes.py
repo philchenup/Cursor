@@ -90,12 +90,8 @@ def _face_area(face: TopoDS_Face) -> float:
 
 def _cylinder_height_estimate(face: TopoDS_Face, adaptor: BRepAdaptor_Surface) -> float:
     """Estimate axial length of a cylindrical face from UV bounds."""
-    u_mid = 0.5 * (adaptor.FirstUParameter() + adaptor.LastUParameter())
-    v0 = adaptor.FirstVParameter()
-    v1 = adaptor.LastVParameter()
-    p0 = adaptor.Value(u_mid, v0)
-    p1 = adaptor.Value(u_mid, v1)
-    return p0.Distance(p1)
+    _, _, height = _axis_endpoints_from_face(adaptor)
+    return height
 
 
 def _project_point_to_axis(point: gp_Pnt, axis: gp_Ax1) -> gp_Pnt:
@@ -108,6 +104,27 @@ def _project_point_to_axis(point: gp_Pnt, axis: gp_Ax1) -> gp_Pnt:
         origin.Y() + direction.Y() * t,
         origin.Z() + direction.Z() * t,
     )
+
+
+def _axis_endpoints_from_face(adaptor: BRepAdaptor_Surface) -> Tuple[gp_Pnt, gp_Pnt, float]:
+    """
+    Project the cylindrical face V-ends onto its axis.
+
+    ``gp_Cylinder.Location()`` is only a geometric definition point and often
+    sits at the bottom parameter end; face UV bounds give the real hole extent.
+    """
+    axis = adaptor.Cylinder().Axis()
+    u_mid = 0.5 * (adaptor.FirstUParameter() + adaptor.LastUParameter())
+    p0 = adaptor.Value(u_mid, adaptor.FirstVParameter())
+    p1 = adaptor.Value(u_mid, adaptor.LastVParameter())
+    a0 = _project_point_to_axis(p0, axis)
+    a1 = _project_point_to_axis(p1, axis)
+    return a0, a1, a0.Distance(a1)
+
+
+def _prefer_top_axis_point(a0: gp_Pnt, a1: gp_Pnt) -> gp_Pnt:
+    """Pick the hole opening with larger world-Z (top side)."""
+    return a0 if a0.Z() >= a1.Z() else a1
 
 
 def _is_hole_cylinder(shape: TopoDS_Shape, face: TopoDS_Face, adaptor: BRepAdaptor_Surface) -> bool:
@@ -196,13 +213,25 @@ def _merge_coaxial(
         # Prefer the face with largest area for axis reference.
         ref = max(cluster, key=lambda c: c["area"])
         depth = max((c["height"] for c in cluster), default=None)
-        loc = ref["axis"].Location()
+
+        # Collect both axial ends from all faces in the cluster, then take the top.
+        ends: List[gp_Pnt] = []
+        for c in cluster:
+            ends.extend([c["axis_end0"], c["axis_end1"]])
+        top = max(ends, key=lambda p: p.Z())
+
         direction = ref["axis"].Direction()
+        # Point axis "outward" toward the top opening when possible.
+        bottom = min(ends, key=lambda p: p.Z())
+        up = gp_Vec(bottom, top)
+        if up.Magnitude() > 1e-12 and up.Dot(gp_Vec(direction.XYZ())) < 0:
+            direction = direction.Reversed()
+
         holes.append(
             HoleCandidate(
                 diameter_mm=radius * 2.0,
                 radius_mm=radius,
-                axis_point=_point(loc),
+                axis_point=_point(top),
                 axis_direction=_unit(direction),
                 depth_mm=depth,
                 face_count=len(cluster),
@@ -252,12 +281,15 @@ def find_cylindrical_holes(
         if holes_only and not _is_hole_cylinder(shape, face, adaptor):
             continue
 
+        end0, end1, height = _axis_endpoints_from_face(adaptor)
         raw.append(
             {
                 "radius": radius,
                 "axis": cylinder.Axis(),
                 "area": _face_area(face),
-                "height": _cylinder_height_estimate(face, adaptor),
+                "height": height,
+                "axis_end0": end0,
+                "axis_end1": end1,
             }
         )
 
