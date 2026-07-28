@@ -39,13 +39,28 @@ python3 -m step_hole_finder your.step --diameter 8 --tolerance 0.1
 作为库调用：
 
 ```python
-from step_hole_finder import load_step, find_cylindrical_holes
+from step_hole_finder import load_step, find_cylindrical_holes, show_model_and_hole_frames
 
 shape = load_step("part.step")
 holes = find_cylindrical_holes(shape, target_diameter_mm=8.0)
 for h in holes:
     print(h.diameter_mm, h.axis_point, h.axis_direction, h.depth_mm)
+
+# 显示模型坐标系 + 每个孔的 XYZ 坐标系（Z 沿孔轴向）
+show_model_and_hole_frames(shape, holes)
 ```
+
+命令行显示：
+
+```bash
+# 交互窗口
+python3 -m step_hole_finder your.step --show
+
+# 仅导出截图（无窗口）
+python3 -m step_hole_finder your.step --screenshot preview.png --no-interact
+```
+
+坐标系约定：红=X，绿=Y，蓝=Z；孔坐标系原点在轴点，Z 与圆柱轴同向。
 
 ## 示例结果预期
 

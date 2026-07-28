@@ -272,6 +272,91 @@ def find_cylindrical_holes(
     return holes
 
 
+def _orthonormal_xy(axis_direction: Sequence[float]) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
+    """Build a right-handed X/Y basis for a Z axis along ``axis_direction``."""
+    z = gp_Vec(float(axis_direction[0]), float(axis_direction[1]), float(axis_direction[2]))
+    if z.Magnitude() < 1e-12:
+        raise ValueError("hole axis direction is degenerate")
+    z.Normalize()
+
+    # Prefer a stable reference that is not parallel to Z.
+    ref = gp_Vec(0.0, 0.0, 1.0) if abs(z.Z()) < 0.9 else gp_Vec(1.0, 0.0, 0.0)
+    x = z.Crossed(ref)
+    if x.Magnitude() < 1e-12:
+        ref = gp_Vec(0.0, 1.0, 0.0)
+        x = z.Crossed(ref)
+    x.Normalize()
+    y = z.Crossed(x)
+    y.Normalize()
+    return _unit(x), _unit(y)
+
+
+def hole_frame_location(hole: HoleCandidate):
+    """
+    Build a CadQuery ``Location`` for a hole frame.
+
+    Convention: origin = hole axis point, Z = hole axis, X/Y = orthonormal plane.
+    """
+    from cadquery import Location, Plane
+
+    x_dir, _y_dir = _orthonormal_xy(hole.axis_direction)
+    plane = Plane(origin=hole.axis_point, xDir=x_dir, normal=hole.axis_direction)
+    return Location(plane)
+
+
+def model_frame_location(origin: Tuple[float, float, float] = (0.0, 0.0, 0.0)):
+    """CadQuery ``Location`` for the model/world XYZ frame at ``origin``."""
+    from cadquery import Location, Plane
+
+    return Location(Plane(origin=origin, xDir=(1.0, 0.0, 0.0), normal=(0.0, 0.0, 1.0)))
+
+
+def show_model_and_hole_frames(
+    shape: TopoDS_Shape,
+    holes: Sequence[HoleCandidate],
+    *,
+    show_model_frame: bool = True,
+    model_frame_origin: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+    axis_scale: Optional[float] = None,
+    alpha: float = 0.65,
+    title: str = "STEP model + hole frames",
+    screenshot: Optional[str | Path] = None,
+    interact: Optional[bool] = None,
+) -> None:
+    """
+    Display the STEP solid together with RGB XYZ frames for the model and each hole.
+
+    - Red = X, Green = Y, Blue = Z (hole Z aligns with the cylinder axis)
+    - Pass ``screenshot`` to save a PNG; set ``interact=False`` for headless use
+    """
+    from cadquery.vis import show
+
+    frames = []
+    if show_model_frame:
+        frames.append(model_frame_location(model_frame_origin))
+    frames.extend(hole_frame_location(h) for h in holes)
+
+    if axis_scale is None:
+        # Scale triads from the largest hole diameter / depth so axes stay readable.
+        sizes = [h.diameter_mm for h in holes] + [h.depth_mm or 0.0 for h in holes] + [10.0]
+        axis_scale = max(sizes) * 0.75
+
+    if interact is None:
+        interact = screenshot is None
+
+    show(
+        shape,
+        *frames,
+        scale=float(axis_scale),
+        alpha=alpha,
+        edges=True,
+        title=title,
+        screenshot=str(screenshot) if screenshot is not None else None,
+        interact=interact,
+        trihedron=True,
+    )
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Detect cylindrical holes of a given diameter in a STEP model."
@@ -298,6 +383,28 @@ def _build_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Print machine-readable JSON",
+    )
+    parser.add_argument(
+        "--show",
+        action="store_true",
+        help="Display the model with model/hole XYZ coordinate frames",
+    )
+    parser.add_argument(
+        "--screenshot",
+        type=Path,
+        default=None,
+        help="Save a PNG of the visualization (implies --show; use with --no-interact for headless)",
+    )
+    parser.add_argument(
+        "--no-interact",
+        action="store_true",
+        help="Do not open an interactive window (useful with --screenshot)",
+    )
+    parser.add_argument(
+        "--axis-scale",
+        type=float,
+        default=None,
+        help="Length scale of displayed XYZ triads (mm). Default: auto from hole size.",
     )
     return parser
 
@@ -330,6 +437,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 f"axis=({axis[0]:.4f}, {axis[1]:.4f}, {axis[2]:.4f}), "
                 f"origin=({origin[0]:.3f}, {origin[1]:.3f}, {origin[2]:.3f})"
             )
+
+    if args.show or args.screenshot is not None:
+        show_model_and_hole_frames(
+            shape,
+            holes,
+            axis_scale=args.axis_scale,
+            screenshot=args.screenshot,
+            interact=not args.no_interact,
+        )
     return 0
 
 

@@ -6,3 +6,4 @@ venv/
 .pytest_cache/
 .mypy_cache/
 *.step.bak
+!step_hole_finder/samples/holes_preview.png
