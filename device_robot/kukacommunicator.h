@@ -48,8 +48,12 @@ public slots:
     // 优雅断开：先发 IsOut=TRUE，再 disconnectFromHost（供 UI/关机使用）
     void gracefulStop(const std::array<double, 7>& xp2 = {});
 
-    // 单步控制
+    // 设置后续报文中的 PTP 速度百分比 (1~100)，默认 30
+    void setPtpVelocity(double percent);
+
+    // 单步控制（velocityPercent 为空则使用 setPtpVelocity 的值）
     void stepMove(int stepMode, const std::array<double, 7>& xp2);
+    void stepMove(int stepMode, const std::array<double, 7>& xp2, double velocityPercent);
 
     // 复位 (StepMode=0, IsOut=FALSE, 位姿用 XP2)
     void returnHome(const std::array<double, 7>& xp2);
@@ -77,10 +81,11 @@ private slots:
     void onSocketError(QAbstractSocket::SocketError error);
 
 private:
-    // 构造发送给机器人的 Sensor 报文
-    static QString buildSensorXml(bool isOut, int stepMode,
+    // 构造发送给机器人的 Sensor 报文（含 Velocity PTP%）
+    static QString buildSensorXml(bool isOut, int stepMode, double velocity,
         double se1, double sx, double sy, double sz,
         double sa, double sb, double sc);
+    static double clampVelocity(double percent);
     // 从机器人报文中提取单个标签内容
     static bool extractTag(const QString& src, const QString& tag, QString& out);
     // 解析机器人回传报文为 RobotData
@@ -92,6 +97,7 @@ private:
     QTcpSocket* m_socket = nullptr;   // 主动连向机器人的套接字
     bool        m_connecting = false;
     QByteArray  m_recvBuffer;         // 粘包/分包处理缓冲
+    double      m_ptpVelocity = 30.0; // PTP 速度百分比，写入 Sensor/Velocity
 };
 
 #endif // KUKACOMMUNICATOR_H

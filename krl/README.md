@@ -22,5 +22,11 @@
 
 ## 上位机对应改动
 
-- `device_robot/kukacommunicator.*`：新增 `gracefulStop()`；`stop()` 改为 `disconnectFromHost`
+- `device_robot/kukacommunicator.*`：新增 `gracefulStop()`；`stop()` 改为 `disconnectFromHost`；报文增加 `<Velocity>`（`setPtpVelocity` / `stepMove(..., vel)`）
 - `MainWindow.*`：断开按钮 / `closeEvent` / 析构调用 `shutdownRobotComm()` → `gracefulStop`
+
+## 速度下发
+
+1. XML：`Sensor/Velocity`（REAL，PTP 百分比 1~100）
+2. PC：默认 30%，可用 `setPtpVelocity(50)` 或 `stepMove(mode, xp2, 50)`
+3. `kukarec`：`EKI_GetReal(...Velocity...)` → `BAS(#VEL_PTP/ACC_PTP, Velocity)` → `PTP`

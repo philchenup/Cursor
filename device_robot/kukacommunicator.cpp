@@ -160,21 +160,31 @@ void KukaCommunicator::onSocketError(QAbstractSocket::SocketError error)
 }
 
 // —— 发送相关槽 ——
+void KukaCommunicator::setPtpVelocity(double percent)
+{
+    m_ptpVelocity = clampVelocity(percent);
+}
+
 void KukaCommunicator::stepMove(int stepMode, const std::array<double, 7>& xp2)
 {
-    writeToSocket(buildSensorXml(false, stepMode,
+    stepMove(stepMode, xp2, m_ptpVelocity);
+}
+
+void KukaCommunicator::stepMove(int stepMode, const std::array<double, 7>& xp2, double velocityPercent)
+{
+    writeToSocket(buildSensorXml(false, stepMode, clampVelocity(velocityPercent),
         xp2[0], xp2[1], xp2[2], xp2[3], xp2[4], xp2[5], xp2[6]));
 }
 
 void KukaCommunicator::returnHome(const std::array<double, 7>& xp2)
 {
-    writeToSocket(buildSensorXml(false, 0,
+    writeToSocket(buildSensorXml(false, 0, m_ptpVelocity,
         xp2[0], xp2[1], xp2[2], xp2[3], xp2[4], xp2[5], xp2[6]));
 }
 
 void KukaCommunicator::sendDisconnect(const std::array<double, 7>& xp2)
 {
-    writeToSocket(buildSensorXml(true, 0,
+    writeToSocket(buildSensorXml(true, 0, m_ptpVelocity,
         xp2[0], xp2[1], xp2[2], xp2[3], xp2[4], xp2[5], xp2[6]));
 }
 
@@ -193,17 +203,31 @@ void KukaCommunicator::writeToSocket(const QString& str)
     m_socket->flush();
 }
 
+double KukaCommunicator::clampVelocity(double percent)
+{
+    if (percent < 1.0) {
+        return 1.0;
+    }
+    if (percent > 100.0) {
+        return 100.0;
+    }
+    return percent;
+}
+
 // —— 报文构造 ——
-QString KukaCommunicator::buildSensorXml(bool isOut, int stepMode,
+QString KukaCommunicator::buildSensorXml(bool isOut, int stepMode, double velocity,
     double se1, double sx, double sy, double sz,
     double sa, double sb, double sc)
 {
     return QStringLiteral(
         "<Sensor><Status><IsOut>%1</IsOut></Status><StepMode>%2</StepMode>"
-        "<SJ1>%3</SJ1><SJ2>%4</SJ2><SJ3>%5</SJ3><SJ4>%6</SJ4>"
-        "<SJ5>%7</SJ5><SJ6>%8</SJ6><SE2>%9</SE2></Sensor>")
+        "<Velocity>%3</Velocity>"
+        "<SJ1>%4</SJ1><SJ2>%5</SJ2><SJ3>%6</SJ3><SJ4>%7</SJ4>"
+        "<SJ5>%8</SJ5><SJ6>%9</SJ6><SE2>%10</SE2></Sensor>")
         .arg(isOut ? QStringLiteral("TRUE") : QStringLiteral("FALSE"))
-        .arg(stepMode).arg(sx, 0, 'f', 4).arg(sy, 0, 'f', 4).arg(sz, 0, 'f', 4)
+        .arg(stepMode)
+        .arg(velocity, 0, 'f', 2)
+        .arg(sx, 0, 'f', 4).arg(sy, 0, 'f', 4).arg(sz, 0, 'f', 4)
         .arg(sa, 0, 'f', 4).arg(sb, 0, 'f', 4).arg(sc, 0, 'f', 4).arg(se1, 0, 'f', 4);
 }
 

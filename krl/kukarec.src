@@ -1,5 +1,5 @@
 &ACCESS RV
-&REL 26
+&REL 27
 DEF kukarec ( )
 
 DECL STATE_T STAT
@@ -23,6 +23,11 @@ DECL REAL Velocity
 GLOBAL INTERRUPT DECL 3 WHEN $STOPMESS==TRUE DO IR_STOPM ( )
 INTERRUPT ON 3
 BAS (#INITMOV,0 )
+
+; 默认 PTP 速度/加速度（上位机未下发或异常时使用）
+Velocity = 30.0
+BAS (#VEL_PTP, Velocity)
+BAS (#ACC_PTP, Velocity)
 
 J1=0.0
 J2=0.0
@@ -50,6 +55,7 @@ LOOP
 		RET=EKI_GetReal("RobotMotion","Sensor/SE2",E2)
 		RET=EKI_GetBool("RobotMotion","Sensor/Status/IsOut",IsOut)
 		RET=EKI_GetInt("RobotMotion","Sensor/StepMode",StepM)
+		RET=EKI_GetReal("RobotMotion","Sensor/Velocity",Velocity)
 		RET=EKI_ClearBuffer("RobotMotion","Sensor")
 
 		; 优雅退出：协议通知后主动 EKI_Close，避免示教器报通信断开
@@ -58,6 +64,16 @@ LOOP
 			RET = EKI_Close("RobotMotion")
 			WAIT SEC 0.2
 		ELSE
+			; 上位机下发的 PTP 速度百分比，限制在 1~100
+			IF Velocity < 1.0 THEN
+				Velocity = 1.0
+			ENDIF
+			IF Velocity > 100.0 THEN
+				Velocity = 100.0
+			ENDIF
+			BAS (#VEL_PTP, Velocity)
+			BAS (#ACC_PTP, Velocity)
+
 			XP1.A1=J1
 			XP1.A2=J2
 			XP1.A3=J3

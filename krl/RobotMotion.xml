@@ -14,6 +14,7 @@
 		<XML>
 			<ELEMENT Tag="Sensor/Status/IsOut" Type="BOOL"/>
 			<ELEMENT Tag="Sensor/StepMode" Type="INT"/>
+			<ELEMENT Tag="Sensor/Velocity" Type="REAL"/>
 			<ELEMENT Tag="Sensor/SE2" Type="REAL"/>
 			<ELEMENT Tag="Sensor/SJ1" Type="REAL"/>
 			<ELEMENT Tag="Sensor/SJ2" Type="REAL"/>
