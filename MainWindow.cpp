@@ -690,7 +690,20 @@ void MainWindow::on_InitializeLaser_clicked() {
 
 void MainWindow::on_InitializeRobot_clicked()
 {
+	// 重新初始化前先优雅断开旧连接
 	if (m_comm != nullptr) {
+		std::array<double, 7> xp2{};
+		{
+			QMutexLocker locker(&g_robotMutex);
+			for (int i = 0; i < 7; ++i) {
+				xp2[i] = g_robotData.joint[i];
+			}
+		}
+		if (m_thread_rworker && m_thread_rworker->isRunning()) {
+			QMetaObject::invokeMethod(m_comm.get(), [comm = m_comm.get(), xp2]() {
+				comm->gracefulStop(xp2);
+			}, Qt::BlockingQueuedConnection);
+		}
 		disconnect(m_comm.get(), nullptr, this, nullptr);
 		disconnect(this, nullptr, m_comm.get(), nullptr);
 		m_comm.release()->deleteLater();
