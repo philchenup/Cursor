@@ -1,0 +1,45 @@
+<ETHERNETKRL>
+	<CONFIGURATION>
+		<EXTERNAL>
+         <TYPE>Client</TYPE>
+		</EXTERNAL>
+		<INTERNAL>
+         <ENVIRONMENT>Submit</ENVIRONMENT>
+         <IP>192.168.1.147</IP>
+			<PORT>54602</PORT>
+         <ALIVE Set_Flag="7"/>
+		</INTERNAL>
+	</CONFIGURATION>
+	<RECEIVE>
+		<XML>
+			<ELEMENT Tag="Sensor/Status/IsOut" Type="BOOL"/>
+			<ELEMENT Tag="Sensor/StepMode" Type="INT"/>
+			<ELEMENT Tag="Sensor/Velocity" Type="REAL"/>
+			<ELEMENT Tag="Sensor/SE2" Type="REAL"/>
+			<ELEMENT Tag="Sensor/SJ1" Type="REAL"/>
+			<ELEMENT Tag="Sensor/SJ2" Type="REAL"/>
+			<ELEMENT Tag="Sensor/SJ3" Type="REAL"/>
+			<ELEMENT Tag="Sensor/SJ4" Type="REAL"/>
+			<ELEMENT Tag="Sensor/SJ5" Type="REAL"/>
+			<ELEMENT Tag="Sensor/SJ6" Type="REAL"/>
+			<ELEMENT Tag="Sensor"  Set_Flag="8"/>
+		</XML>
+	</RECEIVE>
+	<SEND>
+		<XML>
+			<ELEMENT Tag="Robot/E2"/>
+			<ELEMENT Tag="Robot/J1"/>
+			<ELEMENT Tag="Robot/J2"/>
+			<ELEMENT Tag="Robot/J3"/>
+			<ELEMENT Tag="Robot/J4"/>
+			<ELEMENT Tag="Robot/J5"/>
+			<ELEMENT Tag="Robot/J6"/>
+			<ELEMENT Tag="Robot/PX"/>
+			<ELEMENT Tag="Robot/PY"/>
+			<ELEMENT Tag="Robot/PZ"/>
+			<ELEMENT Tag="Robot/PA"/>
+			<ELEMENT Tag="Robot/PB"/>
+			<ELEMENT Tag="Robot/PC"/>
+		</XML>
+	</SEND>
+</ETHERNETKRL>

@@ -1,0 +1,96 @@
+&ACCESS RV
+&REL 27
+DEF kukarec ( )
+
+DECL STATE_T STAT
+DECL MODUS_T MODE
+
+DECL REAL E2
+DECL REAL J1
+DECL REAL J2
+DECL REAL J3
+DECL REAL J4
+DECL REAL J5
+DECL REAL J6
+
+DECL INT StepM
+DECL BOOL IsOut
+
+DECL EKI_STATUS RET
+DECL E6AXIS XP1
+DECL REAL Velocity
+
+GLOBAL INTERRUPT DECL 3 WHEN $STOPMESS==TRUE DO IR_STOPM ( )
+INTERRUPT ON 3
+BAS (#INITMOV,0 )
+
+; 默认 PTP 速度/加速度（上位机未下发或异常时使用）
+Velocity = 30.0
+BAS (#VEL_PTP, Velocity)
+BAS (#ACC_PTP, Velocity)
+
+J1=0.0
+J2=0.0
+J3=0.0
+J4=0.0
+J5=0.0
+J6=0.0
+E2=0.0
+StepM=0
+IsOut=FALSE
+
+XP1={A1 0,A2 0,A3 0,A4 0,A5 0,A6 0,E1 0.0,E2 0.0,E3 0.0,E4 0.0,E5 0.0,E6 0.0}
+
+; 配合 pcservice 持续 Open/等连接：此处不要 EXIT，断开后继续 LOOP 等待重连
+LOOP
+	IF $FLAG[8] == TRUE THEN
+		$FLAG[8] = FALSE
+
+		RET=EKI_GetReal("RobotMotion","Sensor/SJ1",J1)
+		RET=EKI_GetReal("RobotMotion","Sensor/SJ2",J2)
+		RET=EKI_GetReal("RobotMotion","Sensor/SJ3",J3)
+		RET=EKI_GetReal("RobotMotion","Sensor/SJ4",J4)
+		RET=EKI_GetReal("RobotMotion","Sensor/SJ5",J5)
+		RET=EKI_GetReal("RobotMotion","Sensor/SJ6",J6)
+		RET=EKI_GetReal("RobotMotion","Sensor/SE2",E2)
+		RET=EKI_GetBool("RobotMotion","Sensor/Status/IsOut",IsOut)
+		RET=EKI_GetInt("RobotMotion","Sensor/StepMode",StepM)
+		RET=EKI_GetReal("RobotMotion","Sensor/Velocity",Velocity)
+		RET=EKI_ClearBuffer("RobotMotion","Sensor")
+
+		; 优雅退出：协议通知后主动 EKI_Close，避免示教器报通信断开
+		; pcservice 检测到 FLAG[7]==FALSE 后会再次 EKI_Open
+		IF IsOut == TRUE THEN
+			RET = EKI_Close("RobotMotion")
+			WAIT SEC 0.2
+		ELSE
+			; 上位机下发的 PTP 速度百分比，限制在 1~100
+			IF Velocity < 1.0 THEN
+				Velocity = 1.0
+			ENDIF
+			IF Velocity > 100.0 THEN
+				Velocity = 100.0
+			ENDIF
+			BAS (#VEL_PTP, Velocity)
+			BAS (#ACC_PTP, Velocity)
+
+			XP1.A1=J1
+			XP1.A2=J2
+			XP1.A3=J3
+			XP1.A4=J4
+			XP1.A5=J5
+			XP1.A6=J6
+			XP1.E1=$AXIS_ACT.E1
+			XP1.E2=E2
+			XP1.E3=$AXIS_ACT.E3
+			XP1.E4=$AXIS_ACT.E4
+			XP1.E5=$AXIS_ACT.E5
+			XP1.E6=$AXIS_ACT.E6
+
+			PTP XP1
+			WAIT SEC 0.1
+		ENDIF
+	ENDIF
+ENDLOOP
+
+END
