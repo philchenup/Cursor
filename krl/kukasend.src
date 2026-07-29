@@ -1,0 +1,45 @@
+&ACCESS RV
+&REL 26
+DEF kukasend ( )
+DECL EKI_STATUS RET
+DECL E6POS XX
+DECL REAL x,y,z,a,b,c,e2
+DECL E6AXIS Ax
+DECL REAL a1,a2,a3,a4,a5,a6
+
+; 仅当 EKI ALIVE（$FLAG[7]）有效时发送；
+; kukarec 收到 IsOut 后 EKI_Close → FLAG[7]=FALSE → 自动停发（不再使用 FLAG[9]）
+IF $FLAG[7] == TRUE THEN
+	Ax = $AXIS_ACT
+	a1 = Ax.A1
+	a2 = Ax.A2
+	a3 = Ax.A3
+	a4 = Ax.A4
+	a5 = Ax.A5
+	a6 = Ax.A6
+	e2 = Ax.E2
+	XX = $POS_ACT
+	x = XX.X
+	y = XX.Y
+	z = XX.Z
+	a = XX.A
+	b = XX.B
+	c = XX.C
+
+	RET = EKI_SetReal("RobotMotion", "Robot/E2", e2)
+	RET = EKI_SetReal("RobotMotion", "Robot/J1", a1)
+	RET = EKI_SetReal("RobotMotion", "Robot/J2", a2)
+	RET = EKI_SetReal("RobotMotion", "Robot/J3", a3)
+	RET = EKI_SetReal("RobotMotion", "Robot/J4", a4)
+	RET = EKI_SetReal("RobotMotion", "Robot/J5", a5)
+	RET = EKI_SetReal("RobotMotion", "Robot/J6", a6)
+	RET = EKI_SetReal("RobotMotion", "Robot/PX", x)
+	RET = EKI_SetReal("RobotMotion", "Robot/PY", y)
+	RET = EKI_SetReal("RobotMotion", "Robot/PZ", z)
+	RET = EKI_SetReal("RobotMotion", "Robot/PA", a)
+	RET = EKI_SetReal("RobotMotion", "Robot/PB", b)
+	RET = EKI_SetReal("RobotMotion", "Robot/PC", c)
+	RET = EKI_Send("RobotMotion", "Robot")
+ENDIF
+
+END

@@ -1,0 +1,33 @@
+&ACCESS  RVO
+&COMMENT USER specified PLC program
+DEF  pcservice ( )
+;FOLD DECLARATIONS
+  ;FOLD USER DECL
+  ; Please insert user defined declarations
+
+  ;ENDFOLD (USER DECL)
+  ;ENDFOLD (DECLARATIONS)
+DECL EKI_STATUS RET
+;FOLD INI
+  ;FOLD USER INIT
+  ; Please insert user defined initialization commands
+
+  ;ENDFOLD (USER INIT)
+;ENDFOLD (INI)
+; 类似 SPS：持续维护 EKI 通道，支持上位机反复连接
+RET = EKI_Init("RobotMotion")
+LOOP
+;FOLD USER PLC
+;Make your modifications here
+RET = EKI_Open("RobotMotion")
+WAIT FOR $FLAG[7]           ; 上位机已连接（ALIVE）
+WAIT FOR $FLAG[7]==FALSE    ; 已断开（IsOut→EKI_Close 或 TCP 断）
+;ENDFOLD (USER PLC)
+ENDLOOP
+;FOLD ;%{H};
+END
+;ENDFOLD
+;FOLD USER SUBROUTINE
+;Integrate your user defined subroutines
+
+;ENDFOLD (USER SUBROUTINE)
