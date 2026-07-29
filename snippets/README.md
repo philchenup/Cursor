@@ -18,3 +18,16 @@ Do **not** go through `KukaCommunicator` / `g_robotData.pose` if the goal is the
 
 `setData` already runs Jacobian IK and emits `dataChanged`, so the existing
 `operationalModel → configurationModel` connection keeps joint space in sync.
+
+## Send configuration (joints) to Kuka after sync
+
+`ConfigurationModel::operationalChanged()` only calls `beginResetModel()` /
+`endResetModel()`. It does **not** emit `dataChanged`, so connecting only to
+`configurationModel::dataChanged` will miss Cartesian-driven updates.
+
+After IK succeeds, joints are already in `mdl->getPosition()`. Hook
+`operationalModel::dataChanged` (and optionally `configurationModel::dataChanged`
+for direct axis edits), read `q`, fill your `SendRobot` / `g_robotData`, then
+`invokeMethod` on `KukaCommunicator`.
+
+See `MainWindow_sendConfigToKuka.cpp`.
