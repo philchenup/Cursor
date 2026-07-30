@@ -31,24 +31,14 @@ target_include_directories(cylindrical_hole_detector
     ${PCL_INCLUDE_DIRS}
 )
 
-# OCCT installs libraries under OpenCASCADE_LIBRARY_DIR on most packages.
 if(DEFINED OpenCASCADE_LIBRARY_DIR)
   target_link_directories(cylindrical_hole_detector PUBLIC ${OpenCASCADE_LIBRARY_DIR})
-endif()
-
-# STL writer: TKSTL on OCCT 7.4–7.6; some newer packages expose it via TKDE.
-set(_occt_stl_lib TKSTL)
-if(DEFINED OpenCASCADE_LIBRARY_DIR AND NOT EXISTS "${OpenCASCADE_LIBRARY_DIR}/${CMAKE_SHARED_LIBRARY_PREFIX}TKSTL${CMAKE_SHARED_LIBRARY_SUFFIX}")
-  if(EXISTS "${OpenCASCADE_LIBRARY_DIR}/${CMAKE_SHARED_LIBRARY_PREFIX}TKDE${CMAKE_SHARED_LIBRARY_SUFFIX}")
-    set(_occt_stl_lib TKDE)
-  endif()
 endif()
 
 target_link_libraries(cylindrical_hole_detector
   PUBLIC
     ${PCL_LIBRARIES}
     TKDESTEP
-    ${_occt_stl_lib}
     TKMesh
     TKTopAlgo
     TKGeomAlgo

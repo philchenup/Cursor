@@ -17,7 +17,6 @@ void printUsage(const char* argv0) {
       << "  --diameter     Target hole diameter in mm (required)\n"
       << "  --tolerance    Absolute diameter tolerance in mm (default: 0.05)\n"
       << "  --pcd          Optional path to write sampled PCL point cloud\n"
-      << "  --stl          Optional path for intermediate STL (default: beside STEP)\n"
       << "  --samples      Surface sample count for CAD2PCD (default: 50000)\n"
       << "  --deflection   Linear mesh deflection in mm (default: 0.5)\n";
 }
@@ -27,7 +26,6 @@ void printUsage(const char* argv0) {
 int main(int argc, char** argv) {
   std::string step_path;
   std::string pcd_path;
-  std::string stl_path;
   double diameter = -1.0;
   double tolerance = 0.05;
   double deflection = 0.5;
@@ -51,8 +49,6 @@ int main(int argc, char** argv) {
       tolerance = std::stod(need("--tolerance"));
     } else if (arg == "--pcd") {
       pcd_path = need("--pcd");
-    } else if (arg == "--stl") {
-      stl_path = need("--stl");
     } else if (arg == "--samples") {
       samples = static_cast<std::size_t>(std::stoull(need("--samples")));
     } else if (arg == "--deflection") {
@@ -75,9 +71,6 @@ int main(int argc, char** argv) {
   CylindricalHoleDetector detector(step_path, diameter, tolerance);
   detector.setMeshDeflection(deflection);
   detector.setSampleCount(samples);
-  if (!stl_path.empty()) {
-    detector.setStlOutputPath(stl_path);
-  }
 
   if (!detector.process()) {
     std::cerr << "Error: " << detector.lastError() << "\n";
@@ -89,7 +82,6 @@ int main(int argc, char** argv) {
 
   std::cout << std::fixed << std::setprecision(4);
   std::cout << "File: " << step_path << "\n"
-            << "STL: " << detector.stlPath() << "\n"
             << "Target diameter: " << diameter << " ± " << tolerance << " mm\n"
             << "Samples: " << samples << "\n"
             << "Point cloud size: " << cloud->size() << "\n"
