@@ -13,7 +13,7 @@
  *   3. Classify hole vs boss via solid classification on the cylinder axis
  *   4. Cluster coaxial cylinders of similar radius into logical holes
  *   5. Snap each hole axis to the nearest workpiece ±X / ±Y / ±Z
- *   6. Mesh the shape and emit a PCL PointXYZ cloud
+ *   6. Export B-Rep → STL, then area-weighted mesh sampling → PCL PointXYZ
  */
 
 #include <string>
@@ -68,15 +68,28 @@ class CylindricalHoleDetector {
   CylindricalHoleDetector(const CylindricalHoleDetector&) = delete;
   CylindricalHoleDetector& operator=(const CylindricalHoleDetector&) = delete;
 
-  /** Linear deflection for BRep meshing (mm). Smaller → denser cloud. */
+  /** Linear deflection for BRep→STL meshing (mm). Smaller → finer STL. */
   void setMeshDeflection(double deflection_mm);
   /** Angular deflection for BRep meshing (radians). */
   void setMeshAngularDeflection(double angle_rad);
+  /**
+   * Number of surface samples drawn from the STL mesh (CAD2PCD style).
+   * Default: 50000.
+   */
+  void setSampleCount(std::size_t num_samples);
+  /**
+   * Optional path for the intermediate STL. Empty → write next to the STEP
+   * file with a .stl extension.
+   */
+  void setStlOutputPath(std::string stl_path);
   /** If true (default), discard outer cylindrical bosses. */
   void setHolesOnly(bool holes_only);
   /** Clustering tolerances. */
   void setAngleToleranceDeg(double angle_tol_deg);
   void setAxisDistanceTolerance(double distance_tol_mm);
+
+  /** Path of the STL written during the last successful process(). */
+  const std::string& stlPath() const { return stl_path_; }
 
   /**
    * Load STEP, detect holes, build PCL cloud.
@@ -123,13 +136,20 @@ class CylindricalHoleDetector {
                              double distance_tol);
   std::vector<HoleInfo> mergeCoaxial(const std::vector<CylinderFace>& cylinders) const;
   static gp_Dir snapToWorkpieceAxis(const gp_Dir& direction);
+
+  /** Mesh B-Rep and write binary STL. */
+  bool exportStl(const std::string& stl_path);
+  /** STEP → STL → CAD2PCD area-weighted sampling → PCL cloud. */
   bool samplePointCloud();
 
   std::string step_path_;
+  std::string stl_path_;
+  std::string stl_output_override_;
   double diameter_mm_;
   double tolerance_mm_;
   double mesh_deflection_mm_ = 0.5;
   double mesh_angular_deflection_ = 0.5;
+  std::size_t sample_count_ = 50000;
   bool holes_only_ = true;
   double angle_tol_deg_ = 2.0;
   double axis_distance_tol_mm_ = 0.1;

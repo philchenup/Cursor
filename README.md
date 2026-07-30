@@ -40,7 +40,8 @@ detector.savePointCloud("part.pcd");
 
 ### Outputs
 
-- **PCL point cloud** — surface samples from B-Rep mesh nodes (`pcl::PointXYZ`)
+- **Intermediate STL** — B-Rep meshed and written via `StlAPI_Writer` (default: beside the STEP file)
+- **PCL point cloud** — CAD2PCD area-weighted sampling over the STL triangle mesh (`pcl::PointXYZ`)
 - **Hole list** — diameter, position, direction (workpiece XYZ), depth estimate, face count
 
 ## Algorithm
@@ -50,7 +51,7 @@ detector.savePointCloud("part.pcd");
 3. Classify hole vs boss: a point on the cylinder axis that lies **outside** the solid is a cavity  
 4. Cluster coaxial faces of similar radius into one logical hole  
 5. Snap each axis to the nearest ±X / ±Y / ±Z  
-6. Mesh the model (`BRepMesh_IncrementalMesh`) and export vertices to PCL  
+6. Mesh → export **STL** → `pcl::io::loadPolygonFileSTL` → area-weighted surface sample → PCL  
 
 ## Build
 
@@ -58,8 +59,8 @@ Requires:
 
 - CMake ≥ 3.16  
 - C++17 compiler  
-- OpenCASCADE / OCCT ≥ 7.4  
-- PCL ≥ 1.10 (`common`, `io`)
+- OpenCASCADE / OCCT ≥ 7.4 (`TKSTL` or equivalent for STL export)  
+- PCL ≥ 1.10 (`common`, `io`, with VTK support for `loadPolygonFileSTL`)
 
 ```bash
 mkdir build && cd build
@@ -71,7 +72,13 @@ cmake --build . -j
 ## CLI example
 
 ```bash
-./detect_holes --step part.step --diameter 8 --tolerance 0.05 --pcd part.pcd
+./detect_holes --step part.step --diameter 8 --tolerance 0.05 \
+               --samples 50000 --stl part.stl --pcd part.pcd
+```
+
+```cpp
+detector.setSampleCount(50000);
+detector.setStlOutputPath("part.stl");
 ```
 
 ## Layout

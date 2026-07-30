@@ -10,13 +10,15 @@ namespace {
 void printUsage(const char* argv0) {
   std::cerr
       << "Usage: " << argv0
-      << " --step <file.step> --diameter <mm> [--tolerance <mm>] [--pcd <out.pcd>]\n"
+      << " --step <file.step> --diameter <mm> [options]\n"
       << "\n"
-      << "  --step       Path to input STEP / STP file (required)\n"
-      << "  --diameter   Target hole diameter in mm (required)\n"
-      << "  --tolerance  Absolute diameter tolerance in mm (default: 0.05)\n"
-      << "  --pcd        Optional path to write sampled PCL point cloud\n"
-      << "  --deflection Linear mesh deflection in mm (default: 0.5)\n";
+      << "  --step         Path to input STEP / STP file (required)\n"
+      << "  --diameter     Target hole diameter in mm (required)\n"
+      << "  --tolerance    Absolute diameter tolerance in mm (default: 0.05)\n"
+      << "  --pcd          Optional path to write sampled PCL point cloud\n"
+      << "  --stl          Optional path for intermediate STL (default: beside STEP)\n"
+      << "  --samples      Surface sample count for CAD2PCD (default: 50000)\n"
+      << "  --deflection   Linear mesh deflection in mm (default: 0.5)\n";
 }
 
 }  // namespace
@@ -24,9 +26,11 @@ void printUsage(const char* argv0) {
 int main(int argc, char** argv) {
   std::string step_path;
   std::string pcd_path;
+  std::string stl_path;
   double diameter = -1.0;
   double tolerance = 0.05;
   double deflection = 0.5;
+  std::size_t samples = 50000;
 
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -46,6 +50,10 @@ int main(int argc, char** argv) {
       tolerance = std::stod(need("--tolerance"));
     } else if (arg == "--pcd") {
       pcd_path = need("--pcd");
+    } else if (arg == "--stl") {
+      stl_path = need("--stl");
+    } else if (arg == "--samples") {
+      samples = static_cast<std::size_t>(std::stoull(need("--samples")));
     } else if (arg == "--deflection") {
       deflection = std::stod(need("--deflection"));
     } else if (arg == "--help" || arg == "-h") {
@@ -65,6 +73,10 @@ int main(int argc, char** argv) {
 
   CylindricalHoleDetector detector(step_path, diameter, tolerance);
   detector.setMeshDeflection(deflection);
+  detector.setSampleCount(samples);
+  if (!stl_path.empty()) {
+    detector.setStlOutputPath(stl_path);
+  }
 
   if (!detector.process()) {
     std::cerr << "Error: " << detector.lastError() << "\n";
@@ -76,7 +88,9 @@ int main(int argc, char** argv) {
 
   std::cout << std::fixed << std::setprecision(4);
   std::cout << "File: " << step_path << "\n"
+            << "STL: " << detector.stlPath() << "\n"
             << "Target diameter: " << diameter << " ± " << tolerance << " mm\n"
+            << "Samples: " << samples << "\n"
             << "Point cloud size: " << cloud->size() << "\n"
             << "Found " << holes.size() << " cylindrical hole(s):\n";
 

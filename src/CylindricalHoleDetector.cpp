@@ -3,28 +3,135 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
+#include <random>
+#include <vector>
 
+#include <pcl/conversions.h>
 #include <pcl/io/pcd_io.h>
+#include <pcl/io/vtk_lib_io.h>
+#include <pcl/point_cloud.h>
+#include <pcl/point_types.h>
 
 #include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepGProp.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
-#include <BRep_Tool.hxx>
 #include <GeomAbs_SurfaceType.hxx>
 #include <GProp_GProps.hxx>
 #include <IFSelect_ReturnStatus.hxx>
-#include <Poly_Triangulation.hxx>
 #include <STEPControl_Reader.hxx>
-#include <TColgp_Array1OfPnt.hxx>
+#include <StlAPI_Writer.hxx>
 #include <TopAbs.hxx>
 #include <TopExp_Explorer.hxx>
-#include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
 #include <gp_Vec.hxx>
 
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
+
+/** Triangle area via cross product (CAD2PCD). */
+float triangleArea(const pcl::PointXYZ& a,
+                   const pcl::PointXYZ& b,
+                   const pcl::PointXYZ& c) {
+  const Eigen::Vector3f ab(b.x - a.x, b.y - a.y, b.z - a.z);
+  const Eigen::Vector3f ac(c.x - a.x, c.y - a.y, c.z - a.z);
+  return 0.5f * ab.cross(ac).norm();
+}
+
+/**
+ * Area-weighted uniform surface sampling over an STL triangle mesh (CAD2PCD).
+ * Prefer this over using mesh vertices alone — avoids sparse skeleton clouds.
+ */
+pcl::PointCloud<pcl::PointXYZ>::Ptr sampleMeshSurface(
+    const pcl::PolygonMesh& mesh,
+    std::size_t num_samples) {
+  pcl::PointCloud<pcl::PointXYZ>::Ptr vertices(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::fromPCLPointCloud2(mesh.cloud, *vertices);
+
+  if (vertices->empty() || mesh.polygons.empty() || num_samples == 0) {
+    return vertices;
+  }
+
+  std::vector<float> areas;
+  areas.reserve(mesh.polygons.size());
+  float total_area = 0.0f;
+
+  for (const auto& poly : mesh.polygons) {
+    if (poly.vertices.size() < 3) {
+      areas.push_back(0.0f);
+      continue;
+    }
+    const auto& a = vertices->points[poly.vertices[0]];
+    const auto& b = vertices->points[poly.vertices[1]];
+    const auto& c = vertices->points[poly.vertices[2]];
+    const float area = triangleArea(a, b, c);
+    areas.push_back(area);
+    total_area += area;
+  }
+
+  if (total_area <= 0.0f) {
+    return vertices;
+  }
+
+  std::vector<float> cdf(areas.size());
+  float accum = 0.0f;
+  for (std::size_t i = 0; i < areas.size(); ++i) {
+    accum += areas[i] / total_area;
+    cdf[i] = accum;
+  }
+  cdf.back() = 1.0f;
+
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+  cloud->reserve(num_samples);
+
+  std::mt19937 rng(42);
+  std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+
+  for (std::size_t i = 0; i < num_samples; ++i) {
+    const float r = uniform(rng);
+    auto it = std::lower_bound(cdf.begin(), cdf.end(), r);
+    std::size_t tri_idx =
+        static_cast<std::size_t>(std::distance(cdf.begin(), it));
+    if (tri_idx >= mesh.polygons.size()) {
+      tri_idx = mesh.polygons.size() - 1;
+    }
+
+    const auto& poly = mesh.polygons[tri_idx];
+    if (poly.vertices.size() < 3) {
+      continue;
+    }
+
+    const auto& A = vertices->points[poly.vertices[0]];
+    const auto& B = vertices->points[poly.vertices[1]];
+    const auto& C = vertices->points[poly.vertices[2]];
+
+    // Uniform barycentric sample inside the triangle.
+    float u = uniform(rng);
+    float v = uniform(rng);
+    if (u + v > 1.0f) {
+      u = 1.0f - u;
+      v = 1.0f - v;
+    }
+    const float w = 1.0f - u - v;
+
+    pcl::PointXYZ p;
+    p.x = w * A.x + u * B.x + v * C.x;
+    p.y = w * A.y + u * B.y + v * C.y;
+    p.z = w * A.z + u * B.z + v * C.z;
+    cloud->push_back(p);
+  }
+
+  cloud->width = static_cast<std::uint32_t>(cloud->size());
+  cloud->height = 1;
+  cloud->is_dense = true;
+  return cloud;
+}
+
+std::string defaultStlPath(const std::string& step_path) {
+  const std::filesystem::path step(step_path);
+  return (step.parent_path() / (step.stem().string() + ".stl")).string();
+}
 
 }  // namespace
 
@@ -42,6 +149,14 @@ void CylindricalHoleDetector::setMeshDeflection(double deflection_mm) {
 
 void CylindricalHoleDetector::setMeshAngularDeflection(double angle_rad) {
   mesh_angular_deflection_ = angle_rad;
+}
+
+void CylindricalHoleDetector::setSampleCount(std::size_t num_samples) {
+  sample_count_ = num_samples;
+}
+
+void CylindricalHoleDetector::setStlOutputPath(std::string stl_path) {
+  stl_output_override_ = std::move(stl_path);
 }
 
 void CylindricalHoleDetector::setHolesOnly(bool holes_only) {
@@ -320,59 +435,56 @@ gp_Dir CylindricalHoleDetector::snapToWorkpieceAxis(const gp_Dir& direction) {
   return best;
 }
 
-bool CylindricalHoleDetector::samplePointCloud() {
-  cloud_->clear();
-  cloud_->is_dense = false;
-
+bool CylindricalHoleDetector::exportStl(const std::string& stl_path) {
   BRepMesh_IncrementalMesh mesher(shape_, mesh_deflection_mm_, Standard_False,
                                   mesh_angular_deflection_, Standard_True);
   mesher.Perform();
   if (!mesher.IsDone()) {
-    last_error_ = "BRep meshing failed";
+    last_error_ = "BRep meshing failed before STL export";
     return false;
   }
 
-  for (TopExp_Explorer explorer(shape_, TopAbs_FACE); explorer.More();
-       explorer.Next()) {
-    const TopoDS_Face face = TopoDS::Face(explorer.Current());
-    TopLoc_Location location;
-    Handle(Poly_Triangulation) triangulation =
-        BRep_Tool::Triangulation(face, location);
-    if (triangulation.IsNull()) {
-      continue;
-    }
+  StlAPI_Writer writer;
+  writer.ASCIIMode() = Standard_False;  // binary STL
+  const Standard_Boolean ok = writer.Write(shape_, stl_path.c_str());
+  if (!ok) {
+    last_error_ = "Failed to write STL: " + stl_path;
+    return false;
+  }
+  return true;
+}
 
-    const gp_Trsf transform = location.Transformation();
-    const Standard_Integer nb_nodes = triangulation->NbNodes();
-    cloud_->points.reserve(cloud_->points.size() +
-                           static_cast<std::size_t>(nb_nodes));
+bool CylindricalHoleDetector::samplePointCloud() {
+  cloud_->clear();
+  cloud_->is_dense = false;
 
-#if OCC_VERSION_HEX >= 0x070600
-    for (Standard_Integer i = 1; i <= nb_nodes; ++i) {
-      gp_Pnt p = triangulation->Node(i);
-      p.Transform(transform);
-      pcl::PointXYZ pt;
-      pt.x = static_cast<float>(p.X());
-      pt.y = static_cast<float>(p.Y());
-      pt.z = static_cast<float>(p.Z());
-      cloud_->points.push_back(pt);
-    }
-#else
-    const TColgp_Array1OfPnt& nodes = triangulation->Nodes();
-    for (Standard_Integer i = nodes.Lower(); i <= nodes.Upper(); ++i) {
-      gp_Pnt p = nodes.Value(i);
-      p.Transform(transform);
-      pcl::PointXYZ pt;
-      pt.x = static_cast<float>(p.X());
-      pt.y = static_cast<float>(p.Y());
-      pt.z = static_cast<float>(p.Z());
-      cloud_->points.push_back(pt);
-    }
-#endif
+  stl_path_ = stl_output_override_.empty() ? defaultStlPath(step_path_)
+                                           : stl_output_override_;
+
+  // 1) B-Rep → STL
+  if (!exportStl(stl_path_)) {
+    return false;
   }
 
-  cloud_->width = static_cast<std::uint32_t>(cloud_->points.size());
+  // 2) Load STL as PCL PolygonMesh (CAD2PCD)
+  pcl::PolygonMesh mesh;
+  if (pcl::io::loadPolygonFileSTL(stl_path_, mesh) < 0) {
+    last_error_ = "Failed to load STL with PCL: " + stl_path_;
+    return false;
+  }
+
+  // 3) Area-weighted surface sampling → point cloud
+  pcl::PointCloud<pcl::PointXYZ>::Ptr sampled =
+      sampleMeshSurface(mesh, sample_count_);
+  if (!sampled || sampled->empty()) {
+    last_error_ = "STL mesh surface sampling produced an empty cloud";
+    return false;
+  }
+
+  *cloud_ = *sampled;
+  cloud_->width = static_cast<std::uint32_t>(cloud_->size());
   cloud_->height = 1;
+  cloud_->is_dense = true;
   return true;
 }
 
