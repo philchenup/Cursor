@@ -138,6 +138,20 @@ pcl::PointCloud<pcl::PointXYZ>::Ptr sampleMeshSurface(
  * No STL / disk I/O.
  */
 bool shapeToPolygonMesh(const TopoDS_Shape& shape, pcl::PolygonMesh& mesh) {
+  using VertIdx = typename decltype(pcl::Vertices{}.vertices)::value_type;
+
+  auto makeTriangle = [](VertIdx i0, VertIdx i1, VertIdx i2) {
+    pcl::Vertices tri;
+    tri.vertices.push_back(i0);
+    tri.vertices.push_back(i1);
+    tri.vertices.push_back(i2);
+    return tri;
+  };
+
+  auto toVertIdx = [](std::uint32_t v) {
+    return static_cast<VertIdx>(v);
+  };
+
   pcl::PointCloud<pcl::PointXYZ> vertices;
   std::vector<pcl::Vertices> polygons;
 
@@ -177,11 +191,10 @@ bool shapeToPolygonMesh(const TopoDS_Shape& shape, pcl::PolygonMesh& mesh) {
       if (reversed) {
         std::swap(n2, n3);
       }
-      pcl::Vertices tri;
-      tri.vertices = {index_offset + static_cast<std::uint32_t>(n1 - 1),
-                      index_offset + static_cast<std::uint32_t>(n2 - 1),
-                      index_offset + static_cast<std::uint32_t>(n3 - 1)};
-      polygons.push_back(tri);
+      polygons.push_back(makeTriangle(
+          toVertIdx(index_offset + static_cast<std::uint32_t>(n1 - 1)),
+          toVertIdx(index_offset + static_cast<std::uint32_t>(n2 - 1)),
+          toVertIdx(index_offset + static_cast<std::uint32_t>(n3 - 1))));
     }
 #else
     const TColgp_Array1OfPnt& nodes = triangulation->Nodes();
@@ -205,12 +218,13 @@ bool shapeToPolygonMesh(const TopoDS_Shape& shape, pcl::PolygonMesh& mesh) {
       if (reversed) {
         std::swap(n2, n3);
       }
-      pcl::Vertices tri;
-      tri.vertices = {
-          index_offset + static_cast<std::uint32_t>(n1 - node_lower),
-          index_offset + static_cast<std::uint32_t>(n2 - node_lower),
-          index_offset + static_cast<std::uint32_t>(n3 - node_lower)};
-      polygons.push_back(tri);
+      polygons.push_back(makeTriangle(
+          toVertIdx(index_offset +
+                    static_cast<std::uint32_t>(n1 - node_lower)),
+          toVertIdx(index_offset +
+                    static_cast<std::uint32_t>(n2 - node_lower)),
+          toVertIdx(index_offset +
+                    static_cast<std::uint32_t>(n3 - node_lower))));
     }
 #endif
   }
