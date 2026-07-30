@@ -13,9 +13,10 @@
  *   3. Classify hole vs boss via solid classification on the cylinder axis
  *   4. Cluster coaxial cylinders of similar radius into logical holes
  *   5. Snap each hole axis to the nearest workpiece ±X / ±Y / ±Z
- *   6. Export B-Rep → STL, then area-weighted mesh sampling → PCL PointXYZ
+ *   6. Mesh B-Rep in memory → PCL PolygonMesh → area-weighted sampling
  */
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -68,28 +69,20 @@ class CylindricalHoleDetector {
   CylindricalHoleDetector(const CylindricalHoleDetector&) = delete;
   CylindricalHoleDetector& operator=(const CylindricalHoleDetector&) = delete;
 
-  /** Linear deflection for BRep→STL meshing (mm). Smaller → finer STL. */
+  /** Linear deflection for BRep meshing (mm). Smaller → finer mesh. */
   void setMeshDeflection(double deflection_mm);
   /** Angular deflection for BRep meshing (radians). */
   void setMeshAngularDeflection(double angle_rad);
   /**
-   * Number of surface samples drawn from the STL mesh (CAD2PCD style).
+   * Number of surface samples (CAD2PCD-style area-weighted sampling).
    * Default: 50000.
    */
   void setSampleCount(std::size_t num_samples);
-  /**
-   * Optional path for the intermediate STL. Empty → write next to the STEP
-   * file with a .stl extension.
-   */
-  void setStlOutputPath(std::string stl_path);
   /** If true (default), discard outer cylindrical bosses. */
   void setHolesOnly(bool holes_only);
   /** Clustering tolerances. */
   void setAngleToleranceDeg(double angle_tol_deg);
   void setAxisDistanceTolerance(double distance_tol_mm);
-
-  /** Path of the STL written during the last successful process(). */
-  const std::string& stlPath() const { return stl_path_; }
 
   /**
    * Load STEP, detect holes, build PCL cloud.
@@ -137,14 +130,13 @@ class CylindricalHoleDetector {
   std::vector<HoleInfo> mergeCoaxial(const std::vector<CylinderFace>& cylinders) const;
   static gp_Dir snapToWorkpieceAxis(const gp_Dir& direction);
 
-  /** Mesh B-Rep and write binary STL. */
-  bool exportStl(const std::string& stl_path);
-  /** STEP → STL → CAD2PCD area-weighted sampling → PCL cloud. */
+  /**
+   * Mesh B-Rep in memory → pcl::PolygonMesh → CAD2PCD area-weighted sampling.
+   * No intermediate STL file I/O.
+   */
   bool samplePointCloud();
 
   std::string step_path_;
-  std::string stl_path_;
-  std::string stl_output_override_;
   double diameter_mm_;
   double tolerance_mm_;
   double mesh_deflection_mm_ = 0.5;
