@@ -1,23 +1,76 @@
 #include <QApplication>
-#include <QEventLoop>
-#include <QGuiApplication>
-#include <QLabel>
-#include <QLinearGradient>
-#include <QMainWindow>
-#include <QPainter>
-#include <QProgressBar>
-#include <QScreen>
+#include <QDesktopWidget>
+#include "MainWindow.h"
+#include <vtkOutputWindow.h>
 #include <QSplashScreen>
+#include <QSharedMemory>
+#include <QScreen>
+#include <QPainter>
+#include <QLinearGradient>
+#include <QLabel>
+#include <QProgressBar>
+#include <QEventLoop>
 #include <QTimer>
-#include <QVBoxLayout>
+#include <QMessageBox>
+#include <QGuiApplication>
+
+MainWindow* MainWindow::singleton = nullptr;
+
+class EventFilter : public QObject {
+public:
+    bool eventFilter(QObject* obj, QEvent* event) override {
+        switch (event->type()) {
+        case QEvent::MouseButtonPress:
+        case QEvent::MouseButtonRelease:
+        case QEvent::MouseButtonDblClick:
+        case QEvent::MouseMove:
+        case QEvent::Wheel:
+            return true; // 屏蔽鼠标事件
+        default:
+            return QObject::eventFilter(obj, event);
+        }
+    }
+};
 
 int main(int argc, char* argv[])
 {
-    QApplication app(argc, argv);
+    QSharedMemory sharedMemory("HSIWELDSYSTEM");
 
+    if (sharedMemory.attach()) {
+        QMessageBox::warning(nullptr,
+            QString::fromUtf8(u8"提示"),
+            QString::fromUtf8(u8"程序已经在运行中！"));
+        return 0;
+    }
+    if (!sharedMemory.create(1)) {
+        return 0;
+    }
+
+    vtkOutputWindow::SetGlobalWarningDisplay(0); // 关闭 vtk 警告窗口
+
+    qRegisterMetaType<std::vector<rl::math::Vector>>("std::vector<rl::math::Vector>");
+    qRegisterMetaType<rl::math::Vector>("rl::math::Vector");
+    qRegisterMetaType<rl::plan::VectorList>("rl::plan::VectorList");
+    qRegisterMetaType<std::vector<float>>("std::vector<float>");
+    qRegisterMetaType<cv::Mat>("cv::Mat");
+    qRegisterMetaType<ct::Cloud::Ptr>("ct::Cloud::Ptr");
+    qRegisterMetaType<std::string>("std::string");
+    qRegisterMetaType<TopoDS_Shape>("TopoDS_Shape");
+    qRegisterMetaType<std::vector<TopoDS_Edge>>("std::vector<TopoDS_Edge>");
+    qRegisterMetaType<IKSolveParams>("IKSolveParams");
+    qRegisterMetaType<IKReturnHomeParams>("IKReturnHomeParams");
+    qRegisterMetaType<DiscretePoint>("DiscretePoint");
+    qRegisterMetaType<IKGoToStartParams>("IKGoToStartParams");
+    qRegisterMetaType<RobotData>("RobotData");
+    qRegisterMetaType<Eigen::Affine3f>("Eigen::Affine3f");
+    qRegisterMetaType<PlanToPreWeldParams>("PlanToPreWeldParams");
+
+    QApplication a(argc, argv);
+    EventFilter filter;
+    a.installEventFilter(&filter);
+
+    // —— 启动画面：平面深色、无网格、四角角标 ——
     constexpr int W = 1080, H = 540, CX = W / 2;
-
-    // —— 背景：平面深色 + 四角角标 + 细分割线 ——
     QPixmap canvas(W, H);
     {
         QPainter p(&canvas);
@@ -42,12 +95,11 @@ int main(int argc, char* argv[])
         p.drawLine(300, 318, W - 300, 318);
     }
 
-    QSplashScreen splash(canvas);
-    splash.setWindowFlags(splash.windowFlags() | Qt::WindowStaysOnTopHint | Qt::FramelessWindowHint);
-    splash.setFixedSize(W, H);
+    QSplashScreen* splash = new QSplashScreen(canvas);
+    splash->setWindowFlags(splash->windowFlags() | Qt::WindowStaysOnTopHint | Qt::FramelessWindowHint);
+    splash->setFixedSize(W, H);
 
-    // —— Logo（1490×468 透明 PNG，等比）——
-    auto* logo = new QLabel(&splash);
+    QLabel* logo = new QLabel(splash);
     QPixmap logoPm(QStringLiteral("./icon/preview.png"));
     if (!logoPm.isNull())
         logoPm = logoPm.scaled(860, 860 * 468 / 1490, Qt::KeepAspectRatio, Qt::SmoothTransformation);
@@ -56,23 +108,23 @@ int main(int argc, char* argv[])
     logo->adjustSize();
     logo->move(CX - logo->width() / 2, 72);
 
-    auto* version = new QLabel(QStringLiteral("Version 1.0.0"), &splash);
+    QLabel* version = new QLabel(QStringLiteral("Version 1.0.0"), splash);
     version->setStyleSheet(QStringLiteral(
         "QLabel{color:#8fa3b8;font-size:14px;letter-spacing:4px;background:transparent;}"));
     version->adjustSize();
     version->move(CX - version->width() / 2, 335);
 
-    auto* status = new QLabel(QString::fromUtf8(u8"正在启动..."), &splash);
-    status->setStyleSheet(QStringLiteral(
+    QLabel* loading = new QLabel(QString::fromUtf8(u8"正在启动..."), splash);
+    loading->setStyleSheet(QStringLiteral(
         "QLabel{color:#c5d4e3;font-size:14px;background:transparent;}"));
-    status->adjustSize();
+    loading->adjustSize();
 
-    auto* percent = new QLabel(QStringLiteral("0%"), &splash);
+    QLabel* percent = new QLabel(QStringLiteral("0%"), splash);
     percent->setStyleSheet(QStringLiteral(
         "QLabel{color:#4aa3e8;font-size:13px;font-weight:600;background:transparent;}"));
     percent->adjustSize();
 
-    auto* progress = new QProgressBar(&splash);
+    QProgressBar* progress = new QProgressBar(splash);
     progress->setRange(0, 100);
     progress->setTextVisible(false);
     progress->setFixedSize(680, 4);
@@ -80,15 +132,14 @@ int main(int argc, char* argv[])
         "QProgressBar{border:none;background:rgba(255,255,255,18);}"
         "QProgressBar::chunk{background:#0070D2;}"));
     progress->move(CX - 340, 455);
-    status->move(CX - 340, 418);
+    loading->move(CX - 340, 418);
     percent->move(CX + 340 - percent->width(), 418);
 
-    splash.show();
-    splash.raise();
+    splash->show();
+    splash->raise();
     if (QScreen* screen = QGuiApplication::primaryScreen())
-        splash.move(screen->geometry().center() - splash.rect().center());
+        splash->move(screen->geometry().center() - splash->rect().center());
 
-    // —— 进度动画 ——
     const QString stages[] = {
         QString::fromUtf8(u8"初始化 UI 界面..."),
         QString::fromUtf8(u8"初始化仿真引擎..."),
@@ -100,43 +151,45 @@ int main(int argc, char* argv[])
     const int thresholds[] = {0, 15, 35, 55, 80, 95};
 
     QEventLoop loop;
-    QTimer timer;
-    int value = 0;
-    QObject::connect(&timer, &QTimer::timeout, [&]() {
-        value = qMin(100, value + (value < 25 ? 6 : value < 90 ? 3 : 2));
-        progress->setValue(value);
+    QTimer timeoutTimer;
+    QTimer progressTimer;
+    int progressValue = 0;
+
+    QObject::connect(&progressTimer, &QTimer::timeout, [&]() {
+        progressValue = qMin(100, progressValue + (progressValue < 25 ? 6 : progressValue < 90 ? 3 : 2));
+        progress->setValue(progressValue);
 
         int i = 5;
-        while (i > 0 && value < thresholds[i]) --i;
-        status->setText(stages[i]);
-        status->adjustSize();
-        status->move(CX - 340, 418);
+        while (i > 0 && progressValue < thresholds[i]) --i;
+        loading->setText(stages[i]);
+        loading->adjustSize();
+        loading->move(CX - 340, 418);
 
-        percent->setText(QStringLiteral("%1%").arg(value));
+        percent->setText(QStringLiteral("%1%").arg(progressValue));
         percent->adjustSize();
         percent->move(CX + 340 - percent->width(), 418);
 
-        if (value >= 100) {
-            timer.stop();
-            QTimer::singleShot(280, &loop, &QEventLoop::quit);
+        if (progressValue >= 100) {
+            progressTimer.stop();
+            timeoutTimer.stop();
+            loop.quit();
         }
     });
-    timer.start(80);
+
+    progressTimer.start(80);
+    // 超时兜底，避免主窗口初始化过久一直卡住
+    timeoutTimer.setSingleShot(true);
+    QObject::connect(&timeoutTimer, &QTimer::timeout, [&]() {
+        progressTimer.stop();
+        loop.quit();
+    });
+    timeoutTimer.start(15000);
+
+    MainWindow w;
     loop.exec();
-
-    // —— 主窗口 ——
-    QMainWindow window;
-    window.setWindowTitle(QStringLiteral("HWI"));
-    window.resize(1280, 720);
-    auto* central = new QWidget(&window);
-    auto* layout = new QVBoxLayout(central);
-    auto* hello = new QLabel(QString::fromUtf8(u8"主界面已启动"), central);
-    hello->setAlignment(Qt::AlignCenter);
-    hello->setStyleSheet(QStringLiteral("font-size:24px;color:#1e3a55;"));
-    layout->addWidget(hello);
-    window.setCentralWidget(central);
-    window.show();
-
-    splash.finish(&window);
-    return app.exec();
+    splash->finish(&w);
+    delete splash;
+    a.removeEventFilter(&filter);
+    w.show();
+    return a.exec();
 }
