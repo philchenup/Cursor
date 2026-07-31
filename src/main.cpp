@@ -13,6 +13,8 @@
 #include <QTimer>
 #include <QMessageBox>
 #include <QGuiApplication>
+#include <QDir>
+#include <QFile>
 
 MainWindow* MainWindow::singleton = nullptr;
 
@@ -75,6 +77,7 @@ int main(int argc, char* argv[])
     {
         QPainter p(&canvas);
         p.setRenderHint(QPainter::Antialiasing);
+        p.setRenderHint(QPainter::SmoothPixmapTransform);
         QLinearGradient bg(0, 0, 0, H);
         bg.setColorAt(0, QColor("#0b121c"));
         bg.setColorAt(1, QColor("#111b2a"));
@@ -87,6 +90,27 @@ int main(int argc, char* argv[])
         p.drawLine(m, H - m, m + len, H - m);         p.drawLine(m, H - m - len, m, H - m);
         p.drawLine(W - m - len, H - m, W - m, H - m); p.drawLine(W - m, H - m - len, W - m, H - m);
 
+        // Logo：相对可执行文件目录查找（避免 cwd 不是工程目录时加载失败）
+        const QStringList logoCandidates = {
+            QCoreApplication::applicationDirPath() + QStringLiteral("/icon/preview.png"),
+            QDir::currentPath() + QStringLiteral("/icon/preview.png"),
+            QStringLiteral("./icon/preview.png"),
+            QStringLiteral("icon/preview.png"),
+            QCoreApplication::applicationDirPath() + QStringLiteral("/../icon/preview.png"),
+        };
+        QPixmap logoPm;
+        for (const QString& path : logoCandidates) {
+            if (QFile::exists(path)) {
+                logoPm.load(path);
+                if (!logoPm.isNull())
+                    break;
+            }
+        }
+        if (!logoPm.isNull()) {
+            logoPm = logoPm.scaled(860, 860 * 468 / 1490, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            p.drawPixmap(CX - logoPm.width() / 2, 72, logoPm);
+        }
+
         QLinearGradient line(300, 0, W - 300, 0);
         line.setColorAt(0, QColor(0, 112, 210, 0));
         line.setColorAt(0.5, QColor(0, 112, 210, 120));
@@ -98,15 +122,6 @@ int main(int argc, char* argv[])
     QSplashScreen* splash = new QSplashScreen(canvas);
     splash->setWindowFlags(splash->windowFlags() | Qt::WindowStaysOnTopHint | Qt::FramelessWindowHint);
     splash->setFixedSize(W, H);
-
-    QLabel* logo = new QLabel(splash);
-    QPixmap logoPm(QStringLiteral("./icon/preview.png"));
-    if (!logoPm.isNull())
-        logoPm = logoPm.scaled(860, 860 * 468 / 1490, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-    logo->setPixmap(logoPm);
-    logo->setAttribute(Qt::WA_TranslucentBackground);
-    logo->adjustSize();
-    logo->move(CX - logo->width() / 2, 72);
 
     QLabel* version = new QLabel(QStringLiteral("Version 1.0.0"), splash);
     version->setStyleSheet(QStringLiteral(
