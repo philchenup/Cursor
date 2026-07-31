@@ -84,7 +84,7 @@ SplashScreen::SplashScreen(const QString& logoPath,
     m_progress->setRange(0, 100);
     m_progress->setValue(0);
     m_progress->setTextVisible(false);
-    m_progress->setFixedSize(680, 7);
+    m_progress->setFixedSize(680, 4);
     m_progress->setStyleSheet(QStringLiteral(R"(
         QProgressBar {
             border: none;
