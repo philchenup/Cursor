@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HWI · CAM Splash Preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --brand-blue: #0070d2;
+    --bg-0: #0b121c;
+    --bg-1: #111b2a;
+    --text-muted: #8fa3b8;
+    --text-status: #c5d4e3;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    background: #06090e;
+    font-family: "Outfit", "Noto Sans SC", sans-serif;
+    color: #e8eef5;
+    padding: 40px 20px;
+  }
+
+  .page-title {
+    position: fixed;
+    top: 28px;
+    left: 32px;
+    font-size: 13px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: #6b8299;
+    font-weight: 500;
+  }
+
+  .splash {
+    position: relative;
+    width: min(1080px, 96vw);
+    aspect-ratio: 1080 / 540;
+    overflow: hidden;
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.06),
+      0 32px 64px rgba(0, 0, 0, 0.5);
+    background: linear-gradient(180deg, var(--bg-0), var(--bg-1));
+    animation: splash-in 0.65s ease-out both;
+  }
+
+  /* 无圆形光晕、无网格 */
+  .splash::before {
+    display: none;
+  }
+
+  .corner {
+    position: absolute;
+    width: 22px;
+    height: 22px;
+    border-color: rgba(0, 112, 210, 0.55);
+    border-style: solid;
+    z-index: 2;
+    pointer-events: none;
+  }
+  .corner.tl { top: 18px; left: 18px; border-width: 1.5px 0 0 1.5px; }
+  .corner.tr { top: 18px; right: 18px; border-width: 1.5px 1.5px 0 0; }
+  .corner.bl { bottom: 18px; left: 18px; border-width: 0 0 1.5px 1.5px; }
+  .corner.br { bottom: 18px; right: 18px; border-width: 0 1.5px 1.5px 0; }
+
+  .content {
+    position: relative;
+    z-index: 1;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 6.5% 7% 6%;
+  }
+
+  .logo-wrap {
+    width: 80%;
+    max-width: 860px;
+    animation: logo-rise 0.85s 0.1s ease-out both;
+  }
+
+  .logo {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1490 / 468;
+    object-fit: contain;
+    display: block;
+  }
+
+  .divider {
+    width: 44%;
+    height: 1px;
+    margin: 2.4% 0 1.6%;
+    background: linear-gradient(90deg, transparent, rgba(0,112,210,0.55), transparent);
+    animation: fade-up 0.7s 0.28s ease-out both;
+  }
+
+  .version {
+    font-size: clamp(12px, 1.35vw, 14px);
+    letter-spacing: 0.32em;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    font-weight: 500;
+    animation: fade-up 0.7s 0.35s ease-out both;
+  }
+
+  .footer {
+    width: 63%;
+    max-width: 680px;
+    margin-top: auto;
+    padding-top: 4%;
+    animation: fade-up 0.7s 0.42s ease-out both;
+  }
+
+  .status-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 12px;
+    gap: 16px;
+  }
+
+  .status {
+    font-family: "Noto Sans SC", "Outfit", sans-serif;
+    font-size: clamp(12px, 1.3vw, 14px);
+    color: var(--text-status);
+  }
+
+  .percent {
+    font-size: clamp(11px, 1.2vw, 13px);
+    color: #4aa3e8;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .track {
+    height: 4px;
+    border-radius: 0;
+    background: rgba(255, 255, 255, 0.07);
+    overflow: hidden;
+  }
+
+  .fill {
+    height: 100%;
+    width: 0%;
+    background: var(--brand-blue);
+    animation: progress 4.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  }
+
+  @keyframes progress {
+    0%   { width: 0%; }
+    18%  { width: 22%; }
+    40%  { width: 48%; }
+    65%  { width: 72%; }
+    85%  { width: 90%; }
+    100% { width: 100%; }
+  }
+
+  @keyframes splash-in {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  @keyframes logo-rise {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  .hint {
+    margin-top: 28px;
+    font-size: 12px;
+    color: #5a6f85;
+    text-align: center;
+    line-height: 1.7;
+  }
+
+  .hint code {
+    color: #8fa3b8;
+    background: rgba(255,255,255,0.05);
+    padding: 2px 6px;
+    border-radius: 2px;
+    font-size: 11px;
+  }
+</style>
+</head>
+<body>
+  <div class="page-title">HWI · CAM · Splash · Tech Minimal</div>
+
+  <div>
+    <div class="splash">
+      <div class="corner tl"></div>
+      <div class="corner tr"></div>
+      <div class="corner bl"></div>
+      <div class="corner br"></div>
+
+      <div class="content">
+        <div class="logo-wrap">
+          <img class="logo" src="../icon/preview.png" alt="CAM HWI 哈焊" />
+        </div>
+
+        <div class="divider"></div>
+        <div class="version">Version 1.0.0</div>
+
+        <div class="footer">
+          <div class="status-row">
+            <span class="status" id="status">初始化 UI 界面...</span>
+            <span class="percent" id="percent">0%</span>
+          </div>
+          <div class="track"><div class="fill"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <p class="hint">
+      无圆形光晕 · 无网格 · 四角 HUD · 画布 <code>1080×540</code>
+    </p>
+  </div>
+
+<script>
+  const stages = [
+    [0,  "初始化 UI 界面..."],
+    [15, "初始化仿真引擎..."],
+    [35, "加载场景模型..."],
+    [55, "准备渲染资源..."],
+    [80, "正在启动用户界面..."],
+    [95, "即将完成，请稍候..."],
+  ];
+  const statusEl = document.getElementById("status");
+  const percentEl = document.getElementById("percent");
+  let t0 = performance.now();
+  const duration = 4200;
+
+  function tick(now) {
+    const p = Math.min(1, (now - t0) / duration);
+    const eased = p < 0.5 ? 2*p*p : 1 - Math.pow(-2*p+2, 2)/2;
+    const value = Math.round(eased * 100);
+    percentEl.textContent = value + "%";
+    let label = stages[0][1];
+    for (const [th, text] of stages) if (value >= th) label = text;
+    statusEl.textContent = label;
+    if (p < 1) requestAnimationFrame(tick);
+    else setTimeout(() => { t0 = performance.now(); requestAnimationFrame(tick); }, 600);
+  }
+  requestAnimationFrame(tick);
+</script>
+</body>
+</html>
