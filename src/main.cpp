@@ -89,9 +89,13 @@ int main(int argc, char* argv[])
         splash.move(screen->geometry().center() - splash.rect().center());
 
     // —— 进度动画 ——
-    static const char* stages[] = {
-        u8"初始化 UI 界面...", u8"初始化仿真引擎...", u8"加载场景模型...",
-        u8"准备渲染资源...", u8"正在启动用户界面...", u8"即将完成，请稍候..."
+    const QString stages[] = {
+        QString::fromUtf8(u8"初始化 UI 界面..."),
+        QString::fromUtf8(u8"初始化仿真引擎..."),
+        QString::fromUtf8(u8"加载场景模型..."),
+        QString::fromUtf8(u8"准备渲染资源..."),
+        QString::fromUtf8(u8"正在启动用户界面..."),
+        QString::fromUtf8(u8"即将完成，请稍候...")
     };
     const int thresholds[] = {0, 15, 35, 55, 80, 95};
 
@@ -104,7 +108,7 @@ int main(int argc, char* argv[])
 
         int i = 5;
         while (i > 0 && value < thresholds[i]) --i;
-        status->setText(QString::fromUtf8(stages[i]));
+        status->setText(stages[i]);
         status->adjustSize();
         status->move(CX - 340, 418);
 
