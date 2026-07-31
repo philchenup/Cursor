@@ -22,6 +22,10 @@ Fixed `voice_ASR_1200.cpp` so recognition matches the Python `sounddevice` + Vos
 ./voice_ASR_1200 /path/to/vosk-model-cn-kaldi-multicn-0.15
 ```
 
+4. Controls:
+   - Press **S** to start recording
+   - Press **ESC** to stop recording and print the final recognition result
+
 ## Match Python exactly
 
 - Use the **same model directory**.
