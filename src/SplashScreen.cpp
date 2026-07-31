@@ -5,15 +5,8 @@
 #include <QGuiApplication>
 #include <QLinearGradient>
 #include <QPainter>
-#include <QRadialGradient>
 #include <QScreen>
 #include <QTimer>
-
-namespace {
-// 与 Logo 一致的品牌色
-constexpr QRgb kBrandBlue   = 0xFF0070D2;
-constexpr QRgb kBrandOrange = 0xFFF39C12;
-}
 
 SplashScreen::SplashScreen(const QString& logoPath,
                            const QString& version,
@@ -37,7 +30,7 @@ SplashScreen::SplashScreen(const QString& logoPath,
         placeholder.fill(Qt::transparent);
         QPainter p(&placeholder);
         p.setRenderHint(QPainter::Antialiasing);
-        p.setPen(QColor(kBrandBlue));
+        p.setPen(QColor(QStringLiteral("#0070D2")));
         QFont f(QStringLiteral("Segoe UI"), 42, QFont::Bold);
         p.setFont(f);
         p.drawText(placeholder.rect(), Qt::AlignCenter, QStringLiteral("CAM  ·  HWI"));
@@ -95,17 +88,12 @@ SplashScreen::SplashScreen(const QString& logoPath,
     m_progress->setStyleSheet(QStringLiteral(R"(
         QProgressBar {
             border: none;
-            border-radius: 3px;
-            background-color: rgba(255, 255, 255, 26);
+            border-radius: 0px;
+            background-color: rgba(255, 255, 255, 18);
         }
         QProgressBar::chunk {
-            border-radius: 3px;
-            background: qlineargradient(
-                x1:0, y1:0, x2:1, y2:0,
-                stop:0 #0070D2,
-                stop:0.55 #2B8FE0,
-                stop:1 #F39C12
-            );
+            border-radius: 0px;
+            background-color: #0070D2;
         }
     )"));
 
@@ -117,55 +105,46 @@ void SplashScreen::buildBackground(QPixmap& canvas) const
     QPainter painter(&canvas);
     painter.setRenderHint(QPainter::Antialiasing);
 
-    // 深炭底：让 Logo 蓝/橙/红更突出，避免与 #4a6491 抢色
-    QLinearGradient base(0, 0, canvas.width(), canvas.height());
-    base.setColorAt(0.0, QColor("#0a1018"));
-    base.setColorAt(0.5, QColor("#101a28"));
-    base.setColorAt(1.0, QColor("#152436"));
+    // 平面深色底：无圆形柔光，突出 Logo
+    QLinearGradient base(0, 0, 0, canvas.height());
+    base.setColorAt(0.0, QColor("#0b121c"));
+    base.setColorAt(1.0, QColor("#111b2a"));
     painter.fillRect(canvas.rect(), base);
 
-    // 左侧暖橙柔光（呼应 CAM 橙色三角）
-    QRadialGradient warmGlow(canvas.width() * 0.28, canvas.height() * 0.36,
-                             canvas.width() * 0.38);
-    warmGlow.setColorAt(0.0, QColor(243, 156, 18, 42));
-    warmGlow.setColorAt(0.5, QColor(243, 156, 18, 12));
-    warmGlow.setColorAt(1.0, QColor(243, 156, 18, 0));
-    painter.fillRect(canvas.rect(), warmGlow);
+    // 极淡科技网格（直线，非圆形）
+    painter.setPen(QPen(QColor(255, 255, 255, 10), 1));
+    const int grid = 40;
+    for (int x = grid; x < canvas.width(); x += grid)
+        painter.drawLine(x, 0, x, canvas.height());
+    for (int y = grid; y < canvas.height(); y += grid)
+        painter.drawLine(0, y, canvas.width(), y);
 
-    // 右侧冷蓝柔光（呼应 HWI 椭圆）
-    QRadialGradient coolGlow(canvas.width() * 0.72, canvas.height() * 0.36,
-                             canvas.width() * 0.40);
-    coolGlow.setColorAt(0.0, QColor(0, 112, 210, 55));
-    coolGlow.setColorAt(0.5, QColor(0, 112, 210, 16));
-    coolGlow.setColorAt(1.0, QColor(0, 112, 210, 0));
-    painter.fillRect(canvas.rect(), coolGlow);
+    // 四角 HUD 角标
+    const int m = 18;
+    const int len = 22;
+    painter.setPen(QPen(QColor(0, 112, 210, 140), 1.5));
+    // 左上
+    painter.drawLine(m, m, m + len, m);
+    painter.drawLine(m, m, m, m + len);
+    // 右上
+    painter.drawLine(canvas.width() - m - len, m, canvas.width() - m, m);
+    painter.drawLine(canvas.width() - m, m, canvas.width() - m, m + len);
+    // 左下
+    painter.drawLine(m, canvas.height() - m, m + len, canvas.height() - m);
+    painter.drawLine(m, canvas.height() - m - len, m, canvas.height() - m);
+    // 右下
+    painter.drawLine(canvas.width() - m - len, canvas.height() - m, canvas.width() - m, canvas.height() - m);
+    painter.drawLine(canvas.width() - m, canvas.height() - m - len, canvas.width() - m, canvas.height() - m);
 
-    // 顶部细高光
-    QLinearGradient topSheen(0, 0, 0, 80);
-    topSheen.setColorAt(0.0, QColor(255, 255, 255, 14));
-    topSheen.setColorAt(1.0, QColor(255, 255, 255, 0));
-    painter.fillRect(0, 0, canvas.width(), 80, topSheen);
-
-    // 底部暗角，托住进度区
-    QLinearGradient bottomFade(0, canvas.height() - 130, 0, canvas.height());
-    bottomFade.setColorAt(0.0, QColor(0, 0, 0, 0));
-    bottomFade.setColorAt(1.0, QColor(0, 0, 0, 100));
-    painter.fillRect(0, canvas.height() - 130, canvas.width(), 130, bottomFade);
-
-    // 蓝→橙装饰线（呼应双色标）
+    // 单条细分割线（蓝→透明，简约）
     const int lineY = 318;
-    const int lineMargin = 260;
+    const int lineMargin = 300;
     QLinearGradient lineGrad(lineMargin, 0, canvas.width() - lineMargin, 0);
     lineGrad.setColorAt(0.0, QColor(0, 112, 210, 0));
-    lineGrad.setColorAt(0.25, QColor(0, 112, 210, 160));
-    lineGrad.setColorAt(0.5, QColor(243, 156, 18, 180));
-    lineGrad.setColorAt(0.75, QColor(0, 112, 210, 160));
+    lineGrad.setColorAt(0.5, QColor(0, 112, 210, 120));
     lineGrad.setColorAt(1.0, QColor(0, 112, 210, 0));
-    painter.setPen(QPen(QBrush(lineGrad), 1.2));
+    painter.setPen(QPen(QBrush(lineGrad), 1.0));
     painter.drawLine(lineMargin, lineY, canvas.width() - lineMargin, lineY);
-
-    painter.setPen(QPen(QColor(255, 255, 255, 18), 1));
-    painter.drawRect(0, 0, canvas.width() - 1, canvas.height() - 1);
 }
 
 void SplashScreen::layoutWidgets()
