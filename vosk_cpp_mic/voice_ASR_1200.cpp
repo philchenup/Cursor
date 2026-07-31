@@ -12,6 +12,8 @@
 #include <locale.h>
 #include <audio>
 
+#include "chinese_number.h"
+
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -378,10 +380,14 @@ int main(int argc, char** argv)
 
     const char* final_json = vosk_recognizer_final_result(recognizer);
     const std::string text = extract_json_text(final_json);
+    // 中文数字 -> 阿拉伯数字，例如「十二毫米」->「12毫米」
+    const std::string normalized = normalize_chinese_numbers(text);
 
     std::cout << std::string(80, '#') << "\n";
     std::cout << "Recognition result:\n";
-    if (!text.empty())
+    if (!normalized.empty())
+        std::cout << normalized << "\n";
+    else if (!text.empty())
         std::cout << text << "\n";
     else if (final_json)
         std::cout << final_json << "\n";

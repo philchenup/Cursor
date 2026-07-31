@@ -26,6 +26,16 @@ Fixed `voice_ASR_1200.cpp` so recognition matches the Python `sounddevice` + Vos
    - Press **S** to start recording
    - Press **ESC** to stop recording and print the final recognition result
 
+5. Post-process: Chinese numerals in the result are converted to Arabic digits
+   (`十二毫米` → `12毫米`) via `normalize_chinese_numbers()`.
+
+```bash
+# unit test for number normalization (no mic / vosk needed)
+c++ -std=c++17 -O2 -o test_chinese_number \
+  chinese_number.cpp test_chinese_number.cpp
+./test_chinese_number
+```
+
 ## Match Python exactly
 
 - Use the **same model directory**.
