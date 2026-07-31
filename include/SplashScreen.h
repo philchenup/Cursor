@@ -7,17 +7,21 @@
 #include <QString>
 
 /**
- * @brief 品牌启动画面：适配 1490x468 透明 PNG Logo，含阶段性进度反馈。
+ * @brief HWI / 哈焊 启动画面 —— 适配 CAM+HWI 双色标（1490×468 透明 PNG）。
  *
- * 布局（1000 x 560）：
- *   ┌────────────────────────────────────┐
- *   │          氛围渐变背景               │
- *   │                                    │
- *   │         [ Logo 720 宽 ]            │
- *   │           Version x.x.x            │
- *   │                                    │
- *   │         状态文案 / 进度条           │
- *   └────────────────────────────────────┘
+ * 品牌色：蓝 #0070D2 · 橙 #F39C12 · 红 #DC2626（Logo 内「哈焊」）
+ *
+ * 布局（1080 × 540）：
+ *   ┌──────────────────────────────────────┐
+ *   │   左暖橙柔光 · 右冷蓝柔光 · 深炭底     │
+ *   │                                      │
+ *   │      [ CAM 标 + HWI 椭圆 Logo ]       │
+ *   │           蓝→橙 装饰线                │
+ *   │            Version x.x.x             │
+ *   │                                      │
+ *   │      状态文案              nn%        │
+ *   │      ████████░░░░  蓝→橙进度条        │
+ *   └──────────────────────────────────────┘
  */
 class SplashScreen : public QSplashScreen
 {
@@ -39,9 +43,10 @@ private:
     void layoutWidgets();
     QString statusForProgress(int value) const;
 
-    static constexpr int kWidth  = 1000;
-    static constexpr int kHeight = 560;
-    static constexpr int kLogoMaxWidth = 720;
+    // 画布略宽，容纳 1490×468 宽幅 Logo
+    static constexpr int kWidth  = 1080;
+    static constexpr int kHeight = 540;
+    static constexpr int kLogoMaxWidth = 860;
 
     QLabel* m_logoLabel = nullptr;
     QLabel* m_versionLabel = nullptr;

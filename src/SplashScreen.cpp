@@ -8,7 +8,12 @@
 #include <QRadialGradient>
 #include <QScreen>
 #include <QTimer>
-#include <QtMath>
+
+namespace {
+// 与 Logo 一致的品牌色
+constexpr QRgb kBrandBlue   = 0xFF0070D2;
+constexpr QRgb kBrandOrange = 0xFFF39C12;
+}
 
 SplashScreen::SplashScreen(const QString& logoPath,
                            const QString& version,
@@ -24,23 +29,23 @@ SplashScreen::SplashScreen(const QString& logoPath,
     setPixmap(canvas);
     setFixedSize(kWidth, kHeight);
 
-    // —— Logo：保持 1490x468 比例，最大宽度 720 ——
+    // —— Logo：1490×468 透明 PNG，等比缩放，不再拉伸 ——
     m_logoLabel = new QLabel(this);
     QPixmap logo(logoPath);
     if (logo.isNull()) {
-        // 占位：无资源时画文字品牌，避免空白
         QPixmap placeholder(kLogoMaxWidth, qRound(kLogoMaxWidth * 468.0 / 1490.0));
         placeholder.fill(Qt::transparent);
         QPainter p(&placeholder);
         p.setRenderHint(QPainter::Antialiasing);
-        p.setPen(QColor("#e8eef5"));
-        QFont f(QStringLiteral("Segoe UI"), 48, QFont::Bold);
+        p.setPen(QColor(kBrandBlue));
+        QFont f(QStringLiteral("Segoe UI"), 42, QFont::Bold);
         p.setFont(f);
-        p.drawText(placeholder.rect(), Qt::AlignCenter, QStringLiteral("HWI"));
+        p.drawText(placeholder.rect(), Qt::AlignCenter, QStringLiteral("CAM  ·  HWI"));
         logo = placeholder;
     } else {
         logo = logo.scaled(kLogoMaxWidth,
-                           qRound(kLogoMaxWidth * logo.height() / static_cast<qreal>(logo.width())),
+                           qRound(kLogoMaxWidth * logo.height()
+                                  / static_cast<qreal>(logo.width())),
                            Qt::KeepAspectRatio,
                            Qt::SmoothTransformation);
     }
@@ -48,19 +53,18 @@ SplashScreen::SplashScreen(const QString& logoPath,
     m_logoLabel->setAttribute(Qt::WA_TranslucentBackground);
     m_logoLabel->adjustSize();
 
-    // —— 版本号 ——
+    // —— 版本号（Logo 已含 HWI / 哈焊，此处不再重复大标题）——
     m_versionLabel = new QLabel(QStringLiteral("Version %1").arg(m_version), this);
     m_versionLabel->setStyleSheet(QStringLiteral(
         "QLabel {"
-        "  color: #9aafc4;"
-        "  font-size: 15px;"
+        "  color: #8fa3b8;"
+        "  font-size: 14px;"
         "  font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;"
-        "  letter-spacing: 3px;"
+        "  letter-spacing: 4px;"
         "  background: transparent;"
         "}"));
     m_versionLabel->adjustSize();
 
-    // —— 加载状态 ——
     m_statusLabel = new QLabel(QString::fromUtf8(u8"正在启动..."), this);
     m_statusLabel->setStyleSheet(QStringLiteral(
         "QLabel {"
@@ -71,11 +75,10 @@ SplashScreen::SplashScreen(const QString& logoPath,
         "}"));
     m_statusLabel->adjustSize();
 
-    // —— 百分比 ——
     m_percentLabel = new QLabel(QStringLiteral("0%"), this);
     m_percentLabel->setStyleSheet(QStringLiteral(
         "QLabel {"
-        "  color: #5eb3f5;"
+        "  color: #4aa3e8;"
         "  font-size: 13px;"
         "  font-family: 'Segoe UI', 'Consolas', monospace;"
         "  font-weight: 600;"
@@ -83,25 +86,25 @@ SplashScreen::SplashScreen(const QString& logoPath,
         "}"));
     m_percentLabel->adjustSize();
 
-    // —— 进度条 ——
+    // 进度条：品牌蓝 → 品牌橙
     m_progress = new QProgressBar(this);
     m_progress->setRange(0, 100);
     m_progress->setValue(0);
     m_progress->setTextVisible(false);
-    m_progress->setFixedSize(640, 6);
+    m_progress->setFixedSize(680, 7);
     m_progress->setStyleSheet(QStringLiteral(R"(
         QProgressBar {
             border: none;
             border-radius: 3px;
-            background-color: rgba(255, 255, 255, 28);
+            background-color: rgba(255, 255, 255, 26);
         }
         QProgressBar::chunk {
             border-radius: 3px;
             background: qlineargradient(
                 x1:0, y1:0, x2:1, y2:0,
-                stop:0 #2b7fc7,
-                stop:0.5 #4aa3e8,
-                stop:1 #7ec8ff
+                stop:0 #0070D2,
+                stop:0.55 #2B8FE0,
+                stop:1 #F39C12
             );
         }
     )"));
@@ -114,44 +117,54 @@ void SplashScreen::buildBackground(QPixmap& canvas) const
     QPainter painter(&canvas);
     painter.setRenderHint(QPainter::Antialiasing);
 
-    // 主对角渐变：深蓝石板 → 午夜蓝灰（避免紫系）
+    // 深炭底：让 Logo 蓝/橙/红更突出，避免与 #4a6491 抢色
     QLinearGradient base(0, 0, canvas.width(), canvas.height());
-    base.setColorAt(0.0, QColor("#0c1520"));
-    base.setColorAt(0.45, QColor("#152536"));
-    base.setColorAt(1.0, QColor("#1e3a55"));
+    base.setColorAt(0.0, QColor("#0a1018"));
+    base.setColorAt(0.5, QColor("#101a28"));
+    base.setColorAt(1.0, QColor("#152436"));
     painter.fillRect(canvas.rect(), base);
 
-    // 中心柔光：托住 Logo
-    QRadialGradient glow(canvas.width() / 2.0, canvas.height() * 0.38, canvas.width() * 0.42);
-    glow.setColorAt(0.0, QColor(61, 155, 233, 55));
-    glow.setColorAt(0.45, QColor(61, 155, 233, 18));
-    glow.setColorAt(1.0, QColor(61, 155, 233, 0));
-    painter.fillRect(canvas.rect(), glow);
+    // 左侧暖橙柔光（呼应 CAM 橙色三角）
+    QRadialGradient warmGlow(canvas.width() * 0.28, canvas.height() * 0.36,
+                             canvas.width() * 0.38);
+    warmGlow.setColorAt(0.0, QColor(243, 156, 18, 42));
+    warmGlow.setColorAt(0.5, QColor(243, 156, 18, 12));
+    warmGlow.setColorAt(1.0, QColor(243, 156, 18, 0));
+    painter.fillRect(canvas.rect(), warmGlow);
 
-    // 顶部细高光带
-    QLinearGradient topSheen(0, 0, 0, 90);
-    topSheen.setColorAt(0.0, QColor(255, 255, 255, 18));
+    // 右侧冷蓝柔光（呼应 HWI 椭圆）
+    QRadialGradient coolGlow(canvas.width() * 0.72, canvas.height() * 0.36,
+                             canvas.width() * 0.40);
+    coolGlow.setColorAt(0.0, QColor(0, 112, 210, 55));
+    coolGlow.setColorAt(0.5, QColor(0, 112, 210, 16));
+    coolGlow.setColorAt(1.0, QColor(0, 112, 210, 0));
+    painter.fillRect(canvas.rect(), coolGlow);
+
+    // 顶部细高光
+    QLinearGradient topSheen(0, 0, 0, 80);
+    topSheen.setColorAt(0.0, QColor(255, 255, 255, 14));
     topSheen.setColorAt(1.0, QColor(255, 255, 255, 0));
-    painter.fillRect(0, 0, canvas.width(), 90, topSheen);
+    painter.fillRect(0, 0, canvas.width(), 80, topSheen);
 
-    // 底部暗角
-    QLinearGradient bottomFade(0, canvas.height() - 140, 0, canvas.height());
+    // 底部暗角，托住进度区
+    QLinearGradient bottomFade(0, canvas.height() - 130, 0, canvas.height());
     bottomFade.setColorAt(0.0, QColor(0, 0, 0, 0));
-    bottomFade.setColorAt(1.0, QColor(0, 0, 0, 90));
-    painter.fillRect(0, canvas.height() - 140, canvas.width(), 140, bottomFade);
+    bottomFade.setColorAt(1.0, QColor(0, 0, 0, 100));
+    painter.fillRect(0, canvas.height() - 130, canvas.width(), 130, bottomFade);
 
-    // 装饰细线：Logo 区域下方
-    const int lineY = 330;
-    const int lineMargin = 280;
+    // 蓝→橙装饰线（呼应双色标）
+    const int lineY = 318;
+    const int lineMargin = 260;
     QLinearGradient lineGrad(lineMargin, 0, canvas.width() - lineMargin, 0);
-    lineGrad.setColorAt(0.0, QColor(94, 179, 245, 0));
-    lineGrad.setColorAt(0.5, QColor(94, 179, 245, 120));
-    lineGrad.setColorAt(1.0, QColor(94, 179, 245, 0));
-    painter.setPen(QPen(QBrush(lineGrad), 1.0));
+    lineGrad.setColorAt(0.0, QColor(0, 112, 210, 0));
+    lineGrad.setColorAt(0.25, QColor(0, 112, 210, 160));
+    lineGrad.setColorAt(0.5, QColor(243, 156, 18, 180));
+    lineGrad.setColorAt(0.75, QColor(0, 112, 210, 160));
+    lineGrad.setColorAt(1.0, QColor(0, 112, 210, 0));
+    painter.setPen(QPen(QBrush(lineGrad), 1.2));
     painter.drawLine(lineMargin, lineY, canvas.width() - lineMargin, lineY);
 
-    // 四角微弱边框高光
-    painter.setPen(QPen(QColor(255, 255, 255, 22), 1));
+    painter.setPen(QPen(QColor(255, 255, 255, 18), 1));
     painter.drawRect(0, 0, canvas.width() - 1, canvas.height() - 1);
 }
 
@@ -159,18 +172,16 @@ void SplashScreen::layoutWidgets()
 {
     const int cx = kWidth / 2;
 
-    // Logo 垂直居中偏上
-    const int logoY = 95;
+    // Logo 偏上居中，作为唯一品牌主视觉
+    const int logoY = 72;
     m_logoLabel->move(cx - m_logoLabel->width() / 2, logoY);
 
-    // 版本：Logo 下方 + 装饰线附近
-    m_versionLabel->move(cx - m_versionLabel->width() / 2, 345);
+    m_versionLabel->move(cx - m_versionLabel->width() / 2, 335);
 
-    // 进度条与状态靠底
-    m_progress->move(cx - m_progress->width() / 2, 470);
+    m_progress->move(cx - m_progress->width() / 2, 455);
 
-    m_statusLabel->move(cx - m_statusLabel->width() / 2, 430);
-    m_percentLabel->move(cx + m_progress->width() / 2 - m_percentLabel->width(), 448);
+    m_statusLabel->move(cx - m_progress->width() / 2, 418);
+    m_percentLabel->move(cx + m_progress->width() / 2 - m_percentLabel->width(), 418);
 }
 
 QString SplashScreen::statusForProgress(int value) const
@@ -196,11 +207,11 @@ void SplashScreen::setProgress(int value, const QString& status)
     const QString text = status.isEmpty() ? statusForProgress(value) : status;
     m_statusLabel->setText(text);
     m_statusLabel->adjustSize();
-    m_statusLabel->move(kWidth / 2 - m_statusLabel->width() / 2, 430);
+    m_statusLabel->move(kWidth / 2 - m_progress->width() / 2, 418);
 
     m_percentLabel->setText(QStringLiteral("%1%").arg(value));
     m_percentLabel->adjustSize();
-    m_percentLabel->move(kWidth / 2 + m_progress->width() / 2 - m_percentLabel->width(), 448);
+    m_percentLabel->move(kWidth / 2 + m_progress->width() / 2 - m_percentLabel->width(), 418);
 
     QApplication::processEvents();
 }
@@ -218,7 +229,6 @@ void SplashScreen::run()
     QTimer progressTimer;
     int progressValue = 0;
 
-    // 前期稍快、中段加载感、末段放缓
     QObject::connect(&progressTimer, &QTimer::timeout, this, [&]() {
         int step = 4;
         if (progressValue < 25)
@@ -235,7 +245,6 @@ void SplashScreen::run()
 
         if (progressValue >= 100) {
             progressTimer.stop();
-            // 短暂停留，让用户看到 100%
             QTimer::singleShot(280, &loop, &QEventLoop::quit);
         }
     });

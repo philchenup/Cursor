@@ -1,66 +1,48 @@
-# HWI 启动画面（Splash Screen）
+# HWI / 哈焊 · 启动画面
 
-为 **1490×468** 透明 PNG Logo 设计的 Qt 启动界面，含阶段性进度条与状态文案。
+按 **CAM + HWI** 双色标（1490×468 透明 PNG）设计的 Qt 启动界面。
 
-## 视觉结构
+## 品牌对齐
+
+| 色 | Hex | 用途 |
+|----|-----|------|
+| 蓝 | `#0070D2` | Logo 主色、进度条起点、右侧柔光 |
+| 橙 | `#F39C12` | CAM 三角、进度条末端、左侧柔光、装饰线 |
+| 红 | `#DC2626` | Logo 内「哈焊」（界面不再重复绘制） |
+| 深炭 | `#0A1018 → #152436` | 背景，突出彩色 Logo |
+
+## 布局（1080 × 540）
 
 ```
-┌────────────── 1000 × 560 ──────────────┐
-│         深蓝石板对角渐变 + 中心柔光        │
-│                                        │
-│              [ Logo ≤720 宽 ]           │
-│            （保持 1490:468）             │
-│                 ─────                   │
-│              Version 1.0.0              │
-│                                        │
-│         状态文案              72%       │
-│         ████████████░░░░░░              │
-└────────────────────────────────────────┘
+┌──────────────────────────────────────────┐
+│     左暖橙柔光 · 右冷蓝柔光 · 深炭底        │
+│                                          │
+│         [ CAM 标 + HWI 椭圆 Logo ]        │
+│              蓝 → 橙 装饰线               │
+│               Version 1.0.0              │
+│                                          │
+│      状态文案                    52%      │
+│      ████████░░░░░░  蓝→橙进度条          │
+└──────────────────────────────────────────┘
 ```
 
-- **品牌优先**：Logo 为第一视口主视觉，无额外大标题抢戏
-- **比例正确**：不再把 1490×468 强行拉伸到 1200×600
-- **进度节奏**：前快 → 中稳 → 末缓，文案分 6 阶段切换
-
-## 文件
-
-| 路径 | 说明 |
-|------|------|
-| `include/SplashScreen.h` | 启动画面类声明 |
-| `src/SplashScreen.cpp` | 背景绘制、布局、进度逻辑 |
-| `src/main.cpp` | 集成示例 |
-| `preview/splash-preview.html` | 浏览器可视化预览 |
-| `icon/preview.png` | 放入你的透明 Logo（1490×468） |
+- Logo 最大宽 **860**，`KeepAspectRatio`，不再拉成 1200×600
+- **不**再叠加红色「HWI」大标题（Logo 已含品牌字）
+- 进度：前快 → 中稳 → 末缓，6 段中文状态
 
 ## 使用
 
-1. 将 Logo 保存为 `icon/preview.png`
-2. 构建并运行：
+将真实 Logo 覆盖为 `icon/preview.png`（1490×468、透明），然后：
 
 ```bash
-cmake -S . -B build
-cmake --build build
+cmake -S . -B build && cmake --build build
 cd build && ./hwi_app
 ```
 
-3. 或直接打开 `preview/splash-preview.html` 查看布局与动画
-
-## 在现有工程中接入
+浏览器预览：打开 `preview/splash-preview.html`
 
 ```cpp
-#include "SplashScreen.h"
-
 SplashScreen splash("./icon/preview.png", "1.0.0");
-splash.run();          // 阻塞至进度完成
-// ... 创建主窗口 ...
-splash.finish(&mainWindow);
-```
-
-也可在真实初始化流程中手动驱动：
-
-```cpp
-splash.show();
-splash.setProgress(20, QString::fromUtf8(u8"初始化仿真引擎..."));
-// ... 实际加载 ...
-splash.setProgress(100);
+splash.run();
+// 或 splash.setProgress(n, status);
 ```
