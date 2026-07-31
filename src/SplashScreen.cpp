@@ -105,19 +105,11 @@ void SplashScreen::buildBackground(QPixmap& canvas) const
     QPainter painter(&canvas);
     painter.setRenderHint(QPainter::Antialiasing);
 
-    // 平面深色底：无圆形柔光，突出 Logo
+    // 平面深色底：无圆形柔光、无网格
     QLinearGradient base(0, 0, 0, canvas.height());
     base.setColorAt(0.0, QColor("#0b121c"));
     base.setColorAt(1.0, QColor("#111b2a"));
     painter.fillRect(canvas.rect(), base);
-
-    // 极淡科技网格（直线，非圆形）
-    painter.setPen(QPen(QColor(255, 255, 255, 10), 1));
-    const int grid = 40;
-    for (int x = grid; x < canvas.width(); x += grid)
-        painter.drawLine(x, 0, x, canvas.height());
-    for (int y = grid; y < canvas.height(); y += grid)
-        painter.drawLine(0, y, canvas.width(), y);
 
     // 四角 HUD 角标
     const int m = 18;
@@ -136,7 +128,7 @@ void SplashScreen::buildBackground(QPixmap& canvas) const
     painter.drawLine(canvas.width() - m - len, canvas.height() - m, canvas.width() - m, canvas.height() - m);
     painter.drawLine(canvas.width() - m, canvas.height() - m - len, canvas.width() - m, canvas.height() - m);
 
-    // 单条细分割线（蓝→透明，简约）
+    // 单条细分割线
     const int lineY = 318;
     const int lineMargin = 300;
     QLinearGradient lineGrad(lineMargin, 0, canvas.width() - lineMargin, 0);
