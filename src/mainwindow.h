@@ -117,6 +117,11 @@ protected:
     void closeEvent(QCloseEvent* event) override;
 
 private:
+    /** Dual-write operation log: UI console + glog (by severity). */
+    void logInfo(const QString& msg);
+    void logWarning(const QString& msg);
+    void logError(const QString& msg);
+
     Ui::MainWindow* ui;
     QTranslator* translator;
     CameraFactory::CameraType camType;
@@ -153,8 +158,8 @@ private:
     std::vector<std::vector<float>> calib_off;
     std::vector<float> current_endvec;
 
-    int m_jointIndex = 0;   // joint ��¼���
-    int m_poseIndex = 0;   // pose ��¼���
+    int m_jointIndex = 0;   // joint record index
+    int m_poseIndex = 0;    // pose record index
     bool m_isJointMode = true;
 };
 #endif // MAINWINDOW_H

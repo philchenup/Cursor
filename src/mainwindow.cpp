@@ -32,21 +32,24 @@
 
 #include <glog/logging.h>
 
-namespace {
-/** Convert QString for glog stream output. */
-inline std::string ToLog(const QString& text)
+void MainWindow::logInfo(const QString& msg)
 {
-    return text.toStdString();
+    ui->console->print(ct::LOG_INFO, msg);
+    LOG(INFO) << msg.toStdString();
 }
 
-/** Write an operation / feedback log entry via glog. */
-inline void GLogInfo(const QString& msg) { LOG(INFO) << ToLog(msg); }
-inline void GLogWarning(const QString& msg) { LOG(WARNING) << ToLog(msg); }
-inline void GLogError(const QString& msg) { LOG(ERROR) << ToLog(msg); }
-inline void GLogInfo(const char* msg) { LOG(INFO) << msg; }
-inline void GLogWarning(const char* msg) { LOG(WARNING) << msg; }
-inline void GLogError(const char* msg) { LOG(ERROR) << msg; }
-}  // namespace
+void MainWindow::logWarning(const QString& msg)
+{
+    ui->console->print(ct::LOG_WARNING, msg);
+    LOG(WARNING) << msg.toStdString();
+}
+
+void MainWindow::logError(const QString& msg)
+{
+    ui->console->print(ct::LOG_ERROR, msg);
+    LOG(ERROR) << msg.toStdString();
+}
+
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent),
@@ -77,157 +80,157 @@ MainWindow::MainWindow(QWidget* parent)
     // toolbar
     // file
     connect(ui->actionOpen, &QAction::triggered, [this]() {
-        GLogInfo("Action triggered: Open");
+        logInfo("Action triggered: Open");
         ui->cloudtree->addCloud();
     });
     connect(ui->actionSave, &QAction::triggered, [this]() {
-        GLogInfo("Action triggered: Save");
+        logInfo("Action triggered: Save");
         ui->cloudtree->saveSelectedClouds();
     });
     connect(ui->actionClose, &QAction::triggered, [this]() {
-        GLogInfo("Action triggered: Close");
+        logInfo("Action triggered: Close");
         ui->cloudtree->removeSelectedClouds();
     });
     connect(ui->actionCloseAll, &QAction::triggered, [this]() {
-        GLogInfo("Action triggered: CloseAll");
+        logInfo("Action triggered: CloseAll");
         ui->cloudtree->removeAllClouds();
     });
     connect(ui->actionMerge, &QAction::triggered, [this]() {
-        GLogInfo("Action triggered: Merge");
+        logInfo("Action triggered: Merge");
         ui->cloudtree->mergeSelectedClouds();
     });
     connect(ui->actionClone, &QAction::triggered, [this]() {
-        GLogInfo("Action triggered: Clone");
+        logInfo("Action triggered: Clone");
         ui->cloudtree->cloneSelectedClouds();
     });
     connect(ui->actionQuit, &QAction::triggered, [this]() {
-        GLogInfo("Action triggered: Quit");
+        logInfo("Action triggered: Quit");
         this->close();
     });
 
     // edit
     connect(ui->actionColor, &QAction::triggered, [=] {
-        GLogInfo("Action triggered: Color");
+        logInfo("Action triggered: Color");
         this->createLeftDock<Color>("Color");
     });
     connect(ui->actionCoordinate, &QAction::triggered, [=] {
-        GLogInfo("Action triggered: Coordinate");
+        logInfo("Action triggered: Coordinate");
         this->createDialog<Coordinate>("Coordinate", false);
     });
     connect(ui->actionNormals, &QAction::triggered, [=] {
-        GLogInfo("Action triggered: Normals");
+        logInfo("Action triggered: Normals");
         this->createLeftDock<Normals>("Normals");
     });
     connect(ui->actionScale, &QAction::triggered, [=] {
-        GLogInfo("Action triggered: Scale");
+        logInfo("Action triggered: Scale");
         this->createDialog<Scale>("Scale", false);
     });
     connect(ui->actionTransformation, &QAction::triggered, [=] {
-        GLogInfo("Action triggered: Transformation");
+        logInfo("Action triggered: Transformation");
         this->createLeftDock<Transformation>("Transformation");
     });
     connect(ui->actionFilters, &QAction::triggered, [=] {
-        GLogInfo("Action triggered: Filters");
+        logInfo("Action triggered: Filters");
         this->createLeftDock<Filters>("Filters");
     });
     connect(ui->actionSegmentation, &QAction::triggered, [=] {
-        GLogInfo("Action triggered: Segmentation");
+        logInfo("Action triggered: Segmentation");
         this->createLeftDock<Segmentation>("Segmentation");
     });
     connect(ui->actionCutting, &QAction::triggered, [=] {
-        GLogInfo("Action triggered: Cutting");
+        logInfo("Action triggered: Cutting");
         this->createDialog<Cutting>("Cutting", false);
     });
     connect(ui->actionSampling, &QAction::triggered, [=] {
-        GLogInfo("Action triggered: Sampling");
+        logInfo("Action triggered: Sampling");
         this->createDialog<Sampling>("Sampling", false);
     });
 
     // view
     connect(ui->actionTopView, &QAction::triggered, [this]() {
-        GLogInfo("Action triggered: TopView");
+        logInfo("Action triggered: TopView");
         ui->cloudview->setTopView();
     });
     connect(ui->actionFrontView, &QAction::triggered, [this]() {
-        GLogInfo("Action triggered: FrontView");
+        logInfo("Action triggered: FrontView");
         ui->cloudview->setFrontView();
     });
     connect(ui->actionLeftSideView, &QAction::triggered, [this]() {
-        GLogInfo("Action triggered: LeftSideView");
+        logInfo("Action triggered: LeftSideView");
         ui->cloudview->setLeftSideView();
     });
     connect(ui->actionShowAxes, &QAction::triggered, [this](bool checked) {
-        GLogInfo(QString("Action triggered: ShowAxes checked=%1").arg(checked));
+        logInfo(QString("Action triggered: ShowAxes checked=%1").arg(checked));
         ui->cloudview->setShowAxes(checked);
     });
     connect(ui->actionShowFPS, &QAction::triggered, [this](bool checked) {
-        GLogInfo(QString("Action triggered: ShowFPS checked=%1").arg(checked));
+        logInfo(QString("Action triggered: ShowFPS checked=%1").arg(checked));
         ui->cloudview->setShowFPS(checked);
     });
     connect(ui->actionShowId, &QAction::triggered, [this](bool checked) {
-        GLogInfo(QString("Action triggered: ShowId checked=%1").arg(checked));
+        logInfo(QString("Action triggered: ShowId checked=%1").arg(checked));
         ui->cloudview->setShowId(checked);
     });
 
     // tools
     connect(ui->actionTCPCalib, &QAction::triggered, [=] {
-        GLogInfo("Action triggered: TCPCalib");
+        logInfo("Action triggered: TCPCalib");
         this->createDialog<TcpCalib>("TcpCalib", true);
     });
     connect(ui->actionCalib, &QAction::triggered, [=] {
-        GLogInfo("Action triggered: HandEyeCalib");
+        logInfo("Action triggered: HandEyeCalib");
         this->createDialog<HandEyeCalib>("HandEyeCalib", true);
     });
     connect(ui->actionMakeTool, &QAction::triggered, [=] {
-        GLogInfo("Action triggered: MakeTool");
+        logInfo("Action triggered: MakeTool");
         this->createDialog<MakeTool>("MakeTool", true);
     });
     connect(ui->actionVision, &QAction::triggered, [=] {
-        GLogInfo("Action triggered: VisionConfig");
+        logInfo("Action triggered: VisionConfig");
         this->createDialog<VisionConfig>("VisionConfig", true);
     });
     
     // options
     connect(ui->actionLight, &QAction::triggered, [=] {
-        GLogInfo("Action triggered: Theme Light");
+        logInfo("Action triggered: Theme Light");
         changeTheme(0);
     });
     connect(ui->actionUbuntu, &QAction::triggered, [=] {
-        GLogInfo("Action triggered: Theme ElegantDark");
+        logInfo("Action triggered: Theme ElegantDark");
         changeTheme(1);
     });
     connect(ui->actionDark, &QAction::triggered, [=] {
-        GLogInfo("Action triggered: Theme Dark");
+        logInfo("Action triggered: Theme Dark");
         changeTheme(2);
     });
 
     connect(ui->actionEnglish, &QAction::triggered, [=] {
-        GLogInfo("Action triggered: Language English");
+        logInfo("Action triggered: Language English");
         changeLanguage(0);
     });
     connect(ui->actionChinese, &QAction::triggered, [=] {
-        GLogInfo("Action triggered: Language Chinese");
+        logInfo("Action triggered: Language Chinese");
         changeLanguage(1);
     });
 
     // help
     About* about = new About(this);
     ShortcutKey* shortcutKey = new ShortcutKey(this);
-    connect(ui->actionAbout, &QAction::triggered, [about]() {
-        GLogInfo("Action triggered: About");
+    connect(ui->actionAbout, &QAction::triggered, [this, about]() {
+        logInfo("Action triggered: About");
         about->show();
     });
-    connect(ui->actionShortcutKey, &QAction::triggered, [shortcutKey]() {
-        GLogInfo("Action triggered: ShortcutKey");
+    connect(ui->actionShortcutKey, &QAction::triggered, [this, shortcutKey]() {
+        logInfo("Action triggered: ShortcutKey");
         shortcutKey->show();
     });
     connect(ui->actionScreenShot, &QAction::triggered, [this]() {
-        GLogInfo("Action triggered: ScreenShot");
+        logInfo("Action triggered: ScreenShot");
         this->saveScreenshot();
     });
 
     connect(ui->getCamBtn, &QPushButton::clicked, [this]() {
-        GLogInfo("Button clicked: InitializeCamera");
+        logInfo("Button clicked: InitializeCamera");
         this->InitializeCamera();
     });
     ui->camComb->setCurrentIndex(-1);
@@ -247,12 +250,12 @@ MainWindow::MainWindow(QWidget* parent)
     // robot
     ui->robotComb->setCurrentIndex(-1);
     connect(ui->robotInitBtn, &QPushButton::clicked, [this]() {
-        GLogInfo("Button clicked: InitializeRobot");
+        logInfo("Button clicked: InitializeRobot");
         this->InitializeRobot();
     });
 
     connect(ui->commInitializeBtn, &QPushButton::clicked, [this]() {
-        GLogInfo("Button clicked: InitializeComm");
+        logInfo("Button clicked: InitializeComm");
         this->InitializeComm();
     });
 
@@ -265,28 +268,24 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_thread_prowork, &QThread::finished, this, &MainWindow::deleteLater);
     connect(this, &MainWindow::triggerVisionPro, proworker.get(), &ProcessWorker::triggerVisionPro);
     connect(proworker.get(), &ProcessWorker::errorOccurred, [this](const QString& errorMsg) {
-        ui->console->print(ct::LOG_ERROR, errorMsg);
-        GLogError(errorMsg);
+        logError(errorMsg);
     });
     connect(proworker.get(), &ProcessWorker::statusWarning, [this](const QString& errorMsg) {
-        ui->console->print(ct::LOG_WARNING, errorMsg);
-        GLogWarning(errorMsg);
+        logWarning(errorMsg);
     });
     connect(proworker.get(), &ProcessWorker::statusChanged, [this](const QString& errorMsg) {
-        ui->console->print(ct::LOG_INFO, errorMsg);
-        GLogInfo(errorMsg);
+        logInfo(errorMsg);
     });
     connect(proworker.get(), &ProcessWorker::sendOffMatrix, this, &MainWindow::recOffMatrix);
     m_thread_prowork->start();
 
     this->changeTheme(0);
     ui->progress_bar->close();
-    ui->console->print(ct::LOG_INFO, "HSmartVision started.");
-    GLogInfo("HSmartVision started.");
+    logInfo("HSmartVision started.");
 
     // auto calibration
     connect(ui->autoCalibBtn, &QPushButton::clicked, [this]() {
-        GLogInfo("Button clicked: AutoCalib");
+        logInfo("Button clicked: AutoCalib");
         QMessageBox::StandardButton reply;
         reply = QMessageBox::question(this,
             QStringLiteral("�Զ��궨"),
@@ -294,13 +293,13 @@ MainWindow::MainWindow(QWidget* parent)
             QMessageBox::Yes | QMessageBox::No,
             QMessageBox::No); // Ĭ�ϰ�ť
         if (reply == QMessageBox::Yes) {
-            GLogInfo("AutoCalib confirmed; starting capture sequence.");
+            logInfo("AutoCalib confirmed; starting capture sequence.");
             isAutoCalib = true;
             calibImageCount = 0;
             this->camera->captureDevice();
         }
         else {
-            GLogInfo("AutoCalib cancelled by user.");
+            logInfo("AutoCalib cancelled by user.");
             return;
         }
     });
@@ -308,12 +307,12 @@ MainWindow::MainWindow(QWidget* parent)
     QTimer::singleShot(3000, this, [this]() {
         setEnabled(true);
         statusBar()->showMessage("Software Initialize Done!", 2000);
-        GLogInfo("Software initialization completed; UI enabled.");
+        logInfo("Software initialization completed; UI enabled.");
     });
 }
 
-MainWindow::~MainWindow() { 
-    GLogInfo("MainWindow destroying; shutting down worker threads.");
+MainWindow::~MainWindow() {
+    logInfo("MainWindow destroying; shutting down worker threads.");
 
     if (m_thread_prowork)
     {
@@ -355,7 +354,7 @@ void MainWindow::changeTheme(int index)
         qApp->setStyleSheet(qss.readAll());
         qss.close();
         ui->statusBar->showMessage(tr("light Theme"), 2000);
-        GLogInfo("Theme changed to Light.");
+        logInfo("Theme changed to Light.");
         break;
     case 1:
         qss.setFileName(":/res/theme/ElegantDark.qss");
@@ -363,7 +362,7 @@ void MainWindow::changeTheme(int index)
         qApp->setStyleSheet(qss.readAll());
         qss.close();
         ui->statusBar->showMessage(tr("ElegantDark Theme"), 2000);
-        GLogInfo("Theme changed to ElegantDark.");
+        logInfo("Theme changed to ElegantDark.");
         break;
     case 2:
         qss.setFileName(":/res/theme/dark.qss");
@@ -371,7 +370,7 @@ void MainWindow::changeTheme(int index)
         qApp->setStyleSheet(qss.readAll());
         qss.close();
         ui->statusBar->showMessage(tr("Dark Theme"), 2000);
-        GLogInfo("Theme changed to Dark.");
+        logInfo("Theme changed to Dark.");
         break;
     default:
         break;
@@ -387,7 +386,7 @@ void MainWindow::changeLanguage(int index)
         {
             qApp->removeTranslator(translator);
             ui->retranslateUi(this);
-            GLogInfo("Language switched to English.");
+            logInfo("Language switched to English.");
         }
         break;
     case 1:
@@ -396,14 +395,13 @@ void MainWindow::changeLanguage(int index)
             translator = new QTranslator;
             bool ret = translator->load(":/res/trans/zh_CN.qm");
             if (!ret) {
-                ui->console->print(ct::LOG_ERROR, tr("Failed to load language file."));
-                GLogError(tr("Failed to load language file."));
+                logError(tr("Failed to load language file."));
                 return;
             }
         }
         qApp->installTranslator(translator);
         ui->retranslateUi(this);
-        GLogInfo("Language switched to Chinese.");
+        logInfo("Language switched to Chinese.");
         break;
     }
 }
@@ -413,15 +411,14 @@ void MainWindow::saveScreenshot()
     QString filename = "screenshot" + QDateTime::currentDateTime().toString("-hh-mm-ss");
     QString filepath = QFileDialog::getSaveFileName(this, tr("Save Screenshot"), filename, "PNG(*.png)");
     if (filepath.isEmpty()) {
-        GLogInfo("Screenshot cancelled: no file path selected.");
+        logInfo("Screenshot cancelled: no file path selected.");
         return;
     }
     if (filepath.endsWith(".png", Qt::CaseInsensitive))
         ui->cloudview->saveScreenshot(filepath.toLocal8Bit());
     else
         ui->cloudview->saveScreenshot(filepath.append(".png").toLocal8Bit());
-    ui->console->print(ct::LOG_INFO, tr("Screenshot saved successfully: %1").arg(filepath));
-    GLogInfo(tr("Screenshot saved successfully: %1").arg(filepath));
+    logInfo(tr("Screenshot saved successfully: %1").arg(filepath));
 }
 
 void MainWindow::moveEvent(QMoveEvent* event)
@@ -432,15 +429,14 @@ void MainWindow::moveEvent(QMoveEvent* event)
 }
 
 void MainWindow::InitializeCamera() {
-    GLogInfo(QString("InitializeCamera started, camIndex=%1").arg(ui->camComb->currentIndex()));
+    logInfo(QString("InitializeCamera started, camIndex=%1").arg(ui->camComb->currentIndex()));
 
     if (camera != nullptr) {
         camera->reset();
     }
     int camIndex = ui->camComb->currentIndex();
     if (camIndex < 0) {
-        ui->console->print(ct::LOG_ERROR, tr("Please select a camera type first."));
-        GLogError(tr("Please select a camera type first."));
+        logError(tr("Please select a camera type first."));
         return;
     }
     
@@ -461,7 +457,7 @@ void MainWindow::InitializeCamera() {
     }
 
     if (camType == CameraFactory::CameraType::UNKOWN) {
-        GLogError("InitializeCamera aborted: unknown camera type.");
+        logError("InitializeCamera aborted: unknown camera type.");
         return;
     }
     camera = CameraFactory::createCamera(camType);
@@ -471,27 +467,27 @@ void MainWindow::InitializeCamera() {
     connect(this->camera.get(), &ICamera::sendCamConnectStatus, this, &MainWindow::GetCamStatus);
     connect(this->camera.get(), &ICamera::sendCamCloud, this, &MainWindow::GetCamData);
     connect(ui->cam_btn_search, &QPushButton::clicked, [this]() {
-        GLogInfo("Button clicked: Camera Search");
+        logInfo("Button clicked: Camera Search");
         if (this->camera) this->camera->searchDevice();
     });
     connect(ui->cam_btn_connect, &QPushButton::clicked, this, [&]() {
         if (this->camera) {
             int index = ui->cam_cbox_device->currentIndex();
-            GLogInfo(QString("Button clicked: Camera Connect, deviceIndex=%1").arg(index));
+            logInfo(QString("Button clicked: Camera Connect, deviceIndex=%1").arg(index));
             this->camera->connectDevice(index);
         }
     }, Qt::UniqueConnection);
 
     connect(ui->cam_btn_capture, &QPushButton::clicked, [this]() {
-        GLogInfo("Button clicked: Camera Capture");
+        logInfo("Button clicked: Camera Capture");
         if (this->camera) this->camera->captureDevice();
     });
     connect(ui->cam_btn_add, &QPushButton::clicked, [this]() {
-        GLogInfo("Button clicked: Camera Add");
+        logInfo("Button clicked: Camera Add");
         if (this->camera) this->camera->add();
     });
     connect(ui->cam_btn_reset, &QPushButton::clicked, [this]() {
-        GLogInfo("Button clicked: Camera Reset");
+        logInfo("Button clicked: Camera Reset");
         if (this->camera) this->camera->reset();
     });
 
@@ -502,27 +498,24 @@ void MainWindow::InitializeCamera() {
     ui->cam_cbox_device->clear();
     ui->cam_txt_info->clear();
 
-    ui->console->print(ct::LOG_INFO, tr("Camera initialized successfully."));
-    GLogInfo(tr("Camera initialized successfully."));
+    logInfo(tr("Camera initialized successfully."));
 }
 
 void MainWindow::GetCamModel(const QVector<QString>& camModel) {
     if (camModel.size() == 0) {
-        ui->console->print(ct::LOG_ERROR, tr("Camera model list is empty."));
-        GLogError(tr("Camera model list is empty."));
+        logError(tr("Camera model list is empty."));
         return;
     }
     for (auto model : camModel) {
         ui->cam_cbox_device->addItem(model);
     }
     ui->cam_cbox_device->setCurrentIndex(0);
-    GLogInfo(QString("Camera feedback: received %1 device model(s).").arg(camModel.size()));
+    logInfo(QString("Camera feedback: received %1 device model(s).").arg(camModel.size()));
 }
 
 void MainWindow::GetCamInfo(const QString& info) {
     if (info.isEmpty()) {
-        ui->console->print(ct::LOG_ERROR, tr("Camera info is empty."));
-        GLogError(tr("Camera info is empty."));
+        logError(tr("Camera info is empty."));
         return;
     }
     ui->cam_txt_info->append(info);
@@ -536,7 +529,7 @@ void MainWindow::GetCamStatus(const bool& status) {
         ui->cam_btn_search->setEnabled(true);
         ui->getCamBtn->setEnabled(true);
         camConnected = false;
-        GLogInfo("Camera feedback: disconnected.");
+        logInfo("Camera feedback: disconnected.");
     }
     else {
         ui->cam_btn_connect->setIcon(QIcon(":/res/icon/disconnect.svg"));
@@ -545,17 +538,17 @@ void MainWindow::GetCamStatus(const bool& status) {
         ui->cam_btn_search->setEnabled(false);
         ui->getCamBtn->setEnabled(false);
         camConnected = true;
-        GLogInfo("Camera feedback: connected.");
+        logInfo("Camera feedback: connected.");
     }
 }
 
 void MainWindow::GetCamData(const CamData& data, const QString& id) {
     if (isRunOnce) {
-        GLogInfo(QString("Camera feedback: RunOnce capture received, cloudId=%1").arg(id));
+        logInfo(QString("Camera feedback: RunOnce capture received, cloudId=%1").arg(id));
         proworker->setInputSceneData(data.cloud, data.color_Image, data.depth_Image);
         current_cloud_id = id;
         emit triggerVisionPro();
-        GLogInfo("Vision process triggered from camera capture.");
+        logInfo("Vision process triggered from camera capture.");
         isRunOnce = false;
     }
 
@@ -587,9 +580,8 @@ void MainWindow::GetCamData(const CamData& data, const QString& id) {
             if (calibImageCount == calib_off.size()) {
                 calibImageCount = 0;
                 isAutoCalib = false;
-                ui->console->print(ct::LOG_INFO, tr("Auto calibration flow completed."));
-                GLogInfo(tr("Auto calibration flow completed."));
-            }
+                logInfo(tr("Auto calibration flow completed."));
+}
         }
     }
     
@@ -597,23 +589,21 @@ void MainWindow::GetCamData(const CamData& data, const QString& id) {
 }
 
 void MainWindow::on_runOnceBtn_clicked() {
-    GLogInfo("Button clicked: RunOnce");
+    logInfo("Button clicked: RunOnce");
     isRunOnce = true;
     if (camConnected) {
-        GLogInfo("RunOnce: capturing from connected camera.");
+        logInfo("RunOnce: capturing from connected camera.");
         ui->cam_btn_capture->click();
     }
     else if (ui->cloudtree->getSelectedClouds().size() != 0) {
-        ui->console->print(ct::LOG_INFO, tr("Using selected cloud-tree data for vision test flow."));
-        GLogInfo(tr("Using selected cloud-tree data for vision test flow."));
+        logInfo(tr("Using selected cloud-tree data for vision test flow."));
         std::vector<ct::Cloud::Ptr> selectPcd = ui->cloudtree->getSelectedClouds();
         proworker->setInputSceneData(selectPcd[0], cv::Mat(), cv::Mat());
         emit triggerVisionPro();
     }
     else {
-        ui->console->print(ct::LOG_INFO, tr("Using local file data for vision test flow."));
-        GLogInfo(tr("Using local file data for vision test flow."));
-        QString pcd_path = QFileDialog::getOpenFileName(this, tr("Open pcd File"), "", tr("pcd File (*.ply);;�����ļ� (*)"));
+        logInfo(tr("Using local file data for vision test flow."));
+        QString pcd_path = QFileDialog::getOpenFileName(this, tr("Open pcd File"), "", tr("pcd File (*.ply);�����ļ� (*)"));
         ct::Cloud::Ptr cloud_in(new ct::Cloud);
         pcl::io::loadPLYFile(pcd_path.toStdString(), *cloud_in);
         proworker->setInputSceneData(cloud_in, cv::Mat(), cv::Mat());
@@ -623,40 +613,38 @@ void MainWindow::on_runOnceBtn_clicked() {
 }
 
 void MainWindow::on_runCycleBtn_clicked() {
-    GLogInfo("Button clicked: RunCycle (not implemented).");
-    GLogWarning("RunCycle is not implemented yet.");
+    logInfo("Button clicked: RunCycle (not implemented).");
+    logWarning("RunCycle is not implemented yet.");
 }
 
 void MainWindow::on_loadToolBtn_clicked() {
-    GLogInfo("Button clicked: LoadToolConfig");
-    QString filePath = QFileDialog::getOpenFileName( this,tr("Open Json File"), "./config/toolkit/", tr("Json File (*.Json );;�����ļ� (*)"));
+    logInfo("Button clicked: LoadToolConfig");
+    QString filePath = QFileDialog::getOpenFileName( this,tr("Open Json File"), "./config/toolkit/", tr("Json File (*.Json );�����ļ� (*)"));
     if (!filePath.isEmpty()) {
         ui->lineToolPath->setText(filePath);
     }
     else {
-        ui->console->print(ct::LOG_WARNING, tr("No valid JSON file selected."));
-        GLogWarning(tr("No valid JSON file selected."));
+        logWarning(tr("No valid JSON file selected."));
         return;
     }
-    GLogInfo(QString("Toolkit config selected: %1").arg(filePath));
+    logInfo(QString("Toolkit config selected: %1").arg(filePath));
     proworker->loadToolkitConfig(filePath.toStdString());
-    GLogInfo("Toolkit config load requested.");
+    logInfo("Toolkit config load requested.");
 }
 
 void MainWindow::on_loadVisionConfBtn_clicked() {
-    GLogInfo("Button clicked: LoadVisionConfig");
-    QString filePath = QFileDialog::getOpenFileName(this, tr("Open Json File"), "./config/visionConfig/", tr("Json File (*.Json );;�����ļ� (*)"));
+    logInfo("Button clicked: LoadVisionConfig");
+    QString filePath = QFileDialog::getOpenFileName(this, tr("Open Json File"), "./config/visionConfig/", tr("Json File (*.Json );�����ļ� (*)"));
     if (!filePath.isEmpty()) {
         ui->visionEdit->setText(filePath);
     }
     else {
-        ui->console->print(ct::LOG_WARNING, tr("No valid JSON file selected."));
-        GLogWarning(tr("No valid JSON file selected."));
+        logWarning(tr("No valid JSON file selected."));
         return;
     }
-    GLogInfo(QString("Vision config selected: %1").arg(filePath));
+    logInfo(QString("Vision config selected: %1").arg(filePath));
     proworker->loadVisionConfig(filePath.toStdString());
-    GLogInfo("Vision config load requested.");
+    logInfo("Vision config load requested.");
 }
 
 //void MainWindow::on_screwConnectBtn_clicked() {
@@ -676,28 +664,25 @@ void MainWindow::on_loadVisionConfBtn_clicked() {
 //}
 
 void MainWindow::on_loadAutoCalibBtn_clicked() {
-    GLogInfo("Button clicked: LoadAutoCalib");
-    QString filePath = QFileDialog::getOpenFileName(this, tr("Open Json File"), "./config/robot/", tr("Json File (*.Json );;�����ļ� (*)"));
+    logInfo("Button clicked: LoadAutoCalib");
+    QString filePath = QFileDialog::getOpenFileName(this, tr("Open Json File"), "./config/robot/", tr("Json File (*.Json );�����ļ� (*)"));
     if (!filePath.isEmpty()) {
         ui->autocalibFile->setText(filePath);
     }
     else {
-        ui->console->print(ct::LOG_WARNING, tr("No valid JSON file selected."));
-        GLogWarning(tr("No valid JSON file selected."));
+        logWarning(tr("No valid JSON file selected."));
         return;
     }
     std::ifstream file(filePath.toStdString());
     if (!file.is_open()) {
-        ui->console->print(ct::LOG_ERROR, tr("Failed to open robot auto-calibration JSON file."));
-        GLogError(tr("Failed to open robot auto-calibration JSON file."));
+        logError(tr("Failed to open robot auto-calibration JSON file."));
         return;
     }
     json config;
     file >> config;
     file.close();
     calib_off = config.get<std::vector<std::vector<float>>>();
-    ui->console->print(ct::LOG_INFO, QString("Loaded robot calibration offset poses, count=%1.").arg(calib_off.size()));
-    GLogInfo(QString("Loaded robot calibration offset poses, count=%1.").arg(calib_off.size()));
+    logInfo(QString("Loaded robot calibration offset poses, count=%1.").arg(calib_off.size()));
 }
 
 //void MainWindow::InitializeScrew() {
@@ -732,19 +717,18 @@ void MainWindow::on_loadAutoCalibBtn_clicked() {
 //        });
 //    m_thread_scwork.start();
 //
-//    ui->console->print(ct::LOG_INFO, tr("The ScrewMachine Initialized Done!"));
+//    logInfo(tr("The ScrewMachine Initialized Done!"));
 //}
 
 void MainWindow::InitializeRobot() {
-    GLogInfo(QString("InitializeRobot started, robotIndex=%1").arg(ui->robotComb->currentIndex()));
+    logInfo(QString("InitializeRobot started, robotIndex=%1").arg(ui->robotComb->currentIndex()));
 
     if (robot != nullptr) {
         robot->reset();
     }
     int robotIndex = ui->robotComb->currentIndex();
     if (robotIndex < 0) {
-        ui->console->print(ct::LOG_ERROR, tr("Please select a robot type first."));
-        GLogError(tr("Please select a robot type first."));
+        logError(tr("Please select a robot type first."));
         return;
     }
 
@@ -768,7 +752,7 @@ void MainWindow::InitializeRobot() {
     }
 
     if (robotType == RobotFactory::RobotType::UNKOWN) {
-        GLogError("InitializeRobot aborted: unknown robot type.");
+        logError("InitializeRobot aborted: unknown robot type.");
         return;
     }
     robot = RobotFactory::createRobot(robotType);
@@ -799,47 +783,43 @@ void MainWindow::InitializeRobot() {
             .arg(vec1Str)
             .arg(vec2Str);
 
-        ui->console->print(ct::LOG_INFO, htmlContent);
-        GLogInfo(htmlContent);
+        logInfo(htmlContent);
         this->robot.get()->startScrewSequence(t1, t2, t3);
         }, Qt::UniqueConnection);
     
     connect(ui->stopFlowBtn, &QPushButton::clicked, [this]() {
         if (ui->stopFlowBtn->text() == "start") {
-            GLogInfo("Button clicked: StopFlow -> robotStop");
+            logInfo("Button clicked: StopFlow -> robotStop");
             this->robot->robotStop();
             ui->stopFlowBtn->setIcon(QIcon(":/res/icon/stop_.svg"));
             ui->stopFlowBtn->setText("stop");
-            GLogInfo("Robot flow stopped.");
+            logInfo("Robot flow stopped.");
         }
         else if(ui->stopFlowBtn->text() == "stop"){
-            GLogInfo("Button clicked: StopFlow -> robotStart");
+            logInfo("Button clicked: StopFlow -> robotStart");
             this->robot->robotStart();
             ui->stopFlowBtn->setIcon(QIcon(":/res/icon/start_.svg"));
             ui->stopFlowBtn->setText("start");
-            GLogInfo("Robot flow started.");
+            logInfo("Robot flow started.");
         }
         });
 
     connect(this, &MainWindow::triggerCalibPro, this->robot.get(), &IRobot::RobotMoveJ);
     
     connect(this->robot.get(), &IRobot::capNextPose, this->camera.get(), &ICamera::captureDevice);
-    connect(this->robot.get(), &IRobot::statusError, [=](const QString& msq) {
-        ui->console->print(ct::LOG_ERROR, msq);
-        GLogError(msq);
-        }
-    );
+    connect(this->robot.get(), &IRobot::statusError, [this](const QString& msq) {
+        logError(msq);
+    });
 
     connect(ui->goCapBtn, &QPushButton::clicked, [this]() {
-        GLogInfo("Button clicked: GoCap");
+        logInfo("Button clicked: GoCap");
         if (!robotEnabled || !robotConnected) {
-            GLogWarning("GoCap ignored: robot not connected or not enabled.");
+            logWarning("GoCap ignored: robot not connected or not enabled.");
             return;
         }
         std::ifstream file("./robot_config.json");
         if (!file.is_open()) {
-            ui->console->print(ct::LOG_ERROR, tr("Failed to open robot_config.json."));
-            GLogError(tr("Failed to open robot_config.json."));
+            logError(tr("Failed to open robot_config.json."));
             return;
         }
         json config;
@@ -847,23 +827,22 @@ void MainWindow::InitializeRobot() {
         file.close();
         std::vector<float> capVector = config["Cap"].get<std::vector<float>>();
         if (capVector.size() != 6) {
-            GLogError("GoCap failed: Cap pose in robot_config.json must contain 6 values.");
+            logError("GoCap failed: Cap pose in robot_config.json must contain 6 values.");
             return;
         }
         this->robot->RobotMoveJ(capVector, false, 0);
-        GLogInfo("GoCap: RobotMoveJ to Cap pose requested.");
+        logInfo("GoCap: RobotMoveJ to Cap pose requested.");
         });
 
     connect(ui->goHomeBtn, &QPushButton::clicked, [this]() {
-        GLogInfo("Button clicked: GoHome");
+        logInfo("Button clicked: GoHome");
         if (!robotEnabled || !robotConnected) {
-            GLogWarning("GoHome ignored: robot not connected or not enabled.");
+            logWarning("GoHome ignored: robot not connected or not enabled.");
             return;
         }
         std::ifstream file("./robot_config.json");
         if (!file.is_open()) {
-            ui->console->print(ct::LOG_ERROR, tr("Failed to open robot_config.json."));
-            GLogError(tr("Failed to open robot_config.json."));
+            logError(tr("Failed to open robot_config.json."));
             return;
         }
         json config;
@@ -871,17 +850,17 @@ void MainWindow::InitializeRobot() {
         file.close();
         std::vector<float> homeVector = config["Home"].get<std::vector<float>>();
         if (homeVector.size() != 6) {
-            GLogError("GoHome failed: Home joints in robot_config.json must contain 6 values.");
+            logError("GoHome failed: Home joints in robot_config.json must contain 6 values.");
             return;
         }
         this->robot->RobotJointMove(homeVector, false);
-        GLogInfo("GoHome: RobotJointMove to Home joints requested.");
+        logInfo("GoHome: RobotJointMove to Home joints requested.");
         });
 
     connect(ui->setCapBtn, &QPushButton::clicked, [this]() {
-        GLogInfo("Button clicked: SetCap");
+        logInfo("Button clicked: SetCap");
         if (!robotEnabled || !robotConnected) {
-            GLogWarning("SetCap ignored: robot not connected or not enabled.");
+            logWarning("SetCap ignored: robot not connected or not enabled.");
             return;
         }
         json config;
@@ -892,8 +871,7 @@ void MainWindow::InitializeRobot() {
                 inFile >> config;
             }
             catch (json::parse_error& e) {
-                ui->console->print(ct::LOG_ERROR, tr("Failed to parse robot_config.json; file will be overwritten."));
-                GLogError(tr("Failed to parse robot_config.json; file will be overwritten."));
+                logError(tr("Failed to parse robot_config.json; file will be overwritten."));
                 config = json::object();
             }
             inFile.close();
@@ -902,20 +880,17 @@ void MainWindow::InitializeRobot() {
         config["Cap"] = { ui->robotX->value(), ui->robotY->value(), ui->robotZ->value(), ui->robotRx->value(), ui->robotRy->value(), ui->robotRz->value() };
         std::ofstream outFile("robot_config.json");
         if (!outFile.is_open()) {
-            ui->console->print(ct::LOG_ERROR, tr("Failed to open robot_config.json."));
-            GLogError(tr("Failed to open robot_config.json."));
+            logError(tr("Failed to open robot_config.json."));
             return;
         }
         outFile << std::setw(4) << config << std::endl;
         outFile.close();
-        ui->console->print(ct::LOG_INFO, tr("Cap position saved to robot_config.json."));
-        GLogInfo(tr("Cap position saved to robot_config.json."));
-        });
+        logInfo(tr("Cap position saved to robot_config.json.")); });
 
     connect(ui->setHomeBtn, &QPushButton::clicked, [this]() {
-        GLogInfo("Button clicked: SetHome");
+        logInfo("Button clicked: SetHome");
         if (!robotEnabled || !robotConnected) {
-            GLogWarning("SetHome ignored: robot not connected or not enabled.");
+            logWarning("SetHome ignored: robot not connected or not enabled.");
             return;
         }
         json config;
@@ -926,8 +901,7 @@ void MainWindow::InitializeRobot() {
                 inFile >> config;
             }
             catch (json::parse_error& e) {
-                ui->console->print(ct::LOG_ERROR, tr("Failed to parse robot_config.json; file will be overwritten."));
-                GLogError(tr("Failed to parse robot_config.json; file will be overwritten."));
+                logError(tr("Failed to parse robot_config.json; file will be overwritten."));
                 config = json::object();
             }
             inFile.close();
@@ -936,20 +910,16 @@ void MainWindow::InitializeRobot() {
         config["Home"] = { ui->j1->value(), ui->j2->value(), ui->j3->value(), ui->j4->value(), ui->j5->value(), ui->j6->value()};
         std::ofstream outFile("robot_config.json");
         if (!outFile.is_open()) {
-            ui->console->print(ct::LOG_ERROR, tr("Failed to open robot_config.json."));
-            GLogError(tr("Failed to open robot_config.json."));
+            logError(tr("Failed to open robot_config.json."));
             return;
         }
         outFile << std::setw(4) << config << std::endl;
         outFile.close();
-        ui->console->print(ct::LOG_INFO, tr("Home position saved to robot_config.json."));
-        GLogInfo(tr("Home position saved to robot_config.json."));
-        });
+        logInfo(tr("Home position saved to robot_config.json.")); });
 
     connect(this->robot.get(), &IRobot::sendRobotStatus, [this](const std::vector<float>& Joint, const std::vector<float>& Pose) {
         if (Joint.size() != 6 || Pose.size() != 6) {
-            ui->console->print(ct::LOG_ERROR, tr("Invalid robot status data received (expected 6 joints and 6 pose values)."));
-            GLogError(tr("Invalid robot status data received (expected 6 joints and 6 pose values)."));
+            logError(tr("Invalid robot status data received (expected 6 joints and 6 pose values)."));
             return;
         }
         ui->j1->setValue(Joint[0]); ui->j2->setValue(Joint[1]);
@@ -968,19 +938,17 @@ void MainWindow::InitializeRobot() {
             ui->robotEnableBtn->setIcon(QIcon(":/res/icon/enable.svg"));
         }
         this->robotEnabled = status;
-        GLogInfo(QString("Robot feedback: enabled=%1").arg(status ? "true" : "false"));
+        logInfo(QString("Robot feedback: enabled=%1").arg(status ? "true" : "false"));
         });
     connect(this->robot.get(), &IRobot::statusConnected, [this](bool status) {
         if (status) {
             ui->robotConBtn->setIcon(QIcon(":/res/icon/disconnect.svg"));
-            ui->console->print(ct::LOG_INFO, tr("Robot connected successfully."));
-            GLogInfo(tr("Robot connected successfully."));
-        }
+            logInfo(tr("Robot connected successfully."));
+}
         else {
             ui->robotConBtn->setIcon(QIcon(":/res/icon/connect.svg"));
-            ui->console->print(ct::LOG_INFO, tr("Robot disconnected successfully."));
-            GLogInfo(tr("Robot disconnected successfully."));
-        }
+            logInfo(tr("Robot disconnected successfully."));
+}
         this->robotConnected = status;
         });
 
@@ -989,41 +957,37 @@ void MainWindow::InitializeRobot() {
         rp.IpAddress = ui->RobotCommIp->text().toStdString();
         rp.iPortDashboard = ui->RobotCommPort->text().toShort();
         if (!robotConnected) {
-            GLogInfo(QString("Button clicked: RobotConnect ip=%1 port=%2")
+            logInfo(QString("Button clicked: RobotConnect ip=%1 port=%2")
                 .arg(ui->RobotCommIp->text())
                 .arg(ui->RobotCommPort->text()));
             this->robot->connectRobot(rp);
-            
         }
         else {
-            GLogInfo("Button clicked: RobotDisconnect");
+            logInfo("Button clicked: RobotDisconnect");
             if (robotEnabled) {
-                ui->console->print(ct::LOG_WARNING, tr("Please disable the robot before disconnecting."));
-                GLogWarning(tr("Please disable the robot before disconnecting."));
+                logWarning(tr("Please disable the robot before disconnecting."));
                 return;
             }
             this->robot->DisconnectRobot();
             
         }
         });
-    connect(ui->robotEnableBtn, &QPushButton::clicked, [this]() { 
-        GLogInfo(QString("Button clicked: RobotEnable targetEnabled=%1").arg(!robotEnabled));
+    connect(ui->robotEnableBtn, &QPushButton::clicked, [this]() {
+        logInfo(QString("Button clicked: RobotEnable targetEnabled=%1").arg(!robotEnabled));
         if (!robotConnected) {
-            GLogWarning("RobotEnable ignored: robot is not connected.");
+            logWarning("RobotEnable ignored: robot is not connected.");
             return;
         }
         this->robot->EnableRobot(!robotEnabled);
-        ui->console->print(ct::LOG_INFO, !robotEnabled ? tr("Robot enabled successfully.") : tr("Robot disabled successfully."));
-        GLogInfo(!robotEnabled ? tr("Robot enabled successfully.") : tr("Robot disabled successfully."));
-        });
-    connect(ui->robotSpeedBtn, &QPushButton::clicked, [this]() { 
-        GLogInfo(QString("Button clicked: RobotSpeed value=%1").arg(ui->speedSpin->value()));
+        logInfo(!robotEnabled ? tr("Robot enabled successfully.") : tr("Robot disabled successfully.")); });
+    connect(ui->robotSpeedBtn, &QPushButton::clicked, [this]() {
+        logInfo(QString("Button clicked: RobotSpeed value=%1").arg(ui->speedSpin->value()));
         if (!robotEnabled || !robotConnected) {
-            GLogWarning("RobotSpeed ignored: robot not connected or not enabled.");
+            logWarning("RobotSpeed ignored: robot not connected or not enabled.");
             return;
         }
         this->robot->setParams(ui->speedSpin->value());
-        GLogInfo("Robot speed parameter updated.");
+        logInfo("Robot speed parameter updated.");
         });
 
     connect(ui->jointCheckBtn, &QRadioButton::toggled, this, [this](bool checked) {
@@ -1039,7 +1003,7 @@ void MainWindow::InitializeRobot() {
         });
 
     connect(ui->recordRobotBtn, &QPushButton::clicked, this, [this]() {
-        GLogInfo(QString("Button clicked: RecordRobot mode=%1").arg(m_isJointMode ? "joint" : "pose"));
+        logInfo(QString("Button clicked: RecordRobot mode=%1").arg(m_isJointMode ? "joint" : "pose"));
         // ���ݵ�ǰģʽȷ���ļ�����������
         const std::string fileName = m_isJointMode ? "./config/robot/calib_joint.json" : "./config/robot/calib_pose.json";
         int& index = m_isJointMode ? m_jointIndex : m_poseIndex;
@@ -1092,7 +1056,7 @@ void MainWindow::InitializeRobot() {
             QMessageBox::Yes | QMessageBox::No,
             QMessageBox::No); // Ĭ�ϰ�ť
         if (reply != QMessageBox::Yes) {
-            GLogInfo("RecordRobot cancelled by user.");
+            logInfo("RecordRobot cancelled by user.");
             return;
         }
 
@@ -1105,17 +1069,17 @@ void MainWindow::InitializeRobot() {
         if (fout.is_open()) {
             fout << root.dump(4);
             fout.close();
-            GLogInfo(QString("RecordRobot success: wrote entry index=%1 to %2")
+            logInfo(QString("RecordRobot success: wrote entry index=%1 to %2")
                 .arg(index)
                 .arg(QString::fromStdString(fileName)));
         } else {
-            GLogError(QString("RecordRobot failed: cannot open file %1")
+            logError(QString("RecordRobot failed: cannot open file %1")
                 .arg(QString::fromStdString(fileName)));
         }
         });
 
     connect(ui->clearRecordBtn, &QPushButton::clicked, this, [this]() {
-        GLogInfo(QString("Button clicked: ClearRecord mode=%1").arg(m_isJointMode ? "joint" : "pose"));
+        logInfo(QString("Button clicked: ClearRecord mode=%1").arg(m_isJointMode ? "joint" : "pose"));
         const std::string fileName = m_isJointMode ? "./config/robot/calib_joint.json" : "./config/robot/calib_pose.json";
         int& index = m_isJointMode ? m_jointIndex : m_poseIndex;
 
@@ -1126,7 +1090,7 @@ void MainWindow::InitializeRobot() {
             QMessageBox::Yes | QMessageBox::No,
             QMessageBox::No); // Ĭ�ϰ�ť
         if (reply != QMessageBox::Yes) {
-            GLogInfo("ClearRecord cancelled by user.");
+            logInfo("ClearRecord cancelled by user.");
             return;
         }
 
@@ -1135,10 +1099,10 @@ void MainWindow::InitializeRobot() {
         if (fout.is_open()) {
             fout << nlohmann::json::object().dump(4);
             fout.close();
-            GLogInfo(QString("ClearRecord success: cleared %1")
+            logInfo(QString("ClearRecord success: cleared %1")
                 .arg(QString::fromStdString(fileName)));
         } else {
-            GLogError(QString("ClearRecord failed: cannot open file %1")
+            logError(QString("ClearRecord failed: cannot open file %1")
                 .arg(QString::fromStdString(fileName)));
         }
 
@@ -1147,15 +1111,13 @@ void MainWindow::InitializeRobot() {
 
     m_thread_rfwork->start();
 
-    ui->console->print(ct::LOG_INFO, tr("Robot initialized successfully."));
-    GLogInfo(tr("Robot initialized successfully."));
+    logInfo(tr("Robot initialized successfully."));
 }
 
 void MainWindow::recOffMatrix(const std::vector<Eigen::Affine3f>& before, 
     const std::vector<Eigen::Affine3f>& after, const Eigen::Affine3f& sceneTrans) {
     if (before.size() != after.size()) {
-        ui->console->print(ct::LOG_ERROR, tr("Pose output size mismatch between before and after transforms."));
-        GLogError(tr("Pose output size mismatch between before and after transforms."));
+        logError(tr("Pose output size mismatch between before and after transforms."));
         return;
     }
     
@@ -1167,8 +1129,7 @@ void MainWindow::recOffMatrix(const std::vector<Eigen::Affine3f>& before,
     }
     else {
         if (current_cloud_id == "") {
-            ui->console->print(ct::LOG_ERROR, tr("Current cloud ID is empty; cannot update scene pose."));
-            GLogError(tr("Current cloud ID is empty; cannot update scene pose."));
+            logError(tr("Current cloud ID is empty; cannot update scene pose."));
             return;
         }
     }
@@ -1191,12 +1152,12 @@ void MainWindow::recOffMatrix(const std::vector<Eigen::Affine3f>& before,
         ui->cloudview->addText3D(QString::number(i), txtPos, "text" + QString::number(i));
     }
     current_cloud_id = "";
-    GLogInfo(QString("Vision feedback: rendered %1 coordinate frame pair(s).").arg(static_cast<int>(before.size())));
+    logInfo(QString("Vision feedback: rendered %1 coordinate frame pair(s).").arg(static_cast<int>(before.size())));
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
-    GLogInfo("Close requested: Exit confirmation dialog shown.");
+    logInfo("Close requested: Exit confirmation dialog shown.");
     QMessageBox::StandardButton reply;
     reply = QMessageBox::question(this,
         tr("Exit"),
@@ -1204,11 +1165,11 @@ void MainWindow::closeEvent(QCloseEvent* event)
         QMessageBox::Yes | QMessageBox::No,
         QMessageBox::No);
     if (reply == QMessageBox::Yes) {
-        GLogInfo("Exit confirmed; closing application.");
+        logInfo("Exit confirmed; closing application.");
         event->accept();
     }
     else {
-        GLogInfo("Exit cancelled by user.");
+        logInfo("Exit cancelled by user.");
         event->ignore();
     }
 }
@@ -1247,7 +1208,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
 //
 //        if (ip.isEmpty() || portStr.isEmpty())
 //        {
-//            ui->console->print(ct::LOG_WARNING, "Invalid input: IP address and port are required.");
+//            logWarning("Invalid input: IP address and port are required.");
 //            return;
 //        }
 //
@@ -1285,7 +1246,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
 //                    });
 //
 //                connect(m_worker_comm, &SocketWorker::errorOccurred, this, [=](const QString& msg) {
-//                    ui->console->print(ct::LOG_ERROR, msg);
+//                    logError(msg);
 //                    });
 //
 //                connect(m_worker_comm, &SocketWorker::disconnected, this, [=]() {
@@ -1363,12 +1324,12 @@ void MainWindow::closeEvent(QCloseEvent* event)
 //        }
 //        });
 //
-//    ui->console->print(ct::LOG_INFO, "Socket communication is ready.");
+//    logInfo("Socket communication is ready.");
 //}
 
 void MainWindow::InitializeComm()
 {
-    GLogInfo("InitializeComm started; rewiring communication UI handlers.");
+    logInfo("InitializeComm started; rewiring communication UI handlers.");
     // ���� Re-init: disconnect previous UI hooks + tear down active session ������
     disconnect(ui->connectBtn, &QPushButton::clicked, this, nullptr);
     disconnect(ui->commSendBtn, &QPushButton::clicked, this, nullptr);
@@ -1415,12 +1376,12 @@ void MainWindow::InitializeComm()
     connect(ui->connectBtn, &QPushButton::clicked, this, [=]() {
         if (m_comm_connected)
         {
-            GLogInfo("Button clicked: CommDisconnect");
+            logInfo("Button clicked: CommDisconnect");
             cleanupComm();
-            GLogInfo("Communication session disconnected.");
+            logInfo("Communication session disconnected.");
             return;
         }
-        GLogInfo(QString("Button clicked: CommConnect mode=%1 ip=%2 port=%3")
+        logInfo(QString("Button clicked: CommConnect mode=%1 ip=%2 port=%3")
             .arg(ui->scoketComb->currentText().trimmed())
             .arg(ui->ipaddressEdit->text().trimmed())
             .arg(ui->commPortEdit->text().trimmed()));
@@ -1436,15 +1397,13 @@ void MainWindow::InitializeComm()
 
         if (portStr.isEmpty())
         {
-            ui->console->print(ct::LOG_WARNING, "Invalid input: port is required.");
-            GLogWarning("Invalid input: port is required.");
+            logWarning("Invalid input: port is required.");
             return;
         }
 
         if (!isTcpServer && ip.isEmpty())
         {
-            ui->console->print(ct::LOG_WARNING, "Invalid input: IP address and port are required.");
-            GLogWarning("Invalid input: IP address and port are required.");
+            logWarning("Invalid input: IP address and port are required.");
             return;
         }
 
@@ -1515,19 +1474,13 @@ void MainWindow::InitializeComm()
             });
 
             connect(m_worker_comm, &SocketWorker::errorOccurred, this, [=](const QString& msg) {
-                ui->console->print(ct::LOG_ERROR, msg);
-                GLogError(msg);
-            });
+                logError(msg); });
 
             connect(m_worker_comm, &SocketWorker::statusMessage, this, [=](const QString& msg) {
-                ui->console->print(ct::LOG_INFO, msg);
-                GLogInfo(msg);
-            });
+                logInfo(msg); });
 
             connect(m_worker_comm, &SocketWorker::clientAccepted, this, [=](const QString& peer) {
-                const QString msg = QStringLiteral("TCP server accepted client: %1").arg(peer);
-                ui->console->print(ct::LOG_INFO, msg);
-                GLogInfo(msg);
+                logInfo(QStringLiteral("TCP server accepted client: %1").arg(peer));
             });
 
             connect(m_worker_comm, &SocketWorker::disconnected, this, [=]() {
@@ -1558,9 +1511,8 @@ void MainWindow::InitializeComm()
                 isUdp ? "UDP connected."
                 : (isTcpServer ? "TCP Server listening."
                     : "TCP Client connected.");
-            ui->console->print(ct::LOG_INFO, readyMsg);
-            GLogInfo(readyMsg);
-        }
+            logInfo(readyMsg);
+}
         catch (const std::exception& e)
         {
             if (m_worker_comm)
@@ -1574,39 +1526,38 @@ void MainWindow::InitializeComm()
                 delete m_thread_comm;
                 m_thread_comm = nullptr;
             }
-            GLogError(QString("Communication connection failed: %1").arg(QString::fromStdString(e.what())));
+            logError(QString("Communication connection failed: %1").arg(QString::fromStdString(e.what())));
             QMessageBox::critical(this, "Connection Failed", QString::fromStdString(e.what()));
         }
         });
 
     auto sendCurrent = [this]() {
         if (!m_comm_connected || !m_worker_comm) {
-            GLogWarning("CommSend ignored: communication is not connected.");
+            logWarning("CommSend ignored: communication is not connected.");
             return;
         }
 
         const QString msg = ui->sendEdit->text();
         if (msg.isEmpty()) {
-            GLogWarning("CommSend ignored: message is empty.");
+            logWarning("CommSend ignored: message is empty.");
             return;
         }
 
-        GLogInfo(QString("Button clicked: CommSend, bytes=%1").arg(msg.toUtf8().size()));
+        logInfo(QString("Button clicked: CommSend, bytes=%1").arg(msg.toUtf8().size()));
         m_worker_comm->sendMsg(msg);
-        GLogInfo("CommSend: message dispatched.");
+        logInfo("CommSend: message dispatched.");
     };
 
     connect(ui->commSendBtn, &QPushButton::clicked, this, [=]() { sendCurrent(); });
     connect(ui->sendEdit, &QLineEdit::returnPressed, this, [=]() { sendCurrent(); });
 
-    ui->console->print(ct::LOG_INFO, "Socket communication is ready.");
-    GLogInfo("Socket communication is ready.");
+    logInfo("Socket communication is ready.");
 }
 
 void MainWindow::setConnected(bool connected)
 {
     m_comm_connected = connected;
-    GLogInfo(QString("Communication feedback: connected=%1").arg(connected ? "true" : "false"));
+    logInfo(QString("Communication feedback: connected=%1").arg(connected ? "true" : "false"));
 
     ui->connectBtn->setText(connected ? "Disconnect" : "Connect");
     ui->connectBtn->setProperty("connected", connected);
@@ -1627,7 +1578,7 @@ void MainWindow::setConnected(bool connected)
 //
 //    int gripperIndex = ui->gripperComb->currentIndex();
 //    if (gripperIndex < 0) {
-//        ui->console->print(ct::LOG_ERROR, tr("Please ensure the gripper type frist!"));
+//        logError(tr("Please ensure the gripper type frist!"));
 //        return;
 //    }
 //
@@ -1699,5 +1650,5 @@ void MainWindow::setConnected(bool connected)
 //        });
 //    m_thread_gripperwork.start();
 //
-//    ui->console->print(ct::LOG_INFO, tr("The Gripper Initialized Done!"));
+//    logInfo(tr("The Gripper Initialized Done!"));
 //}
