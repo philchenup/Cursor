@@ -18,18 +18,17 @@
 ```cpp
 #include "readmodel.h"
 
-Handle(AIS_ColoredShape) loadShape;  // 原 AIS_Shape*
+AIS_Shape* loadShape = nullptr;                 // 保持你原来的类型
+Handle(AIS_ColoredShape) loadShapeHandle;       // 推荐：保住引用计数
 const Quantity_Color tint(0.72, 0.74, 0.78, Quantity_TOC_RGB);
 
 if (suffix == "stl") {
-  TopoDS_Shape scene_shape =
-      ReadModel::readStlModel(filename.toStdString().c_str());
-  loadShape = ReadModel::makeDisplayShape(scene_shape, tint);
+  loadShapeHandle = ReadModel::makeDisplayShape(
+      ReadModel::readStlModel(filename.toStdString().c_str()), tint);
 }
 else if (suffix == "step" || suffix == "stp") {
-  auto colored =
-      ReadModel::readStepModelWithColors(filename.toStdString().c_str());
-  loadShape = ReadModel::makeDisplayShape(colored, tint);
+  loadShapeHandle = ReadModel::makeDisplayShape(
+      ReadModel::readStepModelWithColors(filename.toStdString().c_str()), tint);
 }
 else {
   ui->console->print(ct::LOG_INFO,
@@ -37,8 +36,11 @@ else {
   return;
 }
 
-context->Display(loadShape, Standard_False);
-context->SetDisplayMode(loadShape, AIS_Shaded, Standard_False);
+// Handle(AIS_ColoredShape) -> AIS_Shape*（子类指针隐式转基类）
+loadShape = loadShapeHandle.get();
+
+context->Display(loadShapeHandle, Standard_False);
+context->SetDisplayMode(loadShapeHandle, AIS_Shaded, Standard_False);
 context->UpdateCurrentViewer();
 ```
 
