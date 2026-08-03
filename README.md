@@ -1,24 +1,24 @@
-# AIS_Shape 加载时渲染颜色
+# 在原有 ReadModel 上支持颜色渲染
 
-`AIS_Shape(scene_shape)` **不会**自动带上 STEP 颜色：`STEPControl_Reader` / `TopoDS_Shape` 只含几何。颜色在 XCAF 文档里，需要 `STEPCAFControl_Reader` + `AIS_ColoredShape`。
+基于你现有的 `readmodel.h` / `readmodel.cpp` 修改：保留 `readStlModel`、`readStepModel`、`writeStepModel`、`writeStlModel`，并新增 STEP 颜色读取与 `AIS_ColoredShape` 显示。
 
-## 原因
+## 原有接口（保持不变）
 
-| 方式 | 结果 |
-|------|------|
-| `readStepModel` → `new AIS_Shape(shape)` | 只有几何，默认灰/材质色 |
-| `readStepModelWithColors` → `AIS_ColoredShape` + XCAF 颜色 | 可渲染 STEP 面/实体色 |
-| STL | 文件本身无 CAD 颜色，只能设单一显示色 |
+- `readStlModel` — 仍用 `RWStl::ReadFile` 建 Face
+- `readStepModel` — 仍用 `STEPControl_Reader`（仅几何）
+- `writeStepModel` / `writeStlModel` — 逻辑未改
 
-## 把原来的导入代码换成
+## 新增
+
+- `readStepModelWithColors` — `STEPCAFControl_Reader` + XCAF，保留颜色
+- `makeDisplayShape` — 生成带颜色的 `AIS_ColoredShape`
+
+## 导入处改法
 
 ```cpp
-#include "ReadModel.h"
-#include <AIS_ColoredShape.hxx>
+#include "readmodel.h"
 
-// 建议成员改为：
-// Handle(AIS_ColoredShape) loadShape;
-
+Handle(AIS_ColoredShape) loadShape;  // 原 AIS_Shape*
 const Quantity_Color tint(0.72, 0.74, 0.78, Quantity_TOC_RGB);
 
 if (suffix == "stl") {
@@ -42,30 +42,8 @@ context->SetDisplayMode(loadShape, AIS_Shaded, Standard_False);
 context->UpdateCurrentViewer();
 ```
 
-完整示例见 `examples/load_with_color.cpp`。
+完整示例：`examples/load_with_color.cpp`。
 
-## 若暂时必须保留 `AIS_Shape*`（仅单色）
+## 链接库
 
-```cpp
-loadShape = new AIS_Shape(scene_shape);
-loadShape->SetColor(Quantity_Color(0.72, 0.74, 0.78, Quantity_TOC_RGB));
-loadShape->SetDisplayMode(AIS_Shaded);
-loadShape->Attributes()->SetFaceBoundaryDraw(Standard_True);
-```
-
-这只能设**一种**颜色，无法显示 STEP 多色。
-
-## CMake 需链接的 OCCT 库
-
-```
-TKXCAF TKXDESTEP TKCAF TKLCAF TKV3d TKSTEP TKSTL ...
-```
-
-见根目录 `CMakeLists.txt`。
-
-## API
-
-- `ReadModel::readStlModel` — STL 几何  
-- `ReadModel::readStepModel` — STEP 几何（无色）  
-- `ReadModel::readStepModelWithColors` — STEP + XCAF 颜色文档  
-- `ReadModel::makeDisplayShape` — 生成可着色的 `AIS_ColoredShape`
+需额外链接 `TKXCAF`、`TKXDESTEP`（见 `CMakeLists.txt`）。

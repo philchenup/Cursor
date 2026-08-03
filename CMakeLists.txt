@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(OpenCASCADE REQUIRED)
 
 add_library(read_model
-  src/ReadModel.cpp
+  src/readmodel.cpp
 )
 target_include_directories(read_model PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -19,5 +19,4 @@ target_link_libraries(read_model PUBLIC
   TKV3d TKService TKXCAF TKLCAF TKXDESTEP TKCAF
 )
 
-# examples/load_with_color.cpp is a usage sketch (depends on Qt types);
-# integrate its importModelExample body into your MainWindow import slot.
+# examples/load_with_color.cpp 是调用示例，集成到你的导入槽函数即可。
