@@ -1,38 +1,33 @@
 # glog + Console Operation Logging (MainWindow)
 
-`src/mainwindow.cpp` records software operation logs with **glog** and mirrors every entry to the UI console via `ui->console->print` at the matching severity.
+Complete sources (with `GlobalDefs.h` preserved):
+
+- `src/mainwindow.h` / `src/mainwindow.cpp`
+- mirrors: `src/MainWindow.h` / `src/MainWindow.cpp`
 
 ## Dual-write helpers
 
+Every operation log goes through:
+
 ```cpp
-void MainWindow::logInfo(const QString& msg);     // LOG_INFO  + LOG(INFO)
-void MainWindow::logWarning(const QString& msg);  // LOG_WARNING + LOG(WARNING)
-void MainWindow::logError(const QString& msg);    // LOG_ERROR + LOG(ERROR)
+void MainWindow::logInfo(const QString& msg);     // ui->console->print(LOG_INFO)  + LOG(INFO)
+void MainWindow::logWarning(const QString& msg);  // ui->console->print(LOG_WARNING) + LOG(WARNING)
+void MainWindow::logError(const QString& msg);    // ui->console->print(LOG_ERROR) + LOG(ERROR)
 ```
 
-All button/action triggers and feedback results go through these helpers so file logs and on-screen console stay in sync.
+## Covered
 
-## Covered events
-
-- Menu / toolbar actions (Open, Save, Edit, View, Tools, Theme, Language, …)
-- Camera / robot / communication buttons and status feedback
-- RunOnce / config load / auto-calib / record-clear
+- Menu / toolbar / button triggers (`Action triggered` / `Button clicked`)
+- Camera / laser / robot / trajectory / weld feedback
 - Normalized error and warning messages
 
-## Initialization (required in `main`)
+## Setup in `main`
 
 ```cpp
 #include <glog/logging.h>
-
-int main(int argc, char* argv[])
-{
-    google::InitGoogleLogging(argv[0]);
-    FLAGS_log_dir = "./logs";
-    // ...
-}
+google::InitGoogleLogging(argv[0]);
+FLAGS_log_dir = "./logs";
 ```
-
-Link against glog, for example:
 
 ```cmake
 find_package(glog REQUIRED)
