@@ -534,7 +534,7 @@ void MainWindow::on_InitializeCamera_clicked() {
 		}, Qt::QueuedConnection);
 
 	disconnect(ui->cam_btn_add, &QPushButton::clicked, nullptr, nullptr);
-	connect(ui->cam_btn_add, &QPushButton::clicked, [this]() {
+	connect(ui->cam_btn_add, &QPushButton::clicked, this, [this]() {
 		logInfo("Button clicked: Camera Add");
 		if (this->camera) this->camera->add();
 	}, Qt::QueuedConnection);
@@ -602,7 +602,7 @@ void MainWindow::on_InitializeLaser_clicked() {
 	// connect(m_thread_laserwork, &QThread::finished, this->laser.get(), &QObject::deleteLater);
 
 	disconnect(ui->laserSearchBtn, &QPushButton::clicked, nullptr, nullptr);
-	connect(ui->laserSearchBtn, &QPushButton::clicked, [this]() {
+	connect(ui->laserSearchBtn, &QPushButton::clicked, this, [this]() {
 		logInfo("Button clicked: Laser Search");
 		if (this->laser) this->laser->searchDevice();
 	}, Qt::QueuedConnection);
