@@ -1,0 +1,22 @@
+# Build
+/build/
+/cmake-build-*/
+*.o
+*.a
+*.so
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+compile_commands.json
+
+# IDE / OS
+.idea/
+.vscode/
+*.user
+.DS_Store
+
+# Data / outputs
+*.pcd
+*.ply
+!data/
