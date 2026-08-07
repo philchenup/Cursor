@@ -15,6 +15,7 @@ PCL (>= 1.12) C++ port of Open3D's `geometry::PointCloud::HiddenPointRemoval`
 
 - C++14
 - PCL **1.12+** built with **Qhull** (`pcl::ConvexHull`)
+- **Qhull** link library (`qhull_r` / `qhullstatic_r`) — required at link time
 - Components: `common`, `surface`, `io` (io only for the example)
 
 ## Build
@@ -23,6 +24,47 @@ PCL (>= 1.12) C++ port of Open3D's `geometry::PointCloud::HiddenPointRemoval`
 cmake -S . -B build
 cmake --build build -j
 ```
+
+## Windows / MSVC: `LNK2001 qh_*`
+
+If Visual Studio reports unresolved externals such as:
+
+```text
+error LNK2001: unresolved external symbol qh_new_qhull
+error LNK2001: unresolved external symbol qh_freeqhull
+error LNK2001: unresolved external symbol qh_lib_check
+...
+```
+
+`pcl::ConvexHull` only *declares* these Qhull APIs; your final executable/DLL must **link the Qhull library**.
+
+### Fix (Visual Studio project, e.g. MakeTool)
+
+1. Install Qhull (same flavor your PCL was built against), e.g. via vcpkg:
+   ```text
+   vcpkg install qhull:x64-windows
+   ```
+2. Project Properties → **Linker** → **General** → **Additional Library Directories**  
+   add the folder that contains `qhull_r.lib` or `qhullstatic_r.lib`
+   (often `...\vcpkg\installed\x64-windows\lib` or your PCL `lib` dir).
+3. Project Properties → **Linker** → **Input** → **Additional Dependencies**  
+   add one of:
+   - `qhull_r.lib` (shared / import lib; common with dynamic PCL)
+   - `qhullstatic_r.lib` (static; try this if `qhull_r.lib` still fails)
+4. Also keep linking PCL surface deps, e.g. `pcl_surface.lib`, `pcl_common.lib`, …
+5. Prefer CMake/`find_package(PCL)` so Qhull is pulled transitively:
+   ```cmake
+   find_package(PCL 1.12 REQUIRED COMPONENTS common surface)
+   target_link_libraries(MakeTool PRIVATE ${PCL_LIBRARIES})
+   # if still missing qh_*:
+   target_link_libraries(MakeTool PRIVATE QHULL::QHULL) # or qhull_r.lib
+   ```
+
+### Notes
+
+- Symbol names `qh_*` come from **Qhull**, not from this header itself.
+- Match **x64/x86** and **Debug/Release** of Qhull to your MakeTool configuration.
+- If PCL was built against static Qhull, prefer `qhullstatic_r.lib`.
 
 ## Usage
 
