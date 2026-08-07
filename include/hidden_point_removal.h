@@ -1,5 +1,9 @@
 #pragma once
 
+// Requires linking Qhull at the final binary (MSVC LNK2001 on qh_* if missing):
+//   qhull_r.lib  or  qhullstatic_r.lib
+// pcl::ConvexHull only references these symbols; they are defined in Qhull.
+
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/PolygonMesh.h>
