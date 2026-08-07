@@ -48,23 +48,32 @@ error LNK2001: unresolved external symbol qh_lib_check
    add the folder that contains `qhull_r.lib` or `qhullstatic_r.lib`
    (often `...\vcpkg\installed\x64-windows\lib` or your PCL `lib` dir).
 3. Project Properties → **Linker** → **Input** → **Additional Dependencies**  
-   add one of:
-   - `qhull_r.lib` (shared / import lib; common with dynamic PCL)
-   - `qhullstatic_r.lib` (static; try this if `qhull_r.lib` still fails)
-4. Also keep linking PCL surface deps, e.g. `pcl_surface.lib`, `pcl_common.lib`, …
-5. Prefer CMake/`find_package(PCL)` so Qhull is pulled transitively:
+   add **exactly one** Qhull library (PCL uses the **reentrant** `_r` build):
+   - `qhullstatic_r.lib` (static, recommended with many PCL Windows builds)
+   - or `qhull_r.lib` (shared / import lib)
+4. **Do not** also link the non-reentrant libs:
+   - ~~`qhullstatic.lib`~~
+   - ~~`qhull.lib`~~  
+   Linking both `qhullstatic.lib` and `qhullstatic_r.lib` causes:
+   ```text
+   LNK2005: qh_version already defined in qhullstatic.lib
+   LNK2005: qh_version2 already defined in qhullstatic.lib
+   ```
+   Fix: remove `qhullstatic.lib` / `qhull.lib`, keep only `qhullstatic_r.lib` (or only `qhull_r.lib`).
+5. Also keep linking PCL surface deps, e.g. `pcl_surface.lib`, `pcl_common.lib`, …
+6. Prefer CMake/`find_package(PCL)` so Qhull is pulled transitively:
    ```cmake
    find_package(PCL 1.12 REQUIRED COMPONENTS common surface)
    target_link_libraries(MakeTool PRIVATE ${PCL_LIBRARIES})
-   # if still missing qh_*:
-   target_link_libraries(MakeTool PRIVATE QHULL::QHULL) # or qhull_r.lib
+   # if still missing qh_*: link ONLY the reentrant lib
+   target_link_libraries(MakeTool PRIVATE qhullstatic_r)  # or QHULL::QHULL
    ```
 
 ### Notes
 
 - Symbol names `qh_*` come from **Qhull**, not from this header itself.
 - Match **x64/x86** and **Debug/Release** of Qhull to your MakeTool configuration.
-- If PCL was built against static Qhull, prefer `qhullstatic_r.lib`.
+- PCL’s `ConvexHull` expects the **reentrant** package (`*_r`). Never mix `qhullstatic` + `qhullstatic_r`.
 
 ## Usage
 
