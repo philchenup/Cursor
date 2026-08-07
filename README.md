@@ -75,6 +75,20 @@ error LNK2001: unresolved external symbol qh_lib_check
 - Match **x64/x86** and **Debug/Release** of Qhull to your MakeTool configuration.
 - PCL’s `ConvexHull` expects the **reentrant** package (`*_r`). Never mix `qhullstatic` + `qhullstatic_r`.
 
+### Runtime crash at `hull.reconstruct(...)`
+
+Those lines only create outputs; the crash is inside Qhull (`qh_new_qhull`):
+
+| Cause | What to check |
+| --- | --- |
+| Wrong Qhull linked | Only `qhullstatic_r` / `qhull_r` (same CRT/config as PCL) |
+| NaN / Inf in cloud | Remove invalid points before HPR |
+| `radius` too large | Projection overflows `float` → use `~100 * diameter` |
+| Too few points | Need ≥ 3 valid points (+ origin → ≥ 4 for 3D hull) |
+| Degenerate cloud | All coincident / near-camera points skipped |
+
+This header now validates finite coords, projection range, and empty hull results, and throws `std::runtime_error` instead of continuing on failure when Qhull returns empty.
+
 ## Usage
 
 ```cpp

@@ -1,8 +1,10 @@
 #pragma once
 
 // Requires linking Qhull at the final binary (MSVC LNK2001 on qh_* if missing):
-//   qhull_r.lib  or  qhullstatic_r.lib
+//   qhull_r.lib  or  qhullstatic_r.lib   (ONLY the reentrant *_r lib)
 // pcl::ConvexHull only references these symbols; they are defined in Qhull.
+// Mixing qhullstatic.lib + qhullstatic_r.lib causes LNK2005 and can crash at runtime
+// inside hull.reconstruct() / qh_new_qhull().
 
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -12,6 +14,8 @@
 
 #include <Eigen/Core>
 
+#include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -57,6 +61,20 @@ inline PointT fromVector3d(const Eigen::Vector3d& v) {
   return p;
 }
 
+inline bool isFiniteVec3(const Eigen::Vector3d& v) {
+  return std::isfinite(v.x()) && std::isfinite(v.y()) && std::isfinite(v.z());
+}
+
+/// PointT is usually float; Qhull crashes/aborts on NaN/Inf projected coords.
+template <typename PointT>
+inline bool fitsPointT(const Eigen::Vector3d& v) {
+  using Scalar = decltype(std::declval<PointT>().x);
+  const double lo = static_cast<double>(std::numeric_limits<Scalar>::lowest());
+  const double hi = static_cast<double>(std::numeric_limits<Scalar>::max());
+  return isFiniteVec3(v) && v.x() >= lo && v.x() <= hi && v.y() >= lo &&
+         v.y() <= hi && v.z() >= lo && v.z() <= hi;
+}
+
 }  // namespace detail
 
 /// Open3D-compatible Hidden Point Removal for PCL (>= 1.12).
@@ -70,9 +88,16 @@ inline PointT fromVector3d(const Eigen::Vector3d& v) {
 /// \param cloud Input point cloud (XYZ fields required).
 /// \param camera_location Viewpoint; points not visible from here are removed.
 /// \param radius Spherical projection radius; must be > 0 (Open3D constraint).
+///        Typical choice: ~100 * scene diameter. Too large with float PointT
+///        overflows projection coords and makes Qhull crash inside reconstruct().
 /// \return Visible mesh + original-cloud indices of visible points.
 ///
 /// Requires PCL built with Qhull support (`pcl::ConvexHull`).
+///
+/// Why `hull.reconstruct(...)` may "crash":
+/// - It calls Qhull (`qh_new_qhull`). Bad geometry / NaN / Inf often abort there.
+/// - Wrong Qhull link (non-`_r` lib, or mixed static libs) → access violation.
+/// - Fewer than 4 valid projected points for a 3D hull.
 template <typename PointT>
 HiddenPointRemovalResult HiddenPointRemoval(
     const typename pcl::PointCloud<PointT>::ConstPtr& cloud,
@@ -81,9 +106,13 @@ HiddenPointRemovalResult HiddenPointRemoval(
   if (!cloud) {
     throw std::invalid_argument("HiddenPointRemoval: cloud is null.");
   }
-  if (radius <= 0.0) {
+  if (radius <= 0.0 || !std::isfinite(radius)) {
     throw std::invalid_argument(
-        "HiddenPointRemoval: radius must be larger than zero.");
+        "HiddenPointRemoval: radius must be finite and larger than zero.");
+  }
+  if (!detail::isFiniteVec3(camera_location)) {
+    throw std::invalid_argument(
+        "HiddenPointRemoval: camera_location contains NaN/Inf.");
   }
   if (cloud->empty()) {
     return {};
@@ -91,39 +120,88 @@ HiddenPointRemovalResult HiddenPointRemoval(
 
   using CloudT = pcl::PointCloud<PointT>;
 
+  // Map projected-cloud index -> original cloud index (-1 = skipped invalid).
+  // We build a dense projected cloud of only valid points, plus origin.
+  std::vector<int> projected_to_original;
+  projected_to_original.reserve(cloud->size());
+
   // 1) Spherical projection (identical formula to Open3D).
   typename CloudT::Ptr projected(new CloudT);
   projected->reserve(cloud->size() + 1);
 
-  for (const auto& pt : cloud->points) {
-    const Eigen::Vector3d projected_point =
-        detail::toVector3d(pt) - camera_location;
-    const double norm = projected_point.norm();
-    if (norm <= 0.0) {
-      throw std::runtime_error(
-          "HiddenPointRemoval: a point coincides with camera_location.");
+  for (std::size_t i = 0; i < cloud->size(); ++i) {
+    const auto& pt = (*cloud)[i];
+    const Eigen::Vector3d p = detail::toVector3d(pt);
+    if (!detail::isFiniteVec3(p)) {
+      continue;  // NaN/Inf input → Qhull crash if kept
     }
+
+    const Eigen::Vector3d projected_point = p - camera_location;
+    const double norm = projected_point.norm();
+    if (!(norm > 0.0) || !std::isfinite(norm)) {
+      // coincident with camera, or non-finite
+      continue;
+    }
+
     const Eigen::Vector3d sph =
         projected_point +
         2.0 * (radius - norm) * projected_point / norm;
+
+    // float PointXYZ overflow is a very common cause of reconstruct() crash
+    if (!detail::fitsPointT<PointT>(sph)) {
+      throw std::runtime_error(
+          "HiddenPointRemoval: spherical projection overflowed PointT range. "
+          "Reduce radius (e.g. ~100 * scene diameter) or use smaller coordinates.");
+    }
+
     projected->push_back(detail::fromVector3d<PointT>(sph));
+    projected_to_original.push_back(static_cast<int>(i));
   }
 
-  // 2) Add projection-space origin (camera).
-  const int origin_pidx = static_cast<int>(projected->size());
+  // 3D convex hull needs >= 4 points; origin adds one.
+  if (projected->size() < 3) {
+    throw std::runtime_error(
+        "HiddenPointRemoval: need at least 3 finite points not coincident "
+        "with the camera (got " +
+        std::to_string(projected->size()) + ").");
+  }
+
+  // 2) Add projection-space origin (camera). Marked with original index -1.
   projected->push_back(detail::fromVector3d<PointT>(Eigen::Vector3d::Zero()));
+  projected_to_original.push_back(-1);
   projected->width = static_cast<uint32_t>(projected->size());
   projected->height = 1;
-  projected->is_dense = false;
+  projected->is_dense = true;
 
   // 3) Convex hull of spherical projection (Open3D uses Qhull; PCL does too).
+  // NOTE: reconstruct() itself only allocates outputs; the crash is almost
+  // always inside Qhull when input is invalid or the wrong qhull*_r is linked.
   pcl::ConvexHull<PointT> hull;
   hull.setInputCloud(projected);
   hull.setDimension(3);
+  // Avoid area/volume mode: it forces console output and extra Qhull options.
+  hull.setComputeAreaVolume(false);
 
   typename CloudT::Ptr hull_points(new CloudT);
   std::vector<pcl::Vertices> polygons;
-  hull.reconstruct(*hull_points, polygons);
+  try {
+    hull.reconstruct(*hull_points, polygons);
+  } catch (const std::exception& e) {
+    throw std::runtime_error(
+        std::string("HiddenPointRemoval: ConvexHull::reconstruct failed: ") +
+        e.what());
+  } catch (...) {
+    throw std::runtime_error(
+        "HiddenPointRemoval: ConvexHull::reconstruct failed (unknown). "
+        "Check Qhull link (use only qhullstatic_r / qhull_r) and input NaNs.");
+  }
+
+  if (hull_points->empty() || polygons.empty()) {
+    // PCL returns empty on Qhull failure instead of throwing; treat as error.
+    throw std::runtime_error(
+        "HiddenPointRemoval: Qhull failed to compute a 3D convex hull. "
+        "Check degenerate geometry, radius, and that only qhull*_r is linked.");
+  }
 
   pcl::PointIndices hull_point_indices;
   hull.getHullPointIndices(hull_point_indices);
@@ -132,16 +210,29 @@ HiddenPointRemovalResult HiddenPointRemoval(
   if (pt_map.size() != hull_points->size()) {
     throw std::runtime_error(
         "HiddenPointRemoval: hull point / index map size mismatch. "
-        "Ensure PCL was built with Qhull.");
+        "Ensure PCL was built with a matching reentrant Qhull (qhull*_r).");
+  }
+
+  // Remap hull indices from projected-cloud space to original-cloud indices.
+  // pt_map[i] is an index into `projected` (including origin at origin_pidx).
+  std::vector<int> original_pt_map;
+  original_pt_map.reserve(pt_map.size());
+  for (int pidx : pt_map) {
+    if (pidx < 0 || static_cast<std::size_t>(pidx) >= projected_to_original.size()) {
+      throw std::runtime_error(
+          "HiddenPointRemoval: invalid hull point index from ConvexHull.");
+    }
+    original_pt_map.push_back(projected_to_original[static_cast<std::size_t>(pidx)]);
   }
 
   // 4) Reassign original points onto hull vertices.
-  int origin_vidx = static_cast<int>(pt_map.size());
-  for (std::size_t vidx = 0; vidx < pt_map.size(); ++vidx) {
-    const int pidx = pt_map[vidx];
-    if (pidx != origin_pidx) {
-      (*hull_points)[vidx] = (*cloud)[static_cast<std::size_t>(pidx)];
+  int origin_vidx = static_cast<int>(original_pt_map.size());
+  for (std::size_t vidx = 0; vidx < original_pt_map.size(); ++vidx) {
+    const int orig_idx = original_pt_map[vidx];
+    if (orig_idx >= 0) {
+      (*hull_points)[vidx] = (*cloud)[static_cast<std::size_t>(orig_idx)];
     } else {
+      // synthetic origin
       origin_vidx = static_cast<int>(vidx);
       (*hull_points)[vidx] = detail::fromVector3d<PointT>(camera_location);
     }
@@ -157,7 +248,8 @@ HiddenPointRemovalResult HiddenPointRemoval(
   // 5) Erase origin if it is part of the hull (same bookkeeping as Open3D).
   if (origin_vidx < static_cast<int>(hull_points->size())) {
     hull_points->points.erase(hull_points->points.begin() + origin_vidx);
-    pt_map.erase(pt_map.begin() + static_cast<std::size_t>(origin_vidx));
+    original_pt_map.erase(original_pt_map.begin() +
+                          static_cast<std::size_t>(origin_vidx));
 
     for (std::size_t tidx = triangles.size(); tidx-- > 0;) {
       auto& verts = triangles[tidx].vertices;
@@ -180,11 +272,10 @@ HiddenPointRemovalResult HiddenPointRemoval(
   hull_points->height = 1;
   hull_points->is_dense = true;
 
-  // Drop the synthetic origin index from the visible-index list.
   std::vector<int> visible_indices;
-  visible_indices.reserve(pt_map.size());
-  for (int idx : pt_map) {
-    if (idx != origin_pidx) {
+  visible_indices.reserve(original_pt_map.size());
+  for (int idx : original_pt_map) {
+    if (idx >= 0) {
       visible_indices.push_back(idx);
     }
   }
