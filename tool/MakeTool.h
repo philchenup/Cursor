@@ -33,6 +33,14 @@ struct SphereData {
 
 Q_DECLARE_METATYPE(SphereData)
 
+/** Baseline pose of the selected CAD grasp when a global offset drag starts. */
+struct InitOffset {
+    double X_Offset = 0.0;
+    double Y_Offset = 0.0;
+    double Z_Offset = 0.0;
+    Eigen::Quaterniond quat = Eigen::Quaterniond::Identity();
+};
+
 namespace Ui
 {
     class MakeTool;
@@ -103,7 +111,25 @@ public:
 
     void createSphereActor(const SphereData& data, vtkNew<vtkActor>& actor);
 
+    /** Apply SphereData pose to an existing sphere actor (UserTransform). */
+    void updateSphereActor(const SphereData& data, vtkActor* actor);
+
+    /**
+     * Global-offset sync for CAD grasps:
+     * apply selected item's translation delta to all other items,
+     * and set every item to the selected item's rotation.
+     */
+    void updateCadGraspListExceptSelected();
+
+    /** Snapshot each cadGraspListWidget item pose as the global-offset baseline. */
+    void captureCadGraspBaselines();
+
+    /** Build SphereData (pos + quat) from an actor's current 4x4 matrix. */
+    SphereData sphereDataFromActor(vtkActor* actor) const;
+
     void updateSpinboxes(const SphereData& data);
+
+    void updateCadSpinboxes(const SphereData& data);
 
     void loadVisionConfig(const std::string& visionconfig_path);
 
@@ -137,6 +163,8 @@ private slots:
     void onHoleListItemClicked(QListWidgetItem* item);
 
     void timer1Handle();
+
+    void timer2Handle();
 
     void onDeleteActionTriggered();
 
@@ -193,7 +221,16 @@ private:
 
     QTimer* m_timer_1;
 
+    QTimer* m_timer_2;
+
     MathUtils* mu;
+
+    InitOffset initOff;
+
+    bool startGlobalChange = false;
+
+    /** Per-item SphereData captured when a global offset operation starts. */
+    std::vector<SphereData> cadGraspBaselines_;
 
     vtkNew<vtkRenderer> render_tool;
 
