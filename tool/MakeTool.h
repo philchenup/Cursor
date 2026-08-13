@@ -103,6 +103,18 @@ public:
 
     void createSphereActor(const SphereData& data, vtkNew<vtkActor>& actor);
 
+    /** Apply SphereData pose to an existing sphere actor (UserTransform). */
+    void updateSphereActor(const SphereData& data, vtkActor* actor);
+
+    /**
+     * Traverse cadGraspListWidget: refresh each item's GRASP_DATA_ROLE,
+     * and update every linked actor pose except currentSelectedActor.
+     */
+    void updateCadGraspListExceptSelected();
+
+    /** Build SphereData (pos + quat) from an actor's current 4x4 matrix. */
+    SphereData sphereDataFromActor(vtkActor* actor) const;
+
     void updateSpinboxes(const SphereData& data);
 
     void loadVisionConfig(const std::string& visionconfig_path);

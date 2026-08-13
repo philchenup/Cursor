@@ -1039,6 +1039,103 @@ void MakeTool::createSphereActor(const SphereData& data, vtkNew<vtkActor>& actor
     return;
 }
 
+void MakeTool::updateSphereActor(const SphereData& data, vtkActor* actor) {
+    if (!actor) {
+        return;
+    }
+
+    Eigen::Quaterniond q = Eigen::Quaterniond(data.w, data.x, data.y, data.z);
+    Eigen::Matrix3d matrix = mu->quaternionToMatrix(q);
+    Eigen::Vector3d pos = Eigen::Vector3d(data.X, data.Y, data.Z);
+    Eigen::Affine3d transform_actor = Eigen::Affine3d::Identity();
+    transform_actor.linear() = matrix;
+    transform_actor.translation() = pos;
+
+    vtkNew<vtkMatrix4x4> vtk_matrix;
+    const Eigen::Matrix4d& eigen_matrix = transform_actor.matrix();
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            vtk_matrix->SetElement(i, j, eigen_matrix(i, j));
+        }
+    }
+
+    vtkNew<vtkTransform> transform;
+    transform->SetMatrix(vtk_matrix);
+    actor->SetUserTransform(transform);
+}
+
+SphereData MakeTool::sphereDataFromActor(vtkActor* actor) const {
+    SphereData data;
+    if (!actor) {
+        return data;
+    }
+
+    double finalMatrixArray[16] = { 0 };
+    actor->GetMatrix(finalMatrixArray);
+
+    Eigen::Matrix4d mat = Eigen::Matrix4d::Identity();
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            mat(i, j) = finalMatrixArray[i * 4 + j];
+        }
+    }
+
+    const Eigen::Matrix3d rotation_matrix = mat.block<3, 3>(0, 0);
+    const Eigen::Quaterniond quaternion(rotation_matrix);
+    data.X = mat(0, 3);
+    data.Y = mat(1, 3);
+    data.Z = mat(2, 3);
+    data.w = quaternion.w();
+    data.x = quaternion.x();
+    data.y = quaternion.y();
+    data.z = quaternion.z();
+    return data;
+}
+
+void MakeTool::updateCadGraspListExceptSelected() {
+    if (!ui || !ui->cadGraspListWidget) {
+        return;
+    }
+
+    const int count = ui->cadGraspListWidget->count();
+    for (int i = 0; i < count; ++i) {
+        QListWidgetItem* item = ui->cadGraspListWidget->item(i);
+        if (!item) {
+            continue;
+        }
+
+        QVariant actorVar = item->data(ACTOR_POINTER_ROLE);
+        vtkActor* actor = actorVar.isNull()
+            ? nullptr
+            : static_cast<vtkActor*>(actorVar.value<void*>());
+
+        SphereData data;
+        if (actor && actor == currentSelectedActor) {
+            // Selected target is driven interactively: sync list data from actor matrix.
+            data = sphereDataFromActor(actor);
+        } else {
+            QVariant dataVar = item->data(GRASP_DATA_ROLE);
+            if (dataVar.isNull()) {
+                continue;
+            }
+            data = dataVar.value<SphereData>();
+        }
+
+        // Refresh value stored on the list item.
+        item->setData(GRASP_DATA_ROLE, QVariant::fromValue(data));
+
+        // Update allActors poses except the currently selected target.
+        if (!actor || actor == currentSelectedActor) {
+            continue;
+        }
+        updateSphereActor(data, actor);
+    }
+
+    if (ui->cadqvtkWidget && ui->cadqvtkWidget->renderWindow()) {
+        ui->cadqvtkWidget->renderWindow()->Render();
+    }
+}
+
 void MakeTool::onListItemClicked(QListWidgetItem* item) {
     if (!item) return;
 
