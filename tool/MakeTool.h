@@ -66,7 +66,10 @@ public:
 
     void initPcd(const ct::Cloud::Ptr& cloud, vtkNew<vtkActor>& pointCloudActor);
 
-    /** Convert pcl::PolygonMesh to a VTK surface actor (triangles). */
+    /**
+     * Display pcl::PolygonMesh directly as a VTK surface (vtkPolys),
+     * without converting / sampling to a point cloud.
+     */
     void initMesh(const pcl::PolygonMesh& mesh, vtkNew<vtkActor>& meshActor);
 
     void GetTargetInCam(vtkNew<vtkMatrix4x4>& vtk_matrix);

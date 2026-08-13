@@ -48,7 +48,9 @@
 #include <vtkCellArray.h>
 #include <vtkTriangle.h>
 #include <pcl/common/common.h>
-#include <pcl/conversions.h>
+#include <pcl/common/io.h>
+#include <cstring>
+#include <cstdint>
 #include <vtkMath.h>
 #include "utils/utils.h"
 #include "tool/CylindricalHoleDetector.h"
@@ -325,23 +327,37 @@ void MakeTool::initPcd(const ct::Cloud::Ptr& cloud, vtkNew<vtkActor>& pointCloud
 }
 
 void MakeTool::initMesh(const pcl::PolygonMesh& mesh, vtkNew<vtkActor>& meshActor) {
-    if (mesh.polygons.empty() || mesh.cloud.width * mesh.cloud.height == 0) {
+    // Direct VTK surface from PolygonMesh topology — do NOT use VertexGlyphFilter / point cloud.
+    const auto& cloud = mesh.cloud;
+    const std::size_t n_points = static_cast<std::size_t>(cloud.width) * cloud.height;
+    if (mesh.polygons.empty() || n_points == 0 || cloud.data.empty()) {
         printE("Input PolygonMesh is Null, please check the input!");
         return;
     }
 
-    pcl::PointCloud<pcl::PointXYZ> vertices;
-    pcl::fromPCLPointCloud2(mesh.cloud, vertices);
-    if (vertices.empty()) {
-        printE("PolygonMesh vertices is empty!");
+    const int x_idx = pcl::getFieldIndex(cloud, "x");
+    const int y_idx = pcl::getFieldIndex(cloud, "y");
+    const int z_idx = pcl::getFieldIndex(cloud, "z");
+    if (x_idx < 0 || y_idx < 0 || z_idx < 0) {
+        printE("PolygonMesh cloud missing x/y/z fields!");
         return;
     }
 
+    const std::size_t x_off = cloud.fields[x_idx].offset;
+    const std::size_t y_off = cloud.fields[y_idx].offset;
+    const std::size_t z_off = cloud.fields[z_idx].offset;
+    const std::size_t step = cloud.point_step;
+
     vtkNew<vtkPoints> vtk_points;
-    vtk_points->SetNumberOfPoints(static_cast<vtkIdType>(vertices.size()));
-    for (std::size_t i = 0; i < vertices.size(); ++i) {
-        const auto& p = vertices.points[i];
-        vtk_points->SetPoint(static_cast<vtkIdType>(i), p.x, p.y, p.z);
+    vtk_points->SetDataTypeToFloat();
+    vtk_points->SetNumberOfPoints(static_cast<vtkIdType>(n_points));
+    for (std::size_t i = 0; i < n_points; ++i) {
+        const std::uint8_t* ptr = cloud.data.data() + i * step;
+        float x = 0.f, y = 0.f, z = 0.f;
+        std::memcpy(&x, ptr + x_off, sizeof(float));
+        std::memcpy(&y, ptr + y_off, sizeof(float));
+        std::memcpy(&z, ptr + z_off, sizeof(float));
+        vtk_points->SetPoint(static_cast<vtkIdType>(i), x, y, z);
     }
 
     vtkNew<vtkCellArray> vtk_polygons;
@@ -349,7 +365,7 @@ void MakeTool::initMesh(const pcl::PolygonMesh& mesh, vtkNew<vtkActor>& meshActo
         if (poly.vertices.size() < 3) {
             continue;
         }
-        // Fan-triangulate n-gons into triangles.
+        // Fan-triangulate n-gons → triangles (surface cells, not points).
         for (std::size_t k = 1; k + 1 < poly.vertices.size(); ++k) {
             vtkNew<vtkTriangle> triangle;
             triangle->GetPointIds()->SetId(0, static_cast<vtkIdType>(poly.vertices[0]));
@@ -366,15 +382,19 @@ void MakeTool::initMesh(const pcl::PolygonMesh& mesh, vtkNew<vtkActor>& meshActo
 
     vtkNew<vtkPolyData> vtk_mesh_data;
     vtk_mesh_data->SetPoints(vtk_points);
-    vtk_mesh_data->SetPolys(vtk_polygons);
+    vtk_mesh_data->SetPolys(vtk_polygons);  // surface mesh
 
     vtkNew<vtkPolyDataMapper> meshMapper;
     meshMapper->SetInputData(vtk_mesh_data);
+    meshMapper->ScalarVisibilityOff();
 
     meshActor->SetMapper(meshMapper);
+    meshActor->GetProperty()->SetRepresentationToSurface();
     meshActor->GetProperty()->SetColor(0.75, 0.75, 0.8);
     meshActor->GetProperty()->SetOpacity(1.0);
     meshActor->GetProperty()->SetInterpolationToFlat();
+    meshActor->GetProperty()->EdgeVisibilityOn();
+    meshActor->GetProperty()->SetEdgeColor(0.2, 0.2, 0.2);
 }
 
 void MakeTool::on_loadToolkitBtn_clicked() {
