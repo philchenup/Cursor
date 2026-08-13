@@ -45,7 +45,10 @@
 #include <pcl/visualization/pcl_visualizer.h>
 #include <pcl/filters/voxel_grid.h>
 #include <vtkVertexGlyphFilter.h>
+#include <vtkCellArray.h>
+#include <vtkTriangle.h>
 #include <pcl/common/common.h>
+#include <pcl/conversions.h>
 #include <vtkMath.h>
 #include "utils/utils.h"
 #include "tool/CylindricalHoleDetector.h"
@@ -319,6 +322,59 @@ void MakeTool::initPcd(const ct::Cloud::Ptr& cloud, vtkNew<vtkActor>& pointCloud
     pointCloudActor->SetMapper(pointCloudMapper);
     pointCloudActor->GetProperty()->SetPointSize(2.0); // 设置点的大小
     pointCloudActor->GetProperty()->SetColor(0.0, 1.0, 0.0); // 设置点云颜色为绿色
+}
+
+void MakeTool::initMesh(const pcl::PolygonMesh& mesh, vtkNew<vtkActor>& meshActor) {
+    if (mesh.polygons.empty() || mesh.cloud.width * mesh.cloud.height == 0) {
+        printE("Input PolygonMesh is Null, please check the input!");
+        return;
+    }
+
+    pcl::PointCloud<pcl::PointXYZ> vertices;
+    pcl::fromPCLPointCloud2(mesh.cloud, vertices);
+    if (vertices.empty()) {
+        printE("PolygonMesh vertices is empty!");
+        return;
+    }
+
+    vtkNew<vtkPoints> vtk_points;
+    vtk_points->SetNumberOfPoints(static_cast<vtkIdType>(vertices.size()));
+    for (std::size_t i = 0; i < vertices.size(); ++i) {
+        const auto& p = vertices.points[i];
+        vtk_points->SetPoint(static_cast<vtkIdType>(i), p.x, p.y, p.z);
+    }
+
+    vtkNew<vtkCellArray> vtk_polygons;
+    for (const auto& poly : mesh.polygons) {
+        if (poly.vertices.size() < 3) {
+            continue;
+        }
+        // Fan-triangulate n-gons into triangles.
+        for (std::size_t k = 1; k + 1 < poly.vertices.size(); ++k) {
+            vtkNew<vtkTriangle> triangle;
+            triangle->GetPointIds()->SetId(0, static_cast<vtkIdType>(poly.vertices[0]));
+            triangle->GetPointIds()->SetId(1, static_cast<vtkIdType>(poly.vertices[k]));
+            triangle->GetPointIds()->SetId(2, static_cast<vtkIdType>(poly.vertices[k + 1]));
+            vtk_polygons->InsertNextCell(triangle);
+        }
+    }
+
+    if (vtk_polygons->GetNumberOfCells() == 0) {
+        printE("PolygonMesh has no valid triangles!");
+        return;
+    }
+
+    vtkNew<vtkPolyData> vtk_mesh_data;
+    vtk_mesh_data->SetPoints(vtk_points);
+    vtk_mesh_data->SetPolys(vtk_polygons);
+
+    vtkNew<vtkPolyDataMapper> meshMapper;
+    meshMapper->SetInputData(vtk_mesh_data);
+
+    meshActor->SetMapper(meshMapper);
+    meshActor->GetProperty()->SetColor(0.75, 0.75, 0.8);
+    meshActor->GetProperty()->SetOpacity(1.0);
+    meshActor->GetProperty()->SetInterpolationToFlat();
 }
 
 void MakeTool::on_loadToolkitBtn_clicked() {

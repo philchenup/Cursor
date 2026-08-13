@@ -66,6 +66,9 @@ public:
 
     void initPcd(const ct::Cloud::Ptr& cloud, vtkNew<vtkActor>& pointCloudActor);
 
+    /** Convert pcl::PolygonMesh to a VTK surface actor (triangles). */
+    void initMesh(const pcl::PolygonMesh& mesh, vtkNew<vtkActor>& meshActor);
+
     void GetTargetInCam(vtkNew<vtkMatrix4x4>& vtk_matrix);
 
     Eigen::Affine3d GetFlange2TcpMatrix();
