@@ -23,6 +23,7 @@
 #include <QMenu>
 #include <QKeySequence>
 #include <QAbstractItemView>
+#include <QCheckBox>
 #include <algorithm>
 #include <functional>
 #include <random>
@@ -147,10 +148,12 @@ cad_cloud(new ct::Cloud()),
 post_cloud(new ct::Cloud()),
 m_timer(new QTimer(this)),
 m_timer_1(new QTimer(this)),
+m_timer_2(new QTimer(this)),
 mu(new MathUtils),
 currentSelectedActor(nullptr),
 m_viewer(nullptr),
-current_item(new QListWidgetItem)
+current_item(new QListWidgetItem),
+startGlobalChange(false)
 {
     ui->setupUi(this);
 
@@ -228,6 +231,15 @@ current_item(new QListWidgetItem)
 
     connect(m_timer, &QTimer::timeout, this, &MakeTool::timerHandle);
     connect(m_timer_1, &QTimer::timeout, this, &MakeTool::timer1Handle);
+    connect(m_timer_2, &QTimer::timeout, this, &MakeTool::timer2Handle);
+
+    if (ui->globalOffCheck) {
+        connect(ui->globalOffCheck, &QCheckBox::toggled, this, [this](bool checked) {
+            if (checked) {
+                startGlobalChange = true;
+            }
+        });
+    }
 
     ui->graspListWidget->setContextMenuPolicy(Qt::CustomContextMenu);
 
@@ -249,6 +261,11 @@ MakeTool::~MakeTool()
     m_timer_1->stop();
     if (m_timer_1 != nullptr) {
         delete m_timer_1;
+    }
+
+    m_timer_2->stop();
+    if (m_timer_2 != nullptr) {
+        delete m_timer_2;
     }
 
     if (ui != nullptr) {
@@ -1092,12 +1109,64 @@ SphereData MakeTool::sphereDataFromActor(vtkActor* actor) const {
     return data;
 }
 
-void MakeTool::updateCadGraspListExceptSelected() {
+void MakeTool::captureCadGraspBaselines() {
+    cadGraspBaselines_.clear();
     if (!ui || !ui->cadGraspListWidget) {
         return;
     }
 
     const int count = ui->cadGraspListWidget->count();
+    cadGraspBaselines_.reserve(static_cast<std::size_t>(count));
+    for (int i = 0; i < count; ++i) {
+        QListWidgetItem* item = ui->cadGraspListWidget->item(i);
+        if (!item) {
+            cadGraspBaselines_.emplace_back();
+            continue;
+        }
+        QVariant dataVar = item->data(GRASP_DATA_ROLE);
+        if (dataVar.isNull()) {
+            cadGraspBaselines_.emplace_back();
+        } else {
+            cadGraspBaselines_.push_back(dataVar.value<SphereData>());
+        }
+    }
+}
+
+void MakeTool::updateCadGraspListExceptSelected() {
+    if (!ui || !ui->cadGraspListWidget) {
+        return;
+    }
+
+    // Current pose of the interactively moved (selected) grasp.
+    Eigen::Matrix3d rotation_matrix = multiGraspInCamMatrix.block<3, 3>(0, 0);
+    Eigen::Quaterniond selected_q(rotation_matrix);
+    selected_q.normalize();
+
+    SphereData selected;
+    selected.X = multiGraspInCamMatrix(0, 3);
+    selected.Y = multiGraspInCamMatrix(1, 3);
+    selected.Z = multiGraspInCamMatrix(2, 3);
+    selected.w = selected_q.w();
+    selected.x = selected_q.x();
+    selected.y = selected_q.y();
+    selected.z = selected_q.z();
+
+    // Translation offset relative to the pose when global drag started.
+    const Eigen::Vector3d delta(
+        selected.X - initOff.X_Offset,
+        selected.Y - initOff.Y_Offset,
+        selected.Z - initOff.Z_Offset);
+
+    if (current_item) {
+        current_item->setData(GRASP_DATA_ROLE, QVariant::fromValue(selected));
+        updateCadSpinboxes(selected);
+    }
+
+    const int count = ui->cadGraspListWidget->count();
+    if (static_cast<int>(cadGraspBaselines_.size()) != count) {
+        captureCadGraspBaselines();
+    }
+
     for (int i = 0; i < count; ++i) {
         QListWidgetItem* item = ui->cadGraspListWidget->item(i);
         if (!item) {
@@ -1109,30 +1178,63 @@ void MakeTool::updateCadGraspListExceptSelected() {
             ? nullptr
             : static_cast<vtkActor*>(actorVar.value<void*>());
 
-        SphereData data;
+        // Selected actor is already moved by the interactor; only sync its list data.
         if (actor && actor == currentSelectedActor) {
-            // Selected target is driven interactively: sync list data from actor matrix.
-            data = sphereDataFromActor(actor);
-        } else {
-            QVariant dataVar = item->data(GRASP_DATA_ROLE);
-            if (dataVar.isNull()) {
-                continue;
-            }
-            data = dataVar.value<SphereData>();
-        }
-
-        // Refresh value stored on the list item.
-        item->setData(GRASP_DATA_ROLE, QVariant::fromValue(data));
-
-        // Update allActors poses except the currently selected target.
-        if (!actor || actor == currentSelectedActor) {
+            item->setData(GRASP_DATA_ROLE, QVariant::fromValue(selected));
             continue;
         }
-        updateSphereActor(data, actor);
+
+        const SphereData& base = cadGraspBaselines_[static_cast<std::size_t>(i)];
+        SphereData data;
+        // Same translation delta as the selected control.
+        data.X = base.X + delta.x();
+        data.Y = base.Y + delta.y();
+        data.Z = base.Z + delta.z();
+        // Keep the same rotation as the selected control.
+        data.w = selected.w;
+        data.x = selected.x;
+        data.y = selected.y;
+        data.z = selected.z;
+
+        item->setData(GRASP_DATA_ROLE, QVariant::fromValue(data));
+        if (actor) {
+            updateSphereActor(data, actor);
+        }
     }
 
     if (ui->cadqvtkWidget && ui->cadqvtkWidget->renderWindow()) {
         ui->cadqvtkWidget->renderWindow()->Render();
+    }
+}
+
+void MakeTool::timer2Handle() {
+    Eigen::Matrix3d rotation_matrix = multiGraspInCamMatrix.block<3, 3>(0, 0);
+    Eigen::Quaterniond quaternion(rotation_matrix);
+    quaternion.normalize();
+
+    SphereData data;
+    data.X = multiGraspInCamMatrix(0, 3);
+    data.Y = multiGraspInCamMatrix(1, 3);
+    data.Z = multiGraspInCamMatrix(2, 3);
+    data.w = quaternion.w();
+    data.x = quaternion.x();
+    data.y = quaternion.y();
+    data.z = quaternion.z();
+
+    if (startGlobalChange) {
+        initOff.X_Offset = data.X;
+        initOff.Y_Offset = data.Y;
+        initOff.Z_Offset = data.Z;
+        initOff.quat = quaternion;
+        captureCadGraspBaselines();
+        startGlobalChange = false;
+    }
+
+    if (ui->globalOffCheck && ui->globalOffCheck->isChecked()) {
+        updateCadGraspListExceptSelected();
+    } else if (current_item) {
+        current_item->setData(GRASP_DATA_ROLE, QVariant::fromValue(data));
+        updateCadSpinboxes(data);
     }
 }
 
@@ -1199,6 +1301,11 @@ void MakeTool::updateSpinboxes(const SphereData& data) {
     ui->gpointxspin->blockSignals(false);
     ui->gpointyspin->blockSignals(false);
     ui->gpointzspin->blockSignals(false);
+}
+
+void MakeTool::updateCadSpinboxes(const SphereData& data) {
+    // CAD grasp pose spinboxes (same fields as multi-grasp editing).
+    updateSpinboxes(data);
 }
 
 void MakeTool::onDeleteActionTriggered()
