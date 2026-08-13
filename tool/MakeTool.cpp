@@ -47,11 +47,26 @@
 #include <vtkVertexGlyphFilter.h>
 #include <vtkCellArray.h>
 #include <vtkTriangle.h>
+#include <vtkPolyData.h>
 #include <pcl/common/common.h>
 #include <pcl/common/io.h>
 #include <cstring>
 #include <cstdint>
 #include <vtkMath.h>
+#include <BRepMesh_IncrementalMesh.hxx>
+#include <BRep_Tool.hxx>
+#include <Poly_Triangulation.hxx>
+#include <Standard_Version.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopLoc_Location.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Face.hxx>
+#include <gp_Trsf.hxx>
+#if OCC_VERSION_HEX < 0x070600
+#include <Poly_Array1OfTriangle.hxx>
+#include <Poly_Triangle.hxx>
+#include <TColgp_Array1OfPnt.hxx>
+#endif
 #include "utils/utils.h"
 #include "tool/CylindricalHoleDetector.h"
 #include "tool/HPR.h"
@@ -324,6 +339,115 @@ void MakeTool::initPcd(const ct::Cloud::Ptr& cloud, vtkNew<vtkActor>& pointCloud
     pointCloudActor->SetMapper(pointCloudMapper);
     pointCloudActor->GetProperty()->SetPointSize(2.0); // 设置点的大小
     pointCloudActor->GetProperty()->SetColor(0.0, 1.0, 0.0); // 设置点云颜色为绿色
+}
+
+bool MakeTool::shapeToVtkPolyData(const TopoDS_Shape& shape,
+    vtkPolyData* polyData,
+    double deflection_mm,
+    double angular_deflection) {
+    if (!polyData || shape.IsNull()) {
+        printE("shapeToVtkPolyData: invalid shape or polyData!");
+        return false;
+    }
+
+    // In-memory meshing (same data as STL triangles), no file I/O.
+    TopoDS_Shape meshed = shape;
+    BRepMesh_IncrementalMesh mesher(
+        meshed, deflection_mm, Standard_False, angular_deflection, Standard_True);
+    mesher.Perform();
+
+    vtkNew<vtkPoints> vtk_points;
+    vtkNew<vtkCellArray> vtk_polys;
+
+    for (TopExp_Explorer explorer(meshed, TopAbs_FACE); explorer.More(); explorer.Next()) {
+        const TopoDS_Face face = TopoDS::Face(explorer.Current());
+        TopLoc_Location location;
+        Handle(Poly_Triangulation) triangulation = BRep_Tool::Triangulation(face, location);
+        if (triangulation.IsNull()) {
+            continue;
+        }
+
+        const gp_Trsf transform = location.Transformation();
+        const bool reversed = (face.Orientation() == TopAbs_REVERSED);
+        const vtkIdType index_offset = vtk_points->GetNumberOfPoints();
+
+#if OCC_VERSION_HEX >= 0x070600
+        const Standard_Integer nb_nodes = triangulation->NbNodes();
+        for (Standard_Integer i = 1; i <= nb_nodes; ++i) {
+            gp_Pnt p = triangulation->Node(i);
+            p.Transform(transform);
+            vtk_points->InsertNextPoint(p.X(), p.Y(), p.Z());
+        }
+
+        const Standard_Integer nb_tris = triangulation->NbTriangles();
+        for (Standard_Integer i = 1; i <= nb_tris; ++i) {
+            Standard_Integer n1 = 0, n2 = 0, n3 = 0;
+            triangulation->Triangle(i).Get(n1, n2, n3);
+            if (reversed) {
+                std::swap(n2, n3);
+            }
+            vtkNew<vtkTriangle> tri;
+            tri->GetPointIds()->SetId(0, index_offset + static_cast<vtkIdType>(n1 - 1));
+            tri->GetPointIds()->SetId(1, index_offset + static_cast<vtkIdType>(n2 - 1));
+            tri->GetPointIds()->SetId(2, index_offset + static_cast<vtkIdType>(n3 - 1));
+            vtk_polys->InsertNextCell(tri);
+        }
+#else
+        const TColgp_Array1OfPnt& nodes = triangulation->Nodes();
+        for (Standard_Integer i = nodes.Lower(); i <= nodes.Upper(); ++i) {
+            gp_Pnt p = nodes.Value(i);
+            p.Transform(transform);
+            vtk_points->InsertNextPoint(p.X(), p.Y(), p.Z());
+        }
+
+        const Poly_Array1OfTriangle& tris = triangulation->Triangles();
+        const Standard_Integer node_lower = nodes.Lower();
+        for (Standard_Integer i = tris.Lower(); i <= tris.Upper(); ++i) {
+            Standard_Integer n1 = 0, n2 = 0, n3 = 0;
+            tris.Value(i).Get(n1, n2, n3);
+            if (reversed) {
+                std::swap(n2, n3);
+            }
+            vtkNew<vtkTriangle> tri;
+            tri->GetPointIds()->SetId(0, index_offset + static_cast<vtkIdType>(n1 - node_lower));
+            tri->GetPointIds()->SetId(1, index_offset + static_cast<vtkIdType>(n2 - node_lower));
+            tri->GetPointIds()->SetId(2, index_offset + static_cast<vtkIdType>(n3 - node_lower));
+            vtk_polys->InsertNextCell(tri);
+        }
+#endif
+    }
+
+    if (vtk_points->GetNumberOfPoints() == 0 || vtk_polys->GetNumberOfCells() == 0) {
+        printE("shapeToVtkPolyData: no triangulation on shape!");
+        return false;
+    }
+
+    polyData->Initialize();
+    polyData->SetPoints(vtk_points);
+    polyData->SetPolys(vtk_polys);
+    return true;
+}
+
+void MakeTool::initShape(const TopoDS_Shape& shape,
+    vtkNew<vtkActor>& meshActor,
+    double deflection_mm,
+    double angular_deflection) {
+    vtkNew<vtkPolyData> polyData;
+    if (!shapeToVtkPolyData(shape, polyData, deflection_mm, angular_deflection)) {
+        return;
+    }
+
+    vtkNew<vtkPolyDataMapper> mapper;
+    mapper->SetInputData(polyData);
+    mapper->ScalarVisibilityOff();
+
+    meshActor->SetMapper(mapper);
+    meshActor->GetProperty()->SetRepresentationToSurface();
+    meshActor->GetProperty()->SetColor(0.75, 0.75, 0.8);
+    meshActor->GetProperty()->SetOpacity(1.0);
+    meshActor->GetProperty()->SetInterpolationToFlat();
+    meshActor->GetProperty()->EdgeVisibilityOn();
+    meshActor->GetProperty()->SetEdgeColor(0.2, 0.2, 0.2);
 }
 
 void MakeTool::initMesh(const pcl::PolygonMesh& mesh, vtkNew<vtkActor>& meshActor) {

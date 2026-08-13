@@ -17,8 +17,10 @@
 #include <pcl/common/transforms.h>
 #include <QListWidget>
 #include <vtkGenericOpenGLRenderWindow.h>
+#include <vtkPolyData.h>
 #include <QTimer>
 #include "CylindricalHoleDetector.h"
+#include <TopoDS_Shape.hxx>
 
 struct SphereData {
     double X, Y, Z;       // Î»ÖÃ
@@ -71,6 +73,21 @@ public:
      * without converting / sampling to a point cloud.
      */
     void initMesh(const pcl::PolygonMesh& mesh, vtkNew<vtkActor>& meshActor);
+
+    /**
+     * Mesh TopoDS_Shape in memory (OCCT BRepMesh) and load into VTK actor.
+     * Equivalent to Shape¡úSTL¡úVTK, but with no STL file I/O.
+     */
+    void initShape(const TopoDS_Shape& shape,
+        vtkNew<vtkActor>& meshActor,
+        double deflection_mm = 0.5,
+        double angular_deflection = 0.5);
+
+    /** Build vtkPolyData from an already-meshed (or to-be-meshed) TopoDS_Shape. */
+    bool shapeToVtkPolyData(const TopoDS_Shape& shape,
+        vtkPolyData* polyData,
+        double deflection_mm = 0.5,
+        double angular_deflection = 0.5);
 
     void GetTargetInCam(vtkNew<vtkMatrix4x4>& vtk_matrix);
 
