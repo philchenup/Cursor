@@ -76,6 +76,20 @@ protected:
 private:
 	rl::math::Transform displayedTransform(std::size_t column) const;
 
+	static rl::math::Transform flangeToTcp(
+		const rl::math::Transform& T_base_flange,
+		const rl::math::Transform& T_flange_tcp)
+	{
+		return T_base_flange * T_flange_tcp;
+	}
+
+	static rl::math::Transform tcpToFlange(
+		const rl::math::Transform& T_base_tcp,
+		const rl::math::Transform& T_flange_tcp)
+	{
+		return T_base_tcp * T_flange_tcp.inverse();
+	}
+
 	bool IsCartMove = false;
 	bool showTcp = false;
 	rl::math::Transform T_flange_tcp = rl::math::Transform::Identity();

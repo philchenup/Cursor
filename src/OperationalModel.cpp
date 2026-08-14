@@ -35,7 +35,6 @@
 #include "ConfigurationModel.h"
 #include "OperationalModel.h"
 #include "MainWindow.h"
-#include "tcp_pose.h"
 
 OperationalModel::OperationalModel(QObject* parent) :
 	QAbstractTableModel(parent),
