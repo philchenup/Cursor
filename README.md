@@ -9,3 +9,10 @@ shape = ReadModel::ScaleShape(shape, 0.001);                  // 显式因子
 ```
 
 `ScaleShape` 使用 `gp_Trsf::SetScale(gp_Pnt(0,0,0), factor)`，几何相对原点的位置一并换算（1 mm → 0.001 m）。
+
+已显示的 `AIS_Shape*` 用局部变换缩放，不改 BRep：
+
+```cpp
+ReadModel::ScaleAisShape(ais);           // 绕原点 ×0.001
+ReadModel::ScaleAisShape(ais, 0.001);
+```

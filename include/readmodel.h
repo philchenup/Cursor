@@ -28,6 +28,9 @@ public:
     /// 以原点为中心等比缩放，默认缩小 1000 倍（mm → m）。
     static TopoDS_Shape ScaleShape(const TopoDS_Shape& shape, double factor = 0.001);
 
+    /// 以原点为中心缩小 AIS_Shape 显示（默认 ×0.001），不改底层 BRep。
+    static void ScaleAisShape(AIS_Shape* ais, double factor = 0.001);
+
     static TopoDS_Shape readStlModel(Standard_CString filePath);
 
     /// 仅几何（原有接口，无颜色）。

@@ -180,6 +180,15 @@ TopoDS_Shape ReadModel::ScaleShape(const TopoDS_Shape& shape, double factor)
     return BRepBuilderAPI_Transform(shape, t, Standard_True).Shape();
 }
 
+void ReadModel::ScaleAisShape(AIS_Shape* ais, double factor)
+{
+    if (!ais) return;
+    gp_Trsf t;
+    t.SetScale(gp_Pnt(0, 0, 0), factor);
+    ais->SetLocalTransformation(t);
+    ais->Redisplay();
+}
+
 TopoDS_Shape ReadModel::readStlModel(Standard_CString filePath)
 {
     Handle(Poly_Triangulation) tri = RWStl::ReadFile(OSD_Path(filePath));
