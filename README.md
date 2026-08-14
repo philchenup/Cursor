@@ -12,5 +12,5 @@ operationalModel->setDisplayTcp(true);   // 表格显示 TCP
 operationalModel->setDisplayTcp(false);  // 回到法兰
 ```
 
-显示：`T_base_tcp = T_base_flange * T`  
-编辑/点动：表格改的是当前显示坐标系，IK 前再变回法兰 `T_base_tcp * T⁻¹`。
+显示：`T_base_tcp = T_base_flange * T`（`OperationalModel::flangeToTcp`）
+编辑/点动：表格改的是当前显示坐标系，IK 前再变回法兰 `T_base_tcp * T⁻¹`（`OperationalModel::tcpToFlange`）。
