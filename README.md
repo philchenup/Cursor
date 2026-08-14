@@ -23,4 +23,4 @@ ui->radioButtonFlange->setChecked(true);  // 默认法兰
 选中 TCP → `setDisplayTcp(true)`；选中法兰 → TCP 被取消选中 → `setDisplayTcp(false)`。完整片段见 `snippets/MainWindow_tcpRadio.cpp`。
 
 显示：`T_base_tcp = T_base_flange * T`（`OperationalModel::flangeToTcp`）
-编辑/点动：表格改的是当前显示坐标系，IK 前再变回法兰 `T_base_tcp * T⁻¹`（`OperationalModel::tcpToFlange`）。
+编辑/点动：增量沿**当前坐标系**施加（TCP 模式沿 TCP 轴，否则沿法兰轴），IK 前再变回法兰 `T_display * offset` → `tcpToFlange`。

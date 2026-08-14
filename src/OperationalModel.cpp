@@ -234,39 +234,49 @@ OperationalModel::setData(const QModelIndex& index, const QVariant& value, int r
 		{
 			rl::math::Transform transform = displayedTransform(index.column());
 			rl::math::Vector3 orientation = transform.linear().eulerAngles(2, 1, 0).reverse();
-			
+
+			double current = 0.0;
+			if (index.row() < 3)
+			{
+				current = transform.translation()(index.row());
+			}
+			else if (index.row() < 6)
+			{
+				current = orientation(index.row() - 3) * rl::math::RAD2DEG;
+			}
+			else
+			{
+				return false;
+			}
+
+			const double delta = value.value<rl::math::Real>() - current;
+			rl::math::Transform offset = rl::math::Transform::Identity();
 			switch (index.row())
 			{
 			case 0:
+				offset.translation() = rl::math::Vector3(delta, 0, 0);
+				break;
 			case 1:
+				offset.translation() = rl::math::Vector3(0, delta, 0);
+				break;
 			case 2:
-				transform.translation()(index.row()) = value.value<rl::math::Real>();
+				offset.translation() = rl::math::Vector3(0, 0, delta);
 				break;
 			case 3:
-				transform.linear() = (
-					rl::math::AngleAxis(orientation.z(), rl::math::Vector3::UnitZ()) *
-					rl::math::AngleAxis(orientation.y(), rl::math::Vector3::UnitY()) *
-					rl::math::AngleAxis(value.value<rl::math::Real>() * rl::math::DEG2RAD, rl::math::Vector3::UnitX())
-				).toRotationMatrix();
+				offset.linear() = rl::math::AngleAxis(delta * rl::math::DEG2RAD, rl::math::Vector3::UnitX()).toRotationMatrix();
 				break;
 			case 4:
-				transform.linear() = (
-					rl::math::AngleAxis(orientation.z(), rl::math::Vector3::UnitZ()) *
-					rl::math::AngleAxis(value.value<rl::math::Real>() * rl::math::DEG2RAD, rl::math::Vector3::UnitY()) *
-					rl::math::AngleAxis(orientation.x(), rl::math::Vector3::UnitX())
-				).toRotationMatrix();
+				offset.linear() = rl::math::AngleAxis(delta * rl::math::DEG2RAD, rl::math::Vector3::UnitY()).toRotationMatrix();
 				break;
 			case 5:
-				transform.linear() = (
-					rl::math::AngleAxis(value.value<rl::math::Real>() * rl::math::DEG2RAD, rl::math::Vector3::UnitZ()) *
-					rl::math::AngleAxis(orientation.y(), rl::math::Vector3::UnitY()) *
-					rl::math::AngleAxis(orientation.x(), rl::math::Vector3::UnitX())
-				).toRotationMatrix();
+				offset.linear() = rl::math::AngleAxis(delta * rl::math::DEG2RAD, rl::math::Vector3::UnitZ()).toRotationMatrix();
 				break;
 			default:
-				break;
+				return false;
 			}
 
+			// TCP 模式沿 TCP 轴偏移，否则沿法兰轴偏移，再变回法兰求 IK
+			transform = transform * offset;
 			rl::math::Transform goal = showTcp ? tcpToFlange(transform, T_flange_tcp) : transform;
 			
 			rl::math::Vector q = kinematic->getPosition();
