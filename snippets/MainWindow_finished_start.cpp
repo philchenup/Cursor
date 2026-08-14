@@ -7,6 +7,8 @@ connect(ikwork, &IKWorker::finished_start, this,
 		wholeTrajectory.clear();
 		wholeTrajectory.insert(wholeTrajectory.end(), jointTrajectory.begin(), jointTrajectory.end());
 
+		showToolPoints(toolPoints);
+
 		IKSolveParams params;
 		params.trajectory = mergedTraj;
 		params.T_flange_to_tcp = tcp_transform;
