@@ -15,7 +15,7 @@ inline rl::math::Transform flangeToTcp(
 inline rl::math::Transform flangeToTcp(
 	const rl::math::Transform& T_base_flange,
 	const rl::math::Transform::LinearMatrixType& R_flange_tcp,
-	const rl::math::Vector3& t_flange_tcp)
+	const rl::math::Vector3& t_flange_tcp = rl::math::Vector3::Zero())
 {
 	rl::math::Transform T_flange_tcp = rl::math::Transform::Identity();
 	T_flange_tcp.linear() = R_flange_tcp;
@@ -34,7 +34,7 @@ inline rl::math::Transform tcpToFlange(
 inline rl::math::Transform tcpToFlange(
 	const rl::math::Transform& T_base_tcp,
 	const rl::math::Transform::LinearMatrixType& R_flange_tcp,
-	const rl::math::Vector3& t_flange_tcp)
+	const rl::math::Vector3& t_flange_tcp = rl::math::Vector3::Zero())
 {
 	rl::math::Transform T_flange_tcp = rl::math::Transform::Identity();
 	T_flange_tcp.linear() = R_flange_tcp;
