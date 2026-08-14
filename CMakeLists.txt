@@ -18,6 +18,3 @@ target_link_libraries(read_model PUBLIC
   TKTopAlgo TKMesh TKSTL TKSTEP TKSTEPAttr TKSTEPBase TKXSBase
   TKV3d TKService TKXCAF TKLCAF TKXDESTEP TKCAF
 )
-
-add_executable(read_step_units examples/read_step_units.cpp)
-target_link_libraries(read_step_units PRIVATE read_model)
