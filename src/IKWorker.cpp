@@ -609,32 +609,34 @@ void IKWorker::doReturnHome(const IKReturnHomeParams & params)
         kinematic = m_kinematic;
     }
 
+    rl::math::Vector qFrozen;
+    bool sceneFrozen = false;
+    rl::mdl::Joint* railJoint = nullptr;
+    rl::math::Vector railMin0, railMax0;
+
     try
     {
         if (!kinematic)
             throw std::runtime_error(
                 "Kinematic not set. Call setKinematic() before doReturnHome().");
 
-        const std::size_t dof = kinematic->getDof();
+        MainWindow* mw = MainWindow::instance();
+        if (!mw || !mw->planner || !mw->model)
+            throw std::runtime_error("Planner/model not initialized.");
 
+        const std::size_t dof = kinematic->getDof();
         if (params.q_current.size() != static_cast<Eigen::Index>(dof))
             throw std::runtime_error("q_current size mismatch with model DOF.");
         if (params.q_home.size() != static_cast<Eigen::Index>(dof))
             throw std::runtime_error("q_home size mismatch with model DOF.");
         if (dof < 1)
             throw std::runtime_error("Model DOF < 1.");
-        if (params.jointStepRad <= 0.0 || params.railStepLen <= 0.0)
-            throw std::runtime_error("Interpolation step must be positive.");
-        if (params.tcpStepBack <= 0.0)
-            throw std::runtime_error("tcpStepBack must be positive.");
+        if (params.railStepLen <= 0.0)
+            throw std::runtime_error("railStepLen must be positive.");
 
         emit started();
 
-        const rl::math::Transform T_tcp_to_flange = params.T_flange_to_tcp.inverse();
-
-        // 备份地轨原始限位（结束/异常时还原）
-        rl::mdl::Joint* railJoint = (dof >= 1) ? kinematic->getJoint(0) : nullptr;
-        rl::math::Vector railMin0, railMax0;
+        railJoint = kinematic->getJoint(0);
         if (railJoint)
         {
             railMin0 = railJoint->getMinimum();
@@ -649,27 +651,22 @@ void IKWorker::doReturnHome(const IKReturnHomeParams & params)
             }
         };
 
-        // 地轨锁定在指定值附近（极窄窗口，相当于不可动）
-        auto lockRailAt = [&](double railValue) {
-            if (!railJoint || railJoint->getDofPosition() != 1) return;
-            const double eps = 1e-6;
-            const double v = std::min(std::max(railValue, railMin0(0)), railMax0(0));
-            rl::math::Vector lo(1), hi(1);
-            lo << (v - eps);
-            hi << (v + eps);
-            railJoint->setMinimum(lo);
-            railJoint->setMaximum(hi);
+        qFrozen = kinematic->getPosition();
+        QMetaObject::invokeMethod(mw, "setSceneFlushEnabled",
+            Qt::BlockingQueuedConnection, Q_ARG(bool, false));
+        sceneFrozen = true;
+
+        auto restoreDisplay = [&]() {
+            restoreRail();
+            kinematic->setPosition(qFrozen);
+            kinematic->forwardPosition();
+            QMetaObject::invokeMethod(mw, "setSceneFlushEnabled",
+                Qt::QueuedConnection, Q_ARG(bool, true));
         };
 
-        std::vector<rl::math::Vector> jointTrajectory;
-        jointTrajectory.reserve(256);
-
-        int successCount = 0, failCount = 0;
         int lastReportedPercent = -1;
-
         auto reportProgress = [&](int percent) {
-            if (percent < 0) percent = 0;
-            if (percent > 100) percent = 100;
+            percent = std::max(0, std::min(100, percent));
             if (percent != lastReportedPercent)
             {
                 emit progress(percent);
@@ -677,204 +674,201 @@ void IKWorker::doReturnHome(const IKReturnHomeParams & params)
             }
         };
 
-        // 用给定 seed 对一个 TCP 目标位姿求 IK
-        auto solveTcpGoal = [&](const rl::math::Transform& T_world_tcp,
-            const rl::math::Vector& seed,
-            rl::math::Vector& q_out) -> bool
-        {
-            const rl::math::Transform T_world_flange = T_world_tcp * T_tcp_to_flange;
-
-            rl::mdl::JacobianInverseKinematics ik(kinematic.get());
-            ik.setDuration(std::chrono::milliseconds(params.timeoutMs));
-            ik.addGoal(T_world_flange, 0);
-
-            kinematic->setPosition(seed);
-            const bool ok = ik.solve();
-            if (ok)
-            {
-                q_out = kinematic->getPosition();
-                ++successCount;
-                return true;
-            }
-            ++failCount;
-            return false;
-        };
-
-        // —— 当前 TCP 位姿（法兰 → TCP）——
-        kinematic->setPosition(params.q_current);
-        kinematic->forwardPosition();
-        const rl::math::Transform T_world_flange_now = kinematic->getOperationalPosition(0);
-        const rl::math::Transform T_world_tcp_now = T_world_flange_now * params.T_flange_to_tcp;
-
-        jointTrajectory.push_back(params.q_current);
-
-        if (m_stopRequested.load())
-        {
+        auto checkStop = [&]() -> bool {
+            if (!m_stopRequested.load())
+                return false;
+            restoreDisplay();
             m_running.store(false);
             emit aborted();
-            return;
-        }
+            return true;
+        };
 
-        // ========== 第 1 步：沿 TCP -Z 后退 tcpStepBack → 点 A ==========
-        lockRailAt(params.q_current(0));
+        // Home 手臂 + 当前地轨（第 1 步终点 / 第 2 步起点）
+        rl::math::Vector qArmHome = params.q_home;
+        qArmHome(0) = params.q_current(0);
 
-        const double backDist = std::abs(params.tcpStepBack);
-        const int segBack = std::max(1, static_cast<int>(std::ceil(backDist / params.railStepLen)));
-
-        rl::math::Vector q_seed = params.q_current;
-        rl::math::Vector q_A = params.q_current; // 点 A 的关节解
-
-        for (int i = 1; i <= segBack; ++i)
+        // ========== path1：地轨锁定，RRT 当前构型 → Home 关节角 ==========
+        if (railJoint && railJoint->getDofPosition() == 1)
         {
-            if (m_stopRequested.load())
-            {
-                restoreRail();
-                m_running.store(false);
-                emit aborted();
-                return;
-            }
-
-            const double t = static_cast<double>(i) / static_cast<double>(segBack);
-            rl::math::Transform T_back_in_tcp = rl::math::Transform::Identity();
-            T_back_in_tcp.translation() = rl::math::Vector3(0.0, 0.0, -t * backDist);
-            const rl::math::Transform T_world_tcp_A = T_world_tcp_now * T_back_in_tcp;
-
-            if (!solveTcpGoal(T_world_tcp_A, q_seed, q_A))
-            {
-                restoreRail();
-                m_running.store(false);
-                emit failed(QStringLiteral("IK failed: TCP -Z step-back to point A."));
-                return;
-            }
-            // 地轨保持锁定值，避免 IK 窗口 eps 漂移
-            q_A(0) = params.q_current(0);
-            jointTrajectory.push_back(q_A);
-            q_seed = q_A;
-
-            // 0% → 30%
-            reportProgress(static_cast<int>(30.0 * i / segBack));
+            const double eps = 1e-6;
+            const double v = std::min(std::max(params.q_current(0), railMin0(0)), railMax0(0));
+            rl::math::Vector lo(1), hi(1);
+            lo << (v - eps);
+            hi << (v + eps);
+            railJoint->setMinimum(lo);
+            railJoint->setMaximum(hi);
         }
 
-        // 后续为关节空间规划，恢复地轨限位
+        std::vector<rl::math::Vector> path1;
+        if ((params.q_current - qArmHome).cwiseAbs().maxCoeff() <= 1e-9)
+        {
+            path1.push_back(params.q_current);
+        }
+        else
+        {
+            QMutexLocker lock(&mw->mutex);
+
+            if (!mw->start)
+                mw->start = std::make_shared<rl::math::Vector>(params.q_current);
+            else
+                *mw->start = params.q_current;
+            if (!mw->goal)
+                mw->goal = std::make_shared<rl::math::Vector>(qArmHome);
+            else
+                *mw->goal = qArmHome;
+
+            mw->planner->start = mw->start.get();
+            mw->planner->goal = mw->goal.get();
+            mw->planner->viewer = nullptr;
+
+            if (!mw->planner->verify())
+            {
+                restoreDisplay();
+                m_running.store(false);
+                emit failed(QStringLiteral("Invalid start or goal configuration."));
+                return;
+            }
+
+            if (checkStop())
+                return;
+
+            const bool solved = mw->planner->solve();
+            if (!solved)
+            {
+                restoreDisplay();
+                m_running.store(false);
+                emit failed(QStringLiteral("Planner failed: current pose to home joints."));
+                return;
+            }
+
+            rl::plan::VectorList sparse = mw->planner->getPath();
+            if (mw->optimizer)
+            {
+                mw->optimizer->setViewer(nullptr);
+                mw->optimizer->process(sparse);
+            }
+
+            const double delta = (params.jointStepRad > 0.0) ? params.jointStepRad : 1.0;
+            rl::math::Vector inter(mw->model->getDofPosition());
+            if (!sparse.empty())
+                path1.push_back(*sparse.begin());
+
+            rl::plan::VectorList::iterator it = sparse.begin();
+            rl::plan::VectorList::iterator jt = sparse.begin();
+            if (jt != sparse.end())
+                ++jt;
+            for (; it != sparse.end() && jt != sparse.end(); ++it, ++jt)
+            {
+                if (checkStop())
+                    return;
+                const rl::math::Real steps =
+                    std::ceil(mw->model->distance(*it, *jt) / delta);
+                const rl::math::Real n = (steps < 1.0) ? 1.0 : steps;
+                for (std::size_t k = 1; k < static_cast<std::size_t>(n) + 1; ++k)
+                {
+                    mw->model->interpolate(*it, *jt, static_cast<rl::math::Real>(k) / n, inter);
+                    path1.push_back(inter);
+                }
+            }
+        }
+
+        // 地轨保持当前值，避免限位窗口 eps 漂移
+        for (rl::math::Vector& q : path1)
+            q(0) = params.q_current(0);
+
         restoreRail();
+        reportProgress(70);
 
-        // Joint5：地轨=0，机械臂 J1..J6 = 1..6 → Joint5 = 5
-        const Eigen::Index J5_INDEX = 5;
-        if (static_cast<std::size_t>(J5_INDEX) >= dof)
-            throw std::runtime_error("J5_INDEX out of range for model DOF.");
+        if (checkStop())
+            return;
 
-        constexpr double kPi = 3.14159265358979323846;
-        const double kJoint5FinalRad = -kPi / 2.0; // -90°
+        // ========== path2：只动地轨 Joint0 回 Home，手臂保持 Home ==========
+        std::vector<rl::math::Vector> path2;
+        rl::math::Vector qRail = path1.empty() ? qArmHome : path1.back();
+        for (Eigen::Index j = 1; j < qRail.size(); ++j)
+            qRail(j) = params.q_home(j);
+        path2.push_back(qRail);
 
-        // ========== 第 2 步：点 A → 暂存 Home（地轨保持 A，Joint5 先到 0）==========
-        rl::math::Vector q_staging = params.q_home;
-        q_staging(0) = q_A(0);
-        q_staging(J5_INDEX) = 0.0;
-
-        double maxJointDelta = 0.0;
-        for (Eigen::Index j = 1; j < q_A.size(); ++j)
+        const double y0 = qRail(0);
+        const double yTarget = params.q_home(0);
+        const double yDir = (yTarget >= y0) ? 1.0 : -1.0;
+        double y = y0;
+        while (std::abs(yTarget - y) > params.railStepLen)
         {
-            const double d = std::abs(q_staging(j) - q_A(j));
-            if (d > maxJointDelta) maxJointDelta = d;
-        }
-        const int segArm = (maxJointDelta <= 1e-12)
-            ? 0
-            : std::max(1, static_cast<int>(std::ceil(maxJointDelta / params.jointStepRad)));
-
-        for (int i = 1; i <= segArm; ++i)
-        {
-            if (m_stopRequested.load())
-            {
-                m_running.store(false);
-                emit aborted();
+            if (checkStop())
                 return;
-            }
-            const double t = static_cast<double>(i) / static_cast<double>(segArm);
-            rl::math::Vector q_interp = (1.0 - t) * q_A + t * q_staging;
-            jointTrajectory.push_back(q_interp);
-            // 30% → 70%
-            reportProgress(30 + static_cast<int>(40.0 * i / segArm));
+            y += yDir * params.railStepLen;
+            qRail(0) = y;
+            path2.push_back(qRail);
         }
-        if (segArm == 0)
-            reportProgress(70);
-
-        // ========== 第 3 步：只动地轨到 q_home(0)，手臂保持 staging ==========
-        const rl::math::Vector q_rail_start = q_staging;
-        const double railStart = q_rail_start(0);
-        const double railEnd = params.q_home(0);
-        const double railDelta = std::abs(railEnd - railStart);
-        const int segRail = (railDelta <= 1e-12)
-            ? 0
-            : std::max(1, static_cast<int>(std::ceil(railDelta / params.railStepLen)));
-
-        rl::math::Vector q_after_rail = q_rail_start;
-        for (int i = 1; i <= segRail; ++i)
+        if (std::abs(yTarget - y) > 1e-9)
         {
-            if (m_stopRequested.load())
-            {
-                m_running.store(false);
-                emit aborted();
-                return;
-            }
-            const double t = static_cast<double>(i) / static_cast<double>(segRail);
-            q_after_rail = q_rail_start;
-            q_after_rail(0) = (1.0 - t) * railStart + t * railEnd;
-            q_after_rail(J5_INDEX) = 0.0;
-            jointTrajectory.push_back(q_after_rail);
-            // 70% → 90%
-            reportProgress(70 + static_cast<int>(20.0 * i / segRail));
+            qRail(0) = yTarget;
+            path2.push_back(qRail);
         }
-        if (segRail == 0)
-            reportProgress(90);
 
-        // ========== 第 4 步：Joint5 0 → -90°，最后对齐 q_home ==========
-        const rl::math::Vector q_j5_start = q_after_rail;
-        const double j5Start = q_j5_start(J5_INDEX);
-        const double j5End = kJoint5FinalRad;
-        const double j5Delta = std::abs(j5End - j5Start);
-        const int segJ5 = (j5Delta <= 1e-12)
-            ? 0
-            : std::max(1, static_cast<int>(std::ceil(j5Delta / params.jointStepRad)));
+        reportProgress(90);
 
-        for (int i = 1; i <= segJ5; ++i)
+        // ========== 拼接 path1 + path2 ==========
+        std::vector<rl::math::Vector> jointTrajectory = path1;
+        std::size_t p2Begin = 0;
+        if (!path2.empty() && !path1.empty()
+            && (path2.front() - path1.back()).cwiseAbs().maxCoeff() < 1e-6)
         {
-            if (m_stopRequested.load())
-            {
-                m_running.store(false);
-                emit aborted();
-                return;
-            }
-            const double t = static_cast<double>(i) / static_cast<double>(segJ5);
-            rl::math::Vector q_interp = q_j5_start;
-            q_interp(J5_INDEX) = (1.0 - t) * j5Start + t * j5End;
-            if (i == segJ5)
-                q_interp = params.q_home;
-            jointTrajectory.push_back(q_interp);
-            // 90% → 100%
-            reportProgress(90 + static_cast<int>(10.0 * i / segJ5));
+            p2Begin = 1;
         }
-        if (segJ5 == 0 && (jointTrajectory.empty()
-            || (jointTrajectory.back() - params.q_home).cwiseAbs().maxCoeff() > 1e-12))
+        jointTrajectory.insert(jointTrajectory.end(),
+            path2.begin() + static_cast<std::ptrdiff_t>(p2Begin), path2.end());
+
+        if (jointTrajectory.empty()
+            || (jointTrajectory.back() - params.q_home).cwiseAbs().maxCoeff() > 1e-9)
         {
             jointTrajectory.push_back(params.q_home);
         }
 
         reportProgress(100);
 
-        const int attempts = successCount + failCount;
-        const double ratio = (attempts > 0)
-            ? (static_cast<double>(successCount) / attempts) : 1.0;
-
+        restoreDisplay();
         m_running.store(false);
-        emit finished_return(jointTrajectory, ratio * 100);
+        emit finished_return(jointTrajectory, 100.0);
     }
     catch (const std::exception& e)
     {
+        if (railJoint && railMin0.size() > 0)
+        {
+            railJoint->setMinimum(railMin0);
+            railJoint->setMaximum(railMax0);
+        }
+        if (sceneFrozen && kinematic && qFrozen.size() > 0)
+        {
+            kinematic->setPosition(qFrozen);
+            kinematic->forwardPosition();
+        }
+        if (MainWindow* mw = MainWindow::instance())
+        {
+            QMetaObject::invokeMethod(mw, "setSceneFlushEnabled",
+                Qt::QueuedConnection, Q_ARG(bool, true));
+        }
         m_running.store(false);
         emit failed(QString::fromUtf8(e.what()));
     }
     catch (...)
     {
+        if (railJoint && railMin0.size() > 0)
+        {
+            railJoint->setMinimum(railMin0);
+            railJoint->setMaximum(railMax0);
+        }
+        if (sceneFrozen && kinematic && qFrozen.size() > 0)
+        {
+            kinematic->setPosition(qFrozen);
+            kinematic->forwardPosition();
+        }
+        if (MainWindow* mw = MainWindow::instance())
+        {
+            QMetaObject::invokeMethod(mw, "setSceneFlushEnabled",
+                Qt::QueuedConnection, Q_ARG(bool, true));
+        }
         m_running.store(false);
         emit failed(QStringLiteral("Unknown exception in IK worker (return home)."));
     }
