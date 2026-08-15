@@ -2,6 +2,7 @@
 #include "MainWindow.h"
 
 #include <QElapsedTimer>
+#include <QMetaObject>
 #include <QMutexLocker>
 #include <chrono>
 #include <algorithm>
@@ -890,6 +891,9 @@ void IKWorker::doGoToStart(const IKGoToStartParams & params)
         kinematic = m_kinematic;
     }
 
+    rl::math::Vector qFrozen;
+    bool sceneFrozen = false;
+
     try
     {
         if (!kinematic)
@@ -928,6 +932,20 @@ void IKWorker::doGoToStart(const IKGoToStartParams & params)
             }
         };
 
+        // 规划期间停掉 occtUpdate，场景机械臂保持 qFrozen
+        qFrozen = kinematic->getPosition();
+        QMetaObject::invokeMethod(mw, "setSceneFlushEnabled",
+            Qt::BlockingQueuedConnection, Q_ARG(bool, false));
+        sceneFrozen = true;
+
+        auto restoreDisplay = [&]() {
+            restoreRail();
+            kinematic->setPosition(qFrozen);
+            kinematic->forwardPosition();
+            QMetaObject::invokeMethod(mw, "setSceneFlushEnabled",
+                Qt::QueuedConnection, Q_ARG(bool, true));
+        };
+
         int lastReportedPercent = -1;
         auto reportProgress = [&](int percent) {
             percent = std::max(0, std::min(100, percent));
@@ -949,7 +967,7 @@ void IKWorker::doGoToStart(const IKGoToStartParams & params)
         auto checkStop = [&]() -> bool {
             if (!m_stopRequested.load())
                 return false;
-            restoreRail();
+            restoreDisplay();
             m_running.store(false);
             emit aborted();
             return true;
@@ -1003,7 +1021,7 @@ void IKWorker::doGoToStart(const IKGoToStartParams & params)
         kinematic->setPosition(path1.back());
         if (!ik.solve())
         {
-            restoreRail();
+            restoreDisplay();
             m_running.store(false);
             emit failed(QStringLiteral("IK failed: weld start configuration."));
             return;
@@ -1034,6 +1052,7 @@ void IKWorker::doGoToStart(const IKGoToStartParams & params)
 
             if (!mw->planner->verify())
             {
+                restoreDisplay();
                 m_running.store(false);
                 emit failed(QStringLiteral("Invalid start or goal configuration."));
                 return;
@@ -1045,6 +1064,7 @@ void IKWorker::doGoToStart(const IKGoToStartParams & params)
             const bool solved = mw->planner->solve();
             if (!solved)
             {
+                restoreDisplay();
                 m_running.store(false);
                 emit failed(QStringLiteral("Planner failed: home-rail pose to weld start."));
                 return;
@@ -1104,19 +1124,37 @@ void IKWorker::doGoToStart(const IKGoToStartParams & params)
 
         reportProgress(100);
 
-        kinematic->setPosition(kinematic->getHomePosition());
-        kinematic->forwardPosition();
-
+        restoreDisplay();
         m_running.store(false);
         emit finished_start(jointTrajectory, toolPoints, 100.0);
     }
     catch (const std::exception& e)
     {
+        if (sceneFrozen && kinematic && qFrozen.size() > 0)
+        {
+            kinematic->setPosition(qFrozen);
+            kinematic->forwardPosition();
+        }
+        if (MainWindow* mw = MainWindow::instance())
+        {
+            QMetaObject::invokeMethod(mw, "setSceneFlushEnabled",
+                Qt::QueuedConnection, Q_ARG(bool, true));
+        }
         m_running.store(false);
         emit failed(QString::fromUtf8(e.what()));
     }
     catch (...)
     {
+        if (sceneFrozen && kinematic && qFrozen.size() > 0)
+        {
+            kinematic->setPosition(qFrozen);
+            kinematic->forwardPosition();
+        }
+        if (MainWindow* mw = MainWindow::instance())
+        {
+            QMetaObject::invokeMethod(mw, "setSceneFlushEnabled",
+                Qt::QueuedConnection, Q_ARG(bool, true));
+        }
         m_running.store(false);
         emit failed(QStringLiteral("Unknown exception in IK worker (go to start)."));
     }
