@@ -14,9 +14,14 @@
 #include <rl/sg/Body.h>
 
 class QEvent;
+class QMouseEvent;
+class QObject;
+class QPoint;
+class QWidget;
 class SoFieldSensor;
 class SoPath;
 class SoSensor;
+class MovableWrlEventFilter;
 
 class MovableWrl
 {
@@ -52,7 +57,6 @@ public:
 	MovableWrl* addWrl(const std::string& wrlFile,
 		const rl::math::Transform& initialPose = rl::math::Transform::Identity());
 
-	// Ctrl+左键选中后进入编辑；ESC 退出并恢复转相机
 	void setEditMode(bool on);
 	bool isEditMode() const;
 	void exitManipulator();
@@ -68,14 +72,18 @@ private:
 	MovableWrl* findByPath(SoPath* path) const;
 	void attachManip(MovableWrl* item);
 	void detachManip(MovableWrl* item);
-	void pickAt(int x, int y);
+	void pickFromWidget(QWidget* widget, const QPoint& pos);
+	bool isUnderExaminer(QObject* watched) const;
+	void installEventFilter();
 
 	SoSeparator* movableRoot_ = nullptr;
 	SoQtExaminerViewer* examiner_ = nullptr;
 	std::vector<MovableWrl*> items_;
 	MovableWrl* selected_ = nullptr;
+	MovableWrlEventFilter* eventFilter_ = nullptr;
 
 	friend class MovableWrl;
+	friend class MovableWrlEventFilter;
 };
 
 inline MovableWrl* addMovableWrl(SoGroup* sceneParent,

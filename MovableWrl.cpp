@@ -3,12 +3,16 @@
 #include <cstdlib>
 #include <stdexcept>
 
-#include <QtGlobal>
+#include <QApplication>
+#include <QCoreApplication>
 #include <QDebug>
 #include <QEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QObject>
 #include <QString>
+#include <QtGlobal>
+#include <QWidget>
 
 #include <Inventor/SoDB.h>
 #include <Inventor/SoFullPath.h>
@@ -17,8 +21,11 @@
 #include <Inventor/SoPickedPoint.h>
 #include <Inventor/SoPath.h>
 #include <Inventor/actions/SoRayPickAction.h>
+#include <Inventor/actions/SoSearchAction.h>
 #include <Inventor/manips/SoTransformManip.h>
 #include <Inventor/manips/SoTransformerManip.h>
+#include <Inventor/nodes/SoCamera.h>
+#include <Inventor/SbViewVolume.h>
 #include <Inventor/sensors/SoFieldSensor.h>
 #include <Inventor/sensors/SoSensor.h>
 
@@ -100,7 +107,61 @@ QPoint mousePos(const QMouseEvent* event)
 	return event->pos();
 #endif
 }
+
+qreal widgetDpr(const QWidget* widget)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(5, 6, 0)
+	return widget->devicePixelRatioF();
+#else
+	Q_UNUSED(widget);
+	return 1.0;
+#endif
 }
+}
+
+class MovableWrlEventFilter : public QObject
+{
+public:
+	explicit MovableWrlEventFilter(MovableWrlManager* manager, QObject* parent = nullptr) :
+		QObject(parent),
+		manager_(manager)
+	{
+	}
+
+	bool eventFilter(QObject* watched, QEvent* event) override
+	{
+		if (event->type() == QEvent::KeyPress)
+		{
+			const auto* keyEvent = static_cast<QKeyEvent*>(event);
+			if (keyEvent->key() == Qt::Key_Escape)
+			{
+				manager_->exitManipulator();
+				return true;
+			}
+		}
+
+		if (event->type() == QEvent::MouseButtonPress)
+		{
+			const auto* mouseEvent = static_cast<QMouseEvent*>(event);
+			if (mouseEvent->button() == Qt::LeftButton &&
+				(mouseEvent->modifiers() & Qt::ControlModifier) &&
+				manager_->isUnderExaminer(watched))
+			{
+				auto* widget = qobject_cast<QWidget*>(watched);
+				if (widget)
+				{
+					manager_->pickFromWidget(widget, mousePos(mouseEvent));
+					return true;
+				}
+			}
+		}
+
+		return QObject::eventFilter(watched, event);
+	}
+
+private:
+	MovableWrlManager* manager_;
+};
 
 MovableWrl::MovableWrl() = default;
 
@@ -219,6 +280,42 @@ MovableWrlManager::MovableWrlManager(SoGroup* sceneParent, SoQtExaminerViewer* e
 
 	examiner_->setEventCallback(&MovableWrlManager::onViewerEvent, this);
 	examiner_->setViewing(TRUE);
+	installEventFilter();
+}
+
+void MovableWrlManager::installEventFilter()
+{
+	eventFilter_ = new MovableWrlEventFilter(this);
+
+	if (QWidget* widget = examiner_->getWidget())
+	{
+		widget->installEventFilter(eventFilter_);
+		const QList<QWidget*> children = widget->findChildren<QWidget*>();
+		for (QWidget* child : children)
+		{
+			child->installEventFilter(eventFilter_);
+		}
+	}
+
+	if (QCoreApplication::instance())
+	{
+		QCoreApplication::instance()->installEventFilter(eventFilter_);
+	}
+}
+
+bool MovableWrlManager::isUnderExaminer(QObject* watched) const
+{
+	QWidget* root = examiner_ ? examiner_->getWidget() : nullptr;
+	auto* widget = qobject_cast<QWidget*>(watched);
+	while (widget)
+	{
+		if (widget == root)
+		{
+			return true;
+		}
+		widget = widget->parentWidget();
+	}
+	return false;
 }
 
 MovableWrl* MovableWrlManager::addWrl(const std::string& wrlFile, const rl::math::Transform& initialPose)
@@ -271,6 +368,24 @@ MovableWrl* MovableWrlManager::selectedItem() const
 
 SoPath* MovableWrlManager::makePosePath(MovableWrl* item) const
 {
+	if (!item || !item->poseNode() || !examiner_->getSceneGraph())
+	{
+		return nullptr;
+	}
+
+	SoSearchAction search;
+	search.setNode(item->poseNode());
+	search.setSearchingAll(TRUE);
+	search.setInterest(SoSearchAction::FIRST);
+	search.apply(examiner_->getSceneGraph());
+
+	SoPath* found = search.getPath();
+	if (found)
+	{
+		found->ref();
+		return found;
+	}
+
 	SoPath* path = new SoPath(movableRoot_);
 	path->ref();
 	path->append(item->root);
@@ -320,6 +435,12 @@ void MovableWrlManager::attachManip(MovableWrl* item)
 	}
 
 	SoPath* path = makePosePath(item);
+	if (!path)
+	{
+		qWarning("MovableWrl: pose path not found");
+		return;
+	}
+
 	SoTransformerManip* manip = new SoTransformerManip();
 	const SbBool ok = manip->replaceNode(path);
 	path->unref();
@@ -335,6 +456,7 @@ void MovableWrlManager::attachManip(MovableWrl* item)
 	item->attachPoseSensors();
 	selected_ = item;
 	setEditMode(true);
+	qDebug() << "MovableWrl selected, drag arrows/spheres; ESC to exit";
 }
 
 void MovableWrlManager::detachManip(MovableWrl* item)
@@ -351,32 +473,97 @@ void MovableWrlManager::detachManip(MovableWrl* item)
 	}
 
 	SoPath* path = makePosePath(item);
+	if (!path)
+	{
+		return;
+	}
+
 	static_cast<SoTransformManip*>(t)->replaceManip(path, new SoTransform());
 	path->unref();
 	item->attachPoseSensors();
 	item->syncCollisionBody();
 }
 
-void MovableWrlManager::pickAt(int x, int y)
+void MovableWrlManager::pickFromWidget(QWidget* widget, const QPoint& pos)
 {
-	const SbVec2s glSize = examiner_->getViewportRegion().getViewportSizePixels();
-	const int iy = glSize[1] - y - 1;
-
-	SoRayPickAction pick(examiner_->getViewportRegion());
-	pick.setPoint(SbVec2s(static_cast<short>(x), static_cast<short>(iy)));
-	pick.setPickAll(FALSE);
-	pick.apply(examiner_->getSceneGraph());
-
-	SoPickedPoint* picked = pick.getPickedPoint();
-	if (!picked)
+	if (!widget || !examiner_ || items_.empty())
 	{
-		exitManipulator();
 		return;
 	}
 
-	MovableWrl* item = findByPath(picked->getPath());
+	const qreal dpr = widgetDpr(widget);
+	const int x = qRound(pos.x() * dpr);
+	const int yTop = qRound(pos.y() * dpr);
+	const int height = qRound(widget->height() * dpr);
+	const int yBottom = height - yTop - 1;
+
+	SoCamera* camera = examiner_->getCamera();
+	const SbViewportRegion vp = examiner_->getViewportRegion();
+
+	auto pickAtPixel = [&](int px, int py) -> MovableWrl*
+	{
+		SoRayPickAction pick(vp);
+		pick.setPickAll(TRUE);
+		pick.setRadius(12.0f);
+
+		if (camera)
+		{
+			const SbVec2s vpsize = vp.getViewportSizePixels();
+			if (vpsize[0] <= 0 || vpsize[1] <= 0)
+			{
+				return nullptr;
+			}
+
+			const SbVec2f ndc(
+				(static_cast<float>(px) + 0.5f) / static_cast<float>(vpsize[0]),
+				(static_cast<float>(py) + 0.5f) / static_cast<float>(vpsize[1])
+			);
+			const SbViewVolume volume = camera->getViewVolume(vp.getViewportAspectRatio());
+			const SbVec3f nearPt = volume.getPlanePoint(camera->nearDistance.getValue(), ndc);
+			const SbVec3f farPt = volume.getPlanePoint(camera->farDistance.getValue(), ndc);
+			pick.setRay(nearPt, farPt - nearPt);
+		}
+		else
+		{
+			pick.setPoint(SbVec2s(static_cast<short>(px), static_cast<short>(py)));
+		}
+
+		pick.apply(movableRoot_);
+
+		const SoPickedPointList& list = pick.getPickedPointList();
+		for (int i = 0; i < list.getLength(); ++i)
+		{
+			if (MovableWrl* item = findByPath(list[i]->getPath()))
+			{
+				return item;
+			}
+		}
+
+		if (examiner_->getSceneGraph())
+		{
+			pick.apply(examiner_->getSceneGraph());
+			const SoPickedPointList& sceneList = pick.getPickedPointList();
+			for (int i = 0; i < sceneList.getLength(); ++i)
+			{
+				if (MovableWrl* item = findByPath(sceneList[i]->getPath()))
+				{
+					return item;
+				}
+			}
+		}
+
+		return nullptr;
+	};
+
+	MovableWrl* item = pickAtPixel(x, yBottom);
 	if (!item)
 	{
+		item = pickAtPixel(x, yTop);
+	}
+
+	if (!item)
+	{
+		qDebug() << "MovableWrl: Ctrl+click missed model at" << pos;
 		exitManipulator();
 		return;
 	}
@@ -404,8 +591,10 @@ SbBool MovableWrlManager::onViewerEvent(void* userData, QEvent* event)
 		if (mouseEvent->button() == Qt::LeftButton &&
 			(mouseEvent->modifiers() & Qt::ControlModifier))
 		{
-			const QPoint pos = mousePos(mouseEvent);
-			self->pickAt(pos.x(), pos.y());
+			if (QWidget* widget = self->examiner_->getWidget())
+			{
+				self->pickFromWidget(widget, mousePos(mouseEvent));
+			}
 			return TRUE;
 		}
 	}
