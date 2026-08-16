@@ -359,7 +359,7 @@ void MovableWrlManager::detachManip(MovableWrl* item)
 
 void MovableWrlManager::pickAt(int x, int y)
 {
-	const SbVec2s glSize = examiner_->getGLSize();
+	const SbVec2s glSize = examiner_->getViewportRegion().getViewportSizePixels();
 	const int iy = glSize[1] - y - 1;
 
 	SoRayPickAction pick(examiner_->getViewportRegion());
