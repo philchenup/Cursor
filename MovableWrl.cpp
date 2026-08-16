@@ -3,16 +3,21 @@
 #include <cstdlib>
 #include <stdexcept>
 
+#include <QtGlobal>
 #include <QDebug>
+#include <QEvent>
+#include <QKeyEvent>
+#include <QMouseEvent>
 #include <QString>
 
 #include <Inventor/SoDB.h>
 #include <Inventor/SoFullPath.h>
 #include <Inventor/SoInput.h>
 #include <Inventor/SoInteraction.h>
+#include <Inventor/SoPickedPoint.h>
 #include <Inventor/SoPath.h>
-#include <Inventor/actions/SoBoxHighlightRenderAction.h>
-#include <Inventor/actions/SoGLRenderAction.h>
+#include <Inventor/actions/SoRayPickAction.h>
+#include <Inventor/manips/SoTransformManip.h>
 #include <Inventor/manips/SoTransformerManip.h>
 #include <Inventor/sensors/SoFieldSensor.h>
 #include <Inventor/sensors/SoSensor.h>
@@ -85,6 +90,15 @@ void addCoinDraggerSearchPaths()
 	{
 		SoInput::addDirectoryFirst(draggerDir);
 	}
+}
+
+QPoint mousePos(const QMouseEvent* event)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+	return event->position().toPoint();
+#else
+	return event->pos();
+#endif
 }
 }
 
@@ -198,51 +212,70 @@ MovableWrlManager::MovableWrlManager(SoGroup* sceneParent, SoQtExaminerViewer* e
 {
 	addCoinDraggerSearchPaths();
 
-	selection_ = new SoSelection();
-	selection_->ref();
-	selection_->policy = SoSelection::SINGLE;
-	selection_->addSelectionCallback(onSelect, this);
-	selection_->addDeselectionCallback(onDeselect, this);
-	sceneParent->addChild(selection_);
+	movableRoot_ = new SoSeparator();
+	movableRoot_->ref();
+	movableRoot_->setName("movableWrlRoot");
+	sceneParent->addChild(movableRoot_);
 
-	SoBoxHighlightRenderAction* highlight = new SoBoxHighlightRenderAction();
-	highlight->setTransparencyType(SoGLRenderAction::SORTED_OBJECT_BLEND);
-	examiner_->setGLRenderAction(highlight);
-	examiner_->redrawOnSelectionChange(selection_);
+	examiner_->setEventCallback(&MovableWrlManager::onViewerEvent, this);
+	examiner_->setViewing(TRUE);
 }
 
 MovableWrl* MovableWrlManager::addWrl(const std::string& wrlFile, const rl::math::Transform& initialPose)
 {
 	SoNode* wrl = readWrl(wrlFile);
 
-	SoTransformerManip* manip = new SoTransformerManip();
-	rlToSo(initialPose, manip);
+	SoTransform* transform = new SoTransform();
+	rlToSo(initialPose, transform);
 
 	MovableWrl* item = new MovableWrl();
 	item->root = new SoSeparator();
 	item->root->ref();
 	item->root->setName("movableWrl");
-	item->root->addChild(manip);
+	item->root->addChild(transform);
 	item->root->addChild(wrl);
 	item->attachPoseSensors();
 
-	selection_->addChild(item->root);
+	movableRoot_->addChild(item->root);
 	items_.push_back(item);
 
-	setEditMode(true);
 	qDebug() << "MovableWrl loaded:" << QString::fromStdString(wrlFile)
-		<< "- press ESC or setEditMode(false) to rotate the camera";
+		<< "- Ctrl+Left click to show gizmos, ESC to return to camera";
 	return item;
 }
 
 void MovableWrlManager::setEditMode(bool on)
 {
-	examiner_->setViewing(!on);
+	examiner_->setViewing(on ? FALSE : TRUE);
 }
 
 bool MovableWrlManager::isEditMode() const
 {
 	return !examiner_->isViewing();
+}
+
+void MovableWrlManager::exitManipulator()
+{
+	if (selected_)
+	{
+		detachManip(selected_);
+		selected_ = nullptr;
+	}
+	examiner_->setViewing(TRUE);
+}
+
+MovableWrl* MovableWrlManager::selectedItem() const
+{
+	return selected_;
+}
+
+SoPath* MovableWrlManager::makePosePath(MovableWrl* item) const
+{
+	SoPath* path = new SoPath(movableRoot_);
+	path->ref();
+	path->append(item->root);
+	path->append(item->poseNode());
+	return path;
 }
 
 MovableWrl* MovableWrlManager::findByPath(SoPath* path) const
@@ -266,20 +299,118 @@ MovableWrl* MovableWrlManager::findByPath(SoPath* path) const
 	return nullptr;
 }
 
-void MovableWrlManager::onSelect(void* userData, SoPath* /*path*/)
+void MovableWrlManager::attachManip(MovableWrl* item)
 {
-	auto* self = static_cast<MovableWrlManager*>(userData);
-	self->selection_->touch();
+	if (!item)
+	{
+		return;
+	}
+
+	if (selected_ && selected_ != item)
+	{
+		detachManip(selected_);
+	}
+
+	SoTransform* t = item->poseNode();
+	if (!t || t->isOfType(SoTransformManip::getClassTypeId()))
+	{
+		selected_ = item;
+		setEditMode(true);
+		return;
+	}
+
+	SoPath* path = makePosePath(item);
+	SoTransformerManip* manip = new SoTransformerManip();
+	const SbBool ok = manip->replaceNode(path);
+	path->unref();
+
+	if (!ok)
+	{
+		qWarning("MovableWrl: replaceNode failed, manipulator not shown");
+		selected_ = nullptr;
+		examiner_->setViewing(TRUE);
+		return;
+	}
+
+	item->attachPoseSensors();
+	selected_ = item;
+	setEditMode(true);
 }
 
-void MovableWrlManager::onDeselect(void* userData, SoPath* path)
+void MovableWrlManager::detachManip(MovableWrl* item)
+{
+	if (!item)
+	{
+		return;
+	}
+
+	SoTransform* t = item->poseNode();
+	if (!t || !t->isOfType(SoTransformManip::getClassTypeId()))
+	{
+		return;
+	}
+
+	SoPath* path = makePosePath(item);
+	static_cast<SoTransformManip*>(t)->replaceManip(path, new SoTransform());
+	path->unref();
+	item->attachPoseSensors();
+	item->syncCollisionBody();
+}
+
+void MovableWrlManager::pickAt(int x, int y)
+{
+	const SbVec2s glSize = examiner_->getGLSize();
+	const int iy = glSize[1] - y - 1;
+
+	SoRayPickAction pick(examiner_->getViewportRegion());
+	pick.setPoint(SbVec2s(static_cast<short>(x), static_cast<short>(iy)));
+	pick.setPickAll(FALSE);
+	pick.apply(examiner_->getSceneGraph());
+
+	SoPickedPoint* picked = pick.getPickedPoint();
+	if (!picked)
+	{
+		exitManipulator();
+		return;
+	}
+
+	MovableWrl* item = findByPath(picked->getPath());
+	if (!item)
+	{
+		exitManipulator();
+		return;
+	}
+
+	attachManip(item);
+}
+
+SbBool MovableWrlManager::onViewerEvent(void* userData, QEvent* event)
 {
 	auto* self = static_cast<MovableWrlManager*>(userData);
-	if (MovableWrl* item = self->findByPath(path))
+
+	if (event->type() == QEvent::KeyPress)
 	{
-		item->syncCollisionBody();
+		const auto* keyEvent = static_cast<QKeyEvent*>(event);
+		if (keyEvent->key() == Qt::Key_Escape)
+		{
+			self->exitManipulator();
+			return TRUE;
+		}
 	}
-	self->selection_->touch();
+
+	if (event->type() == QEvent::MouseButtonPress)
+	{
+		const auto* mouseEvent = static_cast<QMouseEvent*>(event);
+		if (mouseEvent->button() == Qt::LeftButton &&
+			(mouseEvent->modifiers() & Qt::ControlModifier))
+		{
+			const QPoint pos = mousePos(mouseEvent);
+			self->pickAt(pos.x(), pos.y());
+			return TRUE;
+		}
+	}
+
+	return FALSE;
 }
 
 void MovableWrlManager::onPoseFieldChanged(void* userData, SoSensor* /*sensor*/)

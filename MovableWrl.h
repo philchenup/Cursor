@@ -6,7 +6,6 @@
 #include <vector>
 
 #include <Inventor/nodes/SoGroup.h>
-#include <Inventor/nodes/SoSelection.h>
 #include <Inventor/nodes/SoSeparator.h>
 #include <Inventor/nodes/SoTransform.h>
 #include <Inventor/Qt/viewers/SoQtExaminerViewer.h>
@@ -14,6 +13,7 @@
 #include <rl/math/Transform.h>
 #include <rl/sg/Body.h>
 
+class QEvent;
 class SoFieldSensor;
 class SoPath;
 class SoSensor;
@@ -52,21 +52,28 @@ public:
 	MovableWrl* addWrl(const std::string& wrlFile,
 		const rl::math::Transform& initialPose = rl::math::Transform::Identity());
 
+	// Ctrl+左键选中后进入编辑；ESC 退出并恢复转相机
 	void setEditMode(bool on);
 	bool isEditMode() const;
+	void exitManipulator();
+	MovableWrl* selectedItem() const;
 
 private:
 	MovableWrlManager(SoGroup* sceneParent, SoQtExaminerViewer* examiner);
 
-	static void onSelect(void* userData, SoPath* path);
-	static void onDeselect(void* userData, SoPath* path);
+	static SbBool onViewerEvent(void* userData, QEvent* event);
 	static void onPoseFieldChanged(void* userData, SoSensor* sensor);
 
+	SoPath* makePosePath(MovableWrl* item) const;
 	MovableWrl* findByPath(SoPath* path) const;
+	void attachManip(MovableWrl* item);
+	void detachManip(MovableWrl* item);
+	void pickAt(int x, int y);
 
-	SoSelection* selection_ = nullptr;
+	SoSeparator* movableRoot_ = nullptr;
 	SoQtExaminerViewer* examiner_ = nullptr;
 	std::vector<MovableWrl*> items_;
+	MovableWrl* selected_ = nullptr;
 
 	friend class MovableWrl;
 };
