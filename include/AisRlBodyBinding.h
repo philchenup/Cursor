@@ -4,8 +4,10 @@
 #include <AIS_Shape.hxx>
 #include <Standard_Real.hxx>
 #include <gp_Trsf.hxx>
+#include <string>
 
 #include <rl/math/Transform.h>
+#include <rl/math/Vector.h>
 #include <rl/sg/Body.h>
 #include <rl/sg/Model.h>
 
@@ -28,6 +30,15 @@ rl::sg::Body* bindAisShapeToRlBody(
 
 /// 把 AIS 当前世界位姿写到已绑定的 RL Body（拖动后 / 定时器里调用）。
 void syncAisPoseToRlBody(const AIS_Shape* ais, rl::sg::Body* body);
+
+/// AIS 显示坐标系原点的世界坐标（Transformation 作用在 (0,0,0)）。
+rl::math::Vector3 aisWorldTranslation(const AIS_Shape* ais);
+
+/// RL Body 当前 frame 的平移（getFrame().translation() 的拷贝）。
+rl::math::Vector3 rlBodyTranslation(const rl::sg::Body* body);
+
+/// 在 sgModel 里按名字找 Body；找不到返回 nullptr。
+rl::sg::Body* findRlBodyByName(rl::sg::Model* sgModel, const std::string& name);
 
 /**
  * gp_Trsf → rl::math::Transform

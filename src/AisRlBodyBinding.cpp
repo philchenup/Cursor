@@ -147,6 +147,38 @@ void syncAisPoseToRlBody(const AIS_Shape* ais, rl::sg::Body* body)
 	body->setFrame(gpTrsfToRl(ais->Transformation()));
 }
 
+rl::math::Vector3 aisWorldTranslation(const AIS_Shape* ais)
+{
+	if (ais == nullptr)
+		return rl::math::Vector3::Zero();
+	const gp_Pnt o = gp_Pnt(0.0, 0.0, 0.0).Transformed(ais->Transformation());
+	return rl::math::Vector3(
+		static_cast<rl::math::Real>(o.X()),
+		static_cast<rl::math::Real>(o.Y()),
+		static_cast<rl::math::Real>(o.Z()));
+}
+
+rl::math::Vector3 rlBodyTranslation(const rl::sg::Body* body)
+{
+	if (body == nullptr)
+		return rl::math::Vector3::Zero();
+	const rl::math::Transform T = body->getFrame();
+	return T.translation();
+}
+
+rl::sg::Body* findRlBodyByName(rl::sg::Model* sgModel, const std::string& name)
+{
+	if (sgModel == nullptr)
+		return nullptr;
+	for (std::size_t i = 0; i < sgModel->getNumBodies(); ++i)
+	{
+		rl::sg::Body* body = sgModel->getBody(i);
+		if (body != nullptr && body->getName() == name)
+			return body;
+	}
+	return nullptr;
+}
+
 rl::sg::Body* bindAisShapeToRlBody(
 	AIS_Shape* ais,
 	rl::sg::Model* sgModel,

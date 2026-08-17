@@ -6,7 +6,7 @@
 
 #include "AisRlBodyBinding.h"
 
-Handle(AIS_Shape) aisWorkpiece;   // 成员
+Handle(AIS_Shape) aisWorkpiece;   // 成员，即 loadShape
 rl::sg::Body* rlWorkpiece = nullptr;
 
 void MainWindow::loadStepAsRlObstacle(const QString& path)
@@ -24,12 +24,27 @@ void MainWindow::loadStepAsRlObstacle(const QString& path)
 	else
 		env = this->scene->create();
 
+	// 新建的碰撞体名字是 "occ_ais_body"。场景里原有的 "body" 用 findRlBodyByName 取。
 	rlWorkpiece = bindAisShapeToRlBody(aisWorkpiece.get(), env);
 }
 
-// 已有的场景刷新里加一行（拖动 AIS 后 RL 碰撞体跟着动）
+// 已有的场景刷新 / 50 ms 定时器：先同步，再读两边原点
 void MainWindow::occtUpdate()
 {
-	syncAisPoseToRlBody(aisWorkpiece.get(), rlWorkpiece);
-	// ... 原来的机器人 link 刷新
+	AIS_Shape* loadShape = aisWorkpiece.get();
+	syncAisPoseToRlBody(loadShape, rlWorkpiece);
+
+	const rl::math::Vector3 aisP = aisWorldTranslation(loadShape);
+
+	rl::sg::Body* namedBody = findRlBodyByName(this->scene->getModel(1), "body");
+	const rl::math::Vector3 bodyP = rlBodyTranslation(namedBody);
+
+	this->statusBar()->showMessage(
+		QString("AIS xyz=(%1, %2, %3)    body xyz=(%4, %5, %6)")
+			.arg(aisP.x(), 0, 'f', 4)
+			.arg(aisP.y(), 0, 'f', 4)
+			.arg(aisP.z(), 0, 'f', 4)
+			.arg(bodyP.x(), 0, 'f', 4)
+			.arg(bodyP.y(), 0, 'f', 4)
+			.arg(bodyP.z(), 0, 'f', 4));
 }
