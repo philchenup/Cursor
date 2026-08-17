@@ -111,25 +111,32 @@ SoVRMLShape* makeVrmlMesh(const TopoDS_Shape& shape, Standard_Real deflection)
 
 rl::math::Transform gpTrsfToRl(const gp_Trsf& trsf)
 {
-	// OCCT Value(row,col) 是 1-based 的 3×4（含 scale）；第 4 列是平移。
-	// 无参 GetRotation() 返回 gp_Quaternion，旧版 OCCT 没有这个重载。
-	// RL 是 Eigen::Transform<Affine>，用 linear()/translation()，不要 T(i,j) 填 3×3。
+	// 不用 Value()：1-based 越界检查 + Eigen `<<` 逗号会把 Value(1,1) 拆错，触发 OutOfRange。
+	// 不用 GetRotation()/TranslationPart()：旧 OCCT / 不完整类型会编不过。
+	// 对基点做 Transforms：p' = scale*R*p + t，与 gp_Trsf 内部实现一致。
+	const gp_Pnt o  = gp_Pnt(0.0, 0.0, 0.0).Transformed(trsf);
+	const gp_Pnt px = gp_Pnt(1.0, 0.0, 0.0).Transformed(trsf);
+	const gp_Pnt py = gp_Pnt(0.0, 1.0, 0.0).Transformed(trsf);
+	const gp_Pnt pz = gp_Pnt(0.0, 0.0, 1.0).Transformed(trsf);
+
 	rl::math::Transform T;
 	T.setIdentity();
-	T.linear() <<
-		static_cast<rl::math::Real>(trsf.Value(1, 1)),
-		static_cast<rl::math::Real>(trsf.Value(1, 2)),
-		static_cast<rl::math::Real>(trsf.Value(1, 3)),
-		static_cast<rl::math::Real>(trsf.Value(2, 1)),
-		static_cast<rl::math::Real>(trsf.Value(2, 2)),
-		static_cast<rl::math::Real>(trsf.Value(2, 3)),
-		static_cast<rl::math::Real>(trsf.Value(3, 1)),
-		static_cast<rl::math::Real>(trsf.Value(3, 2)),
-		static_cast<rl::math::Real>(trsf.Value(3, 3));
+	T.linear().col(0) = rl::math::Vector3(
+		static_cast<rl::math::Real>(px.X() - o.X()),
+		static_cast<rl::math::Real>(px.Y() - o.Y()),
+		static_cast<rl::math::Real>(px.Z() - o.Z()));
+	T.linear().col(1) = rl::math::Vector3(
+		static_cast<rl::math::Real>(py.X() - o.X()),
+		static_cast<rl::math::Real>(py.Y() - o.Y()),
+		static_cast<rl::math::Real>(py.Z() - o.Z()));
+	T.linear().col(2) = rl::math::Vector3(
+		static_cast<rl::math::Real>(pz.X() - o.X()),
+		static_cast<rl::math::Real>(pz.Y() - o.Y()),
+		static_cast<rl::math::Real>(pz.Z() - o.Z()));
 	T.translation() = rl::math::Vector3(
-		static_cast<rl::math::Real>(trsf.Value(1, 4)),
-		static_cast<rl::math::Real>(trsf.Value(2, 4)),
-		static_cast<rl::math::Real>(trsf.Value(3, 4)));
+		static_cast<rl::math::Real>(o.X()),
+		static_cast<rl::math::Real>(o.Y()),
+		static_cast<rl::math::Real>(o.Z()));
 	return T;
 }
 

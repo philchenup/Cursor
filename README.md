@@ -2,17 +2,14 @@
 
 ## gpTrsfToRl
 
-只用 `gp_Trsf::Value(row, col)`（1-based 的 3×4）。无参 `GetRotation()` 在旧版 OCCT 不存在，`TranslationPart()` 返回 `const gp_XYZ&`，拷贝都会编不过。
+不要调用 `gp_Trsf::Value()`（1-based，越界会 `Standard_OutOfRange`），也不要用 Eigen `<<` 去喂 `Value(1,1)`。对基点做 `Transformed`：
 
 ```cpp
-rl::math::Transform T;
-T.setIdentity();
-T.linear() <<
-	trsf.Value(1, 1), trsf.Value(1, 2), trsf.Value(1, 3),
-	trsf.Value(2, 1), trsf.Value(2, 2), trsf.Value(2, 3),
-	trsf.Value(3, 1), trsf.Value(3, 2), trsf.Value(3, 3);
-T.translation() = rl::math::Vector3(
-	trsf.Value(1, 4), trsf.Value(2, 4), trsf.Value(3, 4));
+const gp_Pnt o  = gp_Pnt(0, 0, 0).Transformed(trsf); // 平移
+const gp_Pnt px = gp_Pnt(1, 0, 0).Transformed(trsf);
+const gp_Pnt py = gp_Pnt(0, 1, 0).Transformed(trsf);
+const gp_Pnt pz = gp_Pnt(0, 0, 1).Transformed(trsf);
+// linear 的三列 = px-o, py-o, pz-o；translation = o
 ```
 
 ## ScaleAISShapeBy1000
