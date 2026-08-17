@@ -11,6 +11,7 @@
 #include <gp.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Trsf.hxx>
+#include <NCollection_Mat4.hxx>
 #include <Poly_Triangulation.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopLoc_Location.hxx>
@@ -148,29 +149,24 @@ rl::math::Transform gpTrsfToRl(const gp_Trsf& trsf)
 	if (!isValidGpTrsf(trsf))
 		return T;
 
-	const gp_Pnt o  = gp_Pnt(0.0, 0.0, 0.0).Transformed(trsf);
-	const gp_Pnt px = gp_Pnt(1.0, 0.0, 0.0).Transformed(trsf);
-	const gp_Pnt py = gp_Pnt(0.0, 1.0, 0.0).Transformed(trsf);
-	const gp_Pnt pz = gp_Pnt(0.0, 0.0, 1.0).Transformed(trsf);
-	if (!isFinitePnt(o) || !isFinitePnt(px) || !isFinitePnt(py) || !isFinitePnt(pz))
-		return T;
+	// GetMat4：0-based 4×4，与 Value(1-based 3×4) 同一套系数。
+	// 左上 3×3 = 旋转（含 scale），第 4 列 = 平移，末行 [0,0,0,1]。
+	NCollection_Mat4<Standard_Real> m;
+	trsf.GetMat4(m);
 
-	T.linear().col(0) = rl::math::Vector3(
-		static_cast<rl::math::Real>(px.X() - o.X()),
-		static_cast<rl::math::Real>(px.Y() - o.Y()),
-		static_cast<rl::math::Real>(px.Z() - o.Z()));
-	T.linear().col(1) = rl::math::Vector3(
-		static_cast<rl::math::Real>(py.X() - o.X()),
-		static_cast<rl::math::Real>(py.Y() - o.Y()),
-		static_cast<rl::math::Real>(py.Z() - o.Z()));
-	T.linear().col(2) = rl::math::Vector3(
-		static_cast<rl::math::Real>(pz.X() - o.X()),
-		static_cast<rl::math::Real>(pz.Y() - o.Y()),
-		static_cast<rl::math::Real>(pz.Z() - o.Z()));
+	T.linear()(0, 0) = static_cast<rl::math::Real>(m.GetValue(0, 0));
+	T.linear()(0, 1) = static_cast<rl::math::Real>(m.GetValue(0, 1));
+	T.linear()(0, 2) = static_cast<rl::math::Real>(m.GetValue(0, 2));
+	T.linear()(1, 0) = static_cast<rl::math::Real>(m.GetValue(1, 0));
+	T.linear()(1, 1) = static_cast<rl::math::Real>(m.GetValue(1, 1));
+	T.linear()(1, 2) = static_cast<rl::math::Real>(m.GetValue(1, 2));
+	T.linear()(2, 0) = static_cast<rl::math::Real>(m.GetValue(2, 0));
+	T.linear()(2, 1) = static_cast<rl::math::Real>(m.GetValue(2, 1));
+	T.linear()(2, 2) = static_cast<rl::math::Real>(m.GetValue(2, 2));
 	T.translation() = rl::math::Vector3(
-		static_cast<rl::math::Real>(o.X()),
-		static_cast<rl::math::Real>(o.Y()),
-		static_cast<rl::math::Real>(o.Z()));
+		static_cast<rl::math::Real>(m.GetValue(0, 3)),
+		static_cast<rl::math::Real>(m.GetValue(1, 3)),
+		static_cast<rl::math::Real>(m.GetValue(2, 3)));
 	return T;
 }
 

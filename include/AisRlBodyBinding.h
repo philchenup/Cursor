@@ -47,7 +47,7 @@ rl::sg::Body* findRlBodyByName(rl::sg::Model* sgModel, const std::string& name);
 /// 引用本身无法判断悬空，悬空引用仍是未定义行为。
 bool isValidGpTrsf(const gp_Trsf& trsf);
 
-/// gp_Trsf → rl::math::Transform。无效时返回 Identity。
+/// gp_Trsf → rl::math::Transform。用 GetMat4 取 4×4；无效时返回 Identity。
 rl::math::Transform gpTrsfToRl(const gp_Trsf& trsf);
 
 #endif
