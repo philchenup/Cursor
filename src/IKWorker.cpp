@@ -887,6 +887,8 @@ void IKWorker::doGoToStart(const IKGoToStartParams & params)
 
     rl::math::Vector qFrozen;
     bool sceneFrozen = false;
+    rl::mdl::Joint* railJoint = nullptr;
+    rl::math::Vector railMin0, railMax0;
 
     try
     {
@@ -910,8 +912,7 @@ void IKWorker::doGoToStart(const IKGoToStartParams & params)
         const rl::math::Transform T_world_tcp_start = pointToTransform(params.startPoint);
         const double yWeld = T_world_tcp_start.translation().y();
 
-        rl::mdl::Joint* railJoint = kinematic->getJoint(0);
-        rl::math::Vector railMin0, railMax0;
+        railJoint = kinematic->getJoint(0);
         if (railJoint)
         {
             railMin0 = railJoint->getMinimum();
@@ -1022,11 +1023,11 @@ void IKWorker::doGoToStart(const IKGoToStartParams & params)
         }
         rl::math::Vector qGoal = kinematic->getPosition();
         qGoal(0) = yTarget;
-        restoreRail();
+        // Joint0 限位保持钉在 yTarget，RRT 只采样旋转关节，避免 mm 地轨主导距离度量
 
         reportProgress(30);
 
-        // ========== path2：Thread::run 同款 RRT（path1 终点 → 焊接起点）==========
+        // ========== path2：地轨锁定后的 RRT（path1 终点 → 焊接起点）==========
         std::vector<rl::math::Vector> path2;
         {
             QMutexLocker lock(&mw->mutex);
@@ -1095,6 +1096,11 @@ void IKWorker::doGoToStart(const IKGoToStartParams & params)
             }
         }
 
+        // 地轨保持 yTarget，避免限位窗口 eps 漂移
+        for (rl::math::Vector& q : path2)
+            q(0) = yTarget;
+
+        restoreRail();
         reportProgress(90);
 
         // ========== 拼接 path1 + path2 ==========
@@ -1124,6 +1130,11 @@ void IKWorker::doGoToStart(const IKGoToStartParams & params)
     }
     catch (const std::exception& e)
     {
+        if (railJoint && railMin0.size() > 0)
+        {
+            railJoint->setMinimum(railMin0);
+            railJoint->setMaximum(railMax0);
+        }
         if (sceneFrozen && kinematic && qFrozen.size() > 0)
         {
             kinematic->setPosition(qFrozen);
@@ -1139,6 +1150,11 @@ void IKWorker::doGoToStart(const IKGoToStartParams & params)
     }
     catch (...)
     {
+        if (railJoint && railMin0.size() > 0)
+        {
+            railJoint->setMinimum(railMin0);
+            railJoint->setMaximum(railMax0);
+        }
         if (sceneFrozen && kinematic && qFrozen.size() > 0)
         {
             kinematic->setPosition(qFrozen);
