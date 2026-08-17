@@ -34,11 +34,12 @@ void MainWindow::showWeldTrajPt(const std::vector<DiscretePoint>& trajPt) {
 			Aspect_TOM_O_PLUS, Quantity_NOC_YELLOW, 0.002);
 		anAISPoint->Attributes()->SetPointAspect(aPointAspect);
 
-		// selectionMode = -1：显示但不激活选择，坐标轴不可被选中
+		// selectionMode = -1：只显示、不激活选择。AIS_Trihedron / AIS_Point
+		// 没有 TopoDS_TShape，若可被点中，点击回调里 ShapeType() 会空指针崩溃。
 		ctx->Display(aTrihedron, 0, -1, Standard_False);
 		ctx->Deactivate(aTrihedron);
-
-		ctx->Display(anAISPoint, Standard_False);
+		ctx->Display(anAISPoint, 0, -1, Standard_False);
+		ctx->Deactivate(anAISPoint);
 	}
 	ctx->UpdateCurrentViewer();
 }
