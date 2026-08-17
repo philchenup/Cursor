@@ -4,6 +4,8 @@
 #include <cmath>
 #include <vector>
 
+#include <PrsMgr_PresentableObject.hxx>
+
 #include <Bnd_Box.hxx>
 #include <BRepBndLib.hxx>
 #include <BRep_Tool.hxx>
@@ -174,7 +176,7 @@ void syncAisPoseToRlBody(const AIS_Shape* ais, rl::sg::Body* body)
 {
 	if (ais == nullptr || body == nullptr)
 		return;
-	const gp_Trsf trsf = copyAisLocalTrsf(ais);
+	const gp_Trsf trsf = copyAisWorldTrsf(ais);
 	if (!isValidGpTrsf(trsf))
 		return;
 	body->setFrame(gpTrsfToRl(trsf));
@@ -189,11 +191,27 @@ gp_Trsf copyAisLocalTrsf(const AIS_Shape* ais)
 	return trsf;
 }
 
+gp_Trsf copyAisWorldTrsf(const AIS_Shape* ais)
+{
+	gp_Trsf world;
+	if (ais == nullptr)
+		return world;
+	world = ais->LocalTransformation();
+	Handle(PrsMgr_PresentableObject) parent = ais->Parent();
+	while (!parent.IsNull())
+	{
+		gp_Trsf parentLocal = parent->LocalTransformation();
+		world.PreMultiply(parentLocal);
+		parent = parent->Parent();
+	}
+	return world;
+}
+
 rl::math::Vector3 aisWorldTranslation(const AIS_Shape* ais)
 {
 	if (ais == nullptr)
 		return rl::math::Vector3::Zero();
-	const gp_Trsf trsf = copyAisLocalTrsf(ais);
+	const gp_Trsf trsf = copyAisWorldTrsf(ais);
 	if (!isValidGpTrsf(trsf))
 		return rl::math::Vector3::Zero();
 	const gp_Pnt o = gp_Pnt(0.0, 0.0, 0.0).Transformed(trsf);
