@@ -29,7 +29,12 @@ rl::sg::Body* bindAisShapeToRlBody(
 /// 把 AIS 当前世界位姿写到已绑定的 RL Body（拖动后 / 定时器里调用）。
 void syncAisPoseToRlBody(const AIS_Shape* ais, rl::sg::Body* body);
 
-/// gp_Trsf → rl::math::Transform（与 gp_Trsf::SetValues 互逆，拷 3×4）
+/**
+ * gp_Trsf → rl::math::Transform
+ *
+ * OCCT: p' = ScaleFactor * GetRotation * p + TranslationPart
+ * RL:   Eigen::Transform<Real,3,Affine>，写入 linear() 与 translation()
+ */
 rl::math::Transform gpTrsfToRl(const gp_Trsf& trsf);
 
 #endif

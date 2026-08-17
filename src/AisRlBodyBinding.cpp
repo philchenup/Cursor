@@ -9,6 +9,7 @@
 #include <BRep_Tool.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <gp_Pnt.hxx>
+#include <gp_Quaternion.hxx>
 #include <gp_Trsf.hxx>
 #include <Poly_Triangulation.hxx>
 #include <TopExp_Explorer.hxx>
@@ -111,10 +112,28 @@ SoVRMLShape* makeVrmlMesh(const TopoDS_Shape& shape, Standard_Real deflection)
 
 rl::math::Transform gpTrsfToRl(const gp_Trsf& trsf)
 {
-	rl::math::Transform T = rl::math::Transform::Identity();
-	T(0, 0) = trsf.Value(1, 1); T(0, 1) = trsf.Value(1, 2); T(0, 2) = trsf.Value(1, 3); T(0, 3) = trsf.Value(1, 4);
-	T(1, 0) = trsf.Value(2, 1); T(1, 1) = trsf.Value(2, 2); T(1, 2) = trsf.Value(2, 3); T(1, 3) = trsf.Value(2, 4);
-	T(2, 0) = trsf.Value(3, 1); T(2, 1) = trsf.Value(3, 2); T(2, 2) = trsf.Value(3, 3); T(2, 3) = trsf.Value(3, 4);
+	// OCCT:  p' = ScaleFactor * GetRotation * p + TranslationPart
+	//        GetRotation() 来自 HVectorialPart，不含比例；Value()/VectorialPart() 含比例。
+	// RL:    typedef Eigen::Transform<Real, 3, Eigen::Affine>
+	//        官方写法是 linear() / translation()，不要用 T(i,j) 去填 3x3。
+	// Eigen Quaternion(w,x,y,z)；OCCT 是 q.W()/X()/Y()/Z()，构造函数参数顺序相反。
+	const gp_Quaternion q = trsf.GetRotation();
+	const gp_XYZ p = trsf.TranslationPart();
+	const rl::math::Real s = static_cast<rl::math::Real>(trsf.ScaleFactor());
+
+	rl::math::Transform T;
+	T.setIdentity();
+	T.linear() = s * rl::math::Quaternion(
+			static_cast<rl::math::Real>(q.W()),
+			static_cast<rl::math::Real>(q.X()),
+			static_cast<rl::math::Real>(q.Y()),
+			static_cast<rl::math::Real>(q.Z()))
+		.normalized()
+		.toRotationMatrix();
+	T.translation() = rl::math::Vector3(
+		static_cast<rl::math::Real>(p.X()),
+		static_cast<rl::math::Real>(p.Y()),
+		static_cast<rl::math::Real>(p.Z()));
 	return T;
 }
 
