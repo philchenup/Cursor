@@ -40,11 +40,11 @@ rl::math::Vector3 rlBodyTranslation(const rl::sg::Body* body);
 /// 在 sgModel 里按名字找 Body；找不到返回 nullptr。
 rl::sg::Body* findRlBodyByName(rl::sg::Model* sgModel, const std::string& name);
 
-/**
- * gp_Trsf → rl::math::Transform
- *
- * 对原点与三个基点做 Transformed()，不调用 Value() / GetRotation() / TranslationPart()。
- */
+/// gp_Trsf 是否可用来做位姿：比例有限且非 0，Form 合法，原点变换结果有限。
+/// 引用本身无法判断悬空，悬空引用仍是未定义行为。
+bool isValidGpTrsf(const gp_Trsf& trsf);
+
+/// gp_Trsf → rl::math::Transform。无效时返回 Identity。
 rl::math::Transform gpTrsfToRl(const gp_Trsf& trsf);
 
 #endif

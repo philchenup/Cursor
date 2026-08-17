@@ -8,6 +8,7 @@
 #include <BRepBndLib.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <gp.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Trsf.hxx>
 #include <Poly_Triangulation.hxx>
@@ -107,20 +108,53 @@ SoVRMLShape* makeVrmlMesh(const TopoDS_Shape& shape, Standard_Real deflection)
 	return vrml;
 }
 
+bool isFinitePnt(const gp_Pnt& p)
+{
+	return std::isfinite(p.X()) && std::isfinite(p.Y()) && std::isfinite(p.Z());
+}
+
 } // namespace
+
+bool isValidGpTrsf(const gp_Trsf& trsf)
+{
+	const double s = static_cast<double>(trsf.ScaleFactor());
+	if (!std::isfinite(s) || std::fabs(s) <= static_cast<double>(gp::Resolution()))
+		return false;
+
+	switch (trsf.Form())
+	{
+	case gp_Identity:
+	case gp_Rotation:
+	case gp_Translation:
+	case gp_PntMirror:
+	case gp_Ax1Mirror:
+	case gp_Ax2Mirror:
+	case gp_Scale:
+	case gp_CompoundTrsf:
+	case gp_Other:
+		break;
+	default:
+		return false;
+	}
+
+	const gp_Pnt o = gp_Pnt(0.0, 0.0, 0.0).Transformed(trsf);
+	return isFinitePnt(o);
+}
 
 rl::math::Transform gpTrsfToRl(const gp_Trsf& trsf)
 {
-	// 不用 Value()：1-based 越界检查 + Eigen `<<` 逗号会把 Value(1,1) 拆错，触发 OutOfRange。
-	// 不用 GetRotation()/TranslationPart()：旧 OCCT / 不完整类型会编不过。
-	// 对基点做 Transforms：p' = scale*R*p + t，与 gp_Trsf 内部实现一致。
+	rl::math::Transform T;
+	T.setIdentity();
+	if (!isValidGpTrsf(trsf))
+		return T;
+
 	const gp_Pnt o  = gp_Pnt(0.0, 0.0, 0.0).Transformed(trsf);
 	const gp_Pnt px = gp_Pnt(1.0, 0.0, 0.0).Transformed(trsf);
 	const gp_Pnt py = gp_Pnt(0.0, 1.0, 0.0).Transformed(trsf);
 	const gp_Pnt pz = gp_Pnt(0.0, 0.0, 1.0).Transformed(trsf);
+	if (!isFinitePnt(o) || !isFinitePnt(px) || !isFinitePnt(py) || !isFinitePnt(pz))
+		return T;
 
-	rl::math::Transform T;
-	T.setIdentity();
 	T.linear().col(0) = rl::math::Vector3(
 		static_cast<rl::math::Real>(px.X() - o.X()),
 		static_cast<rl::math::Real>(px.Y() - o.Y()),
@@ -144,7 +178,10 @@ void syncAisPoseToRlBody(const AIS_Shape* ais, rl::sg::Body* body)
 {
 	if (ais == nullptr || body == nullptr)
 		return;
-	body->setFrame(gpTrsfToRl(ais->Transformation()));
+	const gp_Trsf& trsf = ais->Transformation();
+	if (!isValidGpTrsf(trsf))
+		return;
+	body->setFrame(gpTrsfToRl(trsf));
 }
 
 rl::math::Vector3 aisWorldTranslation(const AIS_Shape* ais)
