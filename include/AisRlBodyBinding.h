@@ -29,13 +29,7 @@ rl::sg::Body* bindAisShapeToRlBody(
 /// 把 AIS 当前世界位姿写到已绑定的 RL Body（拖动后 / 定时器里调用）。
 void syncAisPoseToRlBody(const AIS_Shape* ais, rl::sg::Body* body);
 
-/**
- * gp_Trsf → rl::math::Transform（只取刚体：单位四元数旋转 + 平移）。
- *
- * 不用 VectorialPart()：它含 scale，3x3 不是旋转，RL setFrame 会崩。
- * 平移非有限或 OCCT 异常时返回 Identity；旋转无法恢复时保留平移。
- * 不把异常抛给调用方。
- */
+/// gp_Trsf → rl::math::Transform（与 gp_Trsf::SetValues 互逆，拷 3×4）
 rl::math::Transform gpTrsfToRl(const gp_Trsf& trsf);
 
 #endif

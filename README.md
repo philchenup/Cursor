@@ -2,18 +2,16 @@
 
 ## gpTrsfToRl
 
-把 OpenCASCADE 的 `gp_Trsf` 转成 Robotics Library 的 `rl::math::Transform`。只输出刚体（单位旋转 + 平移），供 `body->setFrame()` 使用。
-
-旧写法把 `VectorialPart()`（旋转乘上 scale）逐元素写进 `T(row, col)`。3x3 一旦带比例、反射或 NaN，Inventor / Bullet 分解矩阵就会崩溃。
+`gp_Trsf` ↔ `rl::math::Transform` 按 3×4 逐元素互逆（与 `gp_Trsf::SetValues` 同一套系数）：
 
 ```cpp
-#include "AisRlBodyBinding.h"
+rl::math::Transform tf = gpTrsfToRl(ais->Transformation());
 
-rl::math::Transform T = gpTrsfToRl(ais->Transformation());
-body->setFrame(T);
+gp_Trsf T0;
+T0.SetValues(tf(0, 0), tf(0, 1), tf(0, 2), tf(0, 3),
+	tf(1, 0), tf(1, 1), tf(1, 2), tf(1, 3),
+	tf(2, 0), tf(2, 1), tf(2, 2), tf(2, 3));
 ```
-
-失败（非有限分量、旋转无法正交化、OCCT 异常）时返回 `Identity`，不把异常抛给调用方。几何上的 1/1000 缩放应先烤进拓扑（`ScaleAISShapeBy1000`），不要放进 RL 的 frame。
 
 ## ScaleAISShapeBy1000
 

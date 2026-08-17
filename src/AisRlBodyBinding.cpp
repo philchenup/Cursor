@@ -8,10 +8,7 @@
 #include <BRepBndLib.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
-#include <Standard_Failure.hxx>
-#include <gp_Mat.hxx>
 #include <gp_Pnt.hxx>
-#include <gp_Quaternion.hxx>
 #include <gp_Trsf.hxx>
 #include <Poly_Triangulation.hxx>
 #include <TopExp_Explorer.hxx>
@@ -110,133 +107,22 @@ SoVRMLShape* makeVrmlMesh(const TopoDS_Shape& shape, Standard_Real deflection)
 	return vrml;
 }
 
-constexpr double kRigidEps2 = 1e-24;
-
-bool isFinite3(double x, double y, double z)
-{
-	return std::isfinite(x) && std::isfinite(y) && std::isfinite(z);
-}
-
-using Rot3 = ::Eigen::Matrix<rl::math::Real, 3, 3>;
-
-bool copyGpMat(const gp_Mat& m, Rot3& R)
-{
-	for (int row = 0; row < 3; ++row)
-	{
-		for (int col = 0; col < 3; ++col)
-			R(row, col) = static_cast<rl::math::Real>(m.Value(row + 1, col + 1));
-	}
-	return R.allFinite();
-}
-
-bool orthonormalizeRightHanded(Rot3& R)
-{
-	rl::math::Vector3 x = R.col(0);
-	if (!x.allFinite() || x.squaredNorm() < kRigidEps2)
-		return false;
-	x.normalize();
-
-	rl::math::Vector3 y = R.col(1);
-	if (!y.allFinite())
-		return false;
-	y -= x * x.dot(y);
-	if (y.squaredNorm() < kRigidEps2)
-		y = x.unitOrthogonal();
-	else
-		y.normalize();
-
-	rl::math::Vector3 z = x.cross(y);
-	if (!z.allFinite() || z.squaredNorm() < kRigidEps2)
-		return false;
-	z.normalize();
-
-	R.col(0) = x;
-	R.col(1) = y;
-	R.col(2) = z;
-	return R.allFinite();
-}
-
-bool rotationFromQuaternion(const gp_Quaternion& q, Rot3& R)
-{
-	const double w = q.W();
-	const double x = q.X();
-	const double y = q.Y();
-	const double z = q.Z();
-	if (!std::isfinite(w) || !isFinite3(x, y, z))
-		return false;
-
-	const double n2 = w * w + x * x + y * y + z * z;
-	if (n2 < kRigidEps2)
-		return false;
-
-	const double inv = 1.0 / std::sqrt(n2);
-	const rl::math::Quaternion eq(
-		static_cast<rl::math::Real>(w * inv),
-		static_cast<rl::math::Real>(x * inv),
-		static_cast<rl::math::Real>(y * inv),
-		static_cast<rl::math::Real>(z * inv));
-	R = eq.toRotationMatrix();
-	return R.allFinite();
-}
-
 } // namespace
 
 rl::math::Transform gpTrsfToRl(const gp_Trsf& trsf)
 {
-	// RL / Inventor / Bullet 的 setFrame 只接受刚体（SO(3)+平移）。
-	// 旧实现把 VectorialPart()（旋转×比例）写进 T(i,j)：
-	// 非正交 3x3、NaN，或未写齐次行时，后续分解会直接崩溃。
-	rl::math::Transform T;
-	T.setIdentity();
-
-	try
-	{
-		const gp_XYZ p = trsf.TranslationPart();
-		if (!isFinite3(p.X(), p.Y(), p.Z()))
-			return T;
-
-		T.translation() = rl::math::Vector3(
-			static_cast<rl::math::Real>(p.X()),
-			static_cast<rl::math::Real>(p.Y()),
-			static_cast<rl::math::Real>(p.Z()));
-
-		::Eigen::Matrix<rl::math::Real, 3, 3> R =
-			::Eigen::Matrix<rl::math::Real, 3, 3>::Identity();
-		const bool gotRotation =
-			rotationFromQuaternion(trsf.GetRotation(), R) ||
-			(copyGpMat(trsf.HVectorialPart(), R) && orthonormalizeRightHanded(R));
-		if (!gotRotation)
-			return T;
-
-		T.linear() = R;
-		return T;
-	}
-	catch (const Standard_Failure&)
-	{
-		T.setIdentity();
-		return T;
-	}
-	catch (...)
-	{
-		T.setIdentity();
-		return T;
-	}
+	rl::math::Transform T = rl::math::Transform::Identity();
+	T(0, 0) = trsf.Value(1, 1); T(0, 1) = trsf.Value(1, 2); T(0, 2) = trsf.Value(1, 3); T(0, 3) = trsf.Value(1, 4);
+	T(1, 0) = trsf.Value(2, 1); T(1, 1) = trsf.Value(2, 2); T(1, 2) = trsf.Value(2, 3); T(1, 3) = trsf.Value(2, 4);
+	T(2, 0) = trsf.Value(3, 1); T(2, 1) = trsf.Value(3, 2); T(2, 2) = trsf.Value(3, 3); T(2, 3) = trsf.Value(3, 4);
+	return T;
 }
 
 void syncAisPoseToRlBody(const AIS_Shape* ais, rl::sg::Body* body)
 {
 	if (ais == nullptr || body == nullptr)
 		return;
-	try
-	{
-		body->setFrame(gpTrsfToRl(ais->Transformation()));
-	}
-	catch (const Standard_Failure&)
-	{
-	}
-	catch (...)
-	{
-	}
+	body->setFrame(gpTrsfToRl(ais->Transformation()));
 }
 
 rl::sg::Body* bindAisShapeToRlBody(
