@@ -6,3 +6,11 @@
 - **m**：直接读取，不转换
 
 `readStlModel` / `readStepModel` / `readStepModelWithColors` / `makeDisplayShape` / `writeStepModel` / `writeStlModel` 签名均未改。
+
+新增：
+
+```cpp
+loadShape = ReadModel::ScaleAis(loadColorShape.get(), 0.001);
+```
+
+`ScaleAis` 输入 `AIS_Shape*`，绕包围盒圆心缩小后仍返回 `AIS_Shape*`（同一对象，颜色保留）。

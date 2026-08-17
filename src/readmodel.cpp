@@ -336,6 +336,19 @@ Handle(AIS_ColoredShape) ReadModel::makeDisplayShape(
     return shadeDefaults(ais, color);
 }
 
+AIS_Shape* ReadModel::ScaleAis(AIS_Shape* ais, double scaleFactor)
+{
+    if (ais == nullptr) {
+        return nullptr;
+    }
+
+    gp_Trsf trsf;
+    const TopoDS_Shape& shape = ais->Shape();
+    trsf.SetScale(shape.IsNull() ? gp_Pnt(0, 0, 0) : shapeCenter(shape), scaleFactor);
+    ais->SetLocalTransformation(trsf);
+    return ais;
+}
+
 void ReadModel::writeStepModel(TopoDS_Shape shape, Standard_CString filePath)
 {
     if (shape.IsNull()) return;
