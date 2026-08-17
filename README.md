@@ -2,26 +2,17 @@
 
 ## gpTrsfToRl
 
-按两个库的官方分量接口转换（不要拷 `Value()`/`VectorialPart()` 进 `T(i,j)`）：
-
-| | OpenCASCADE `gp_Trsf` | Robotics Library `rl::math::Transform` |
-|---|---|---|
-| 类型 | 相似变换：旋转 + 比例 + 平移 | `Eigen::Transform<Real, 3, Eigen::Affine>` |
-| 旋转 | `GetRotation()` → `gp_Quaternion` | `linear()` ← `Quaternion(w,x,y,z).toRotationMatrix()` |
-| 比例 | `ScaleFactor()` | 乘进 `linear()` |
-| 平移 | `TranslationPart()` | `translation()` |
-
-Eigen 四元数构造是 `(w, x, y, z)`，OCCT 构造是 `(x, y, z, w)`，必须用 `q.W()/X()/Y()/Z()`。
+只用 `gp_Trsf::Value(row, col)`（1-based 的 3×4）。无参 `GetRotation()` 在旧版 OCCT 不存在，`TranslationPart()` 返回 `const gp_XYZ&`，拷贝都会编不过。
 
 ```cpp
-rl::math::Transform tf = gpTrsfToRl(ais->Transformation());
-body->setFrame(tf);
-
-// 反向（OCCT 会正交化）
-const rl::math::Quaternion q(tf.rotation());
-const rl::math::Vector3 t = tf.translation();
-gp_Trsf T0;
-T0.SetTransformation(gp_Quaternion(q.x(), q.y(), q.z(), q.w()), gp_Vec(t.x(), t.y(), t.z()));
+rl::math::Transform T;
+T.setIdentity();
+T.linear() <<
+	trsf.Value(1, 1), trsf.Value(1, 2), trsf.Value(1, 3),
+	trsf.Value(2, 1), trsf.Value(2, 2), trsf.Value(2, 3),
+	trsf.Value(3, 1), trsf.Value(3, 2), trsf.Value(3, 3);
+T.translation() = rl::math::Vector3(
+	trsf.Value(1, 4), trsf.Value(2, 4), trsf.Value(3, 4));
 ```
 
 ## ScaleAISShapeBy1000

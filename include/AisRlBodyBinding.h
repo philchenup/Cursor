@@ -32,8 +32,8 @@ void syncAisPoseToRlBody(const AIS_Shape* ais, rl::sg::Body* body);
 /**
  * gp_Trsf → rl::math::Transform
  *
- * OCCT: p' = ScaleFactor * GetRotation * p + TranslationPart
- * RL:   Eigen::Transform<Real,3,Affine>，写入 linear() 与 translation()
+ * 只用 gp_Trsf::Value(row,col)（1-based 3×4，含 scale 与平移）。
+ * 不调用 GetRotation() / TranslationPart()，避免旧 OCCT 无四元数重载、类型不完整。
  */
 rl::math::Transform gpTrsfToRl(const gp_Trsf& trsf);
 
