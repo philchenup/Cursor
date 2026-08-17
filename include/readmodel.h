@@ -42,7 +42,7 @@ public:
         const TopoDS_Shape& shape,
         const Quantity_Color& color = Quantity_Color(0.75, 0.75, 0.80, Quantity_TOC_RGB));
 
-    /// 将 AIS 模型绕包围盒圆心缩小 scaleFactor 倍，返回同一指针。
+    /// 将 AIS 模型绕包围盒圆心缩小 scaleFactor 倍，返回新的 AIS_Shape*（不改原对象）。
     /// 用法: loadShape = ReadModel::ScaleAis(loadColorShape.get(), 0.001);
     static AIS_Shape* ScaleAis(AIS_Shape* ais, double scaleFactor);
 

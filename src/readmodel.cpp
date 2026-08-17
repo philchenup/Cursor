@@ -342,11 +342,21 @@ AIS_Shape* ReadModel::ScaleAis(AIS_Shape* ais, double scaleFactor)
         return nullptr;
     }
 
-    gp_Trsf trsf;
-    const TopoDS_Shape& shape = ais->Shape();
-    trsf.SetScale(shape.IsNull() ? gp_Pnt(0, 0, 0) : shapeCenter(shape), scaleFactor);
-    ais->SetLocalTransformation(trsf);
-    return ais;
+    const TopoDS_Shape scaled = ScaleShape(ais->Shape(), scaleFactor);
+    if (scaled.IsNull()) {
+        return nullptr;
+    }
+
+    // 新建对象，不用 Handle 包一层，避免函数返回时引用计数归零把对象释放
+    AIS_ColoredShape* neu = new AIS_ColoredShape(scaled);
+    Quantity_Color color;
+    ais->Color(color);
+    neu->SetColor(color);
+    neu->SetDisplayMode(ais->DisplayMode());
+    neu->Attributes()->SetFaceBoundaryDraw(Standard_True);
+    neu->Attributes()->SetFaceBoundaryAspect(
+        new Prs3d_LineAspect(Quantity_NOC_BLACK, Aspect_TOL_SOLID, 1.0));
+    return neu;
 }
 
 void ReadModel::writeStepModel(TopoDS_Shape shape, Standard_CString filePath)
