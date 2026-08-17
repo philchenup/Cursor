@@ -11,6 +11,7 @@
 #include <gp_Pnt.hxx>
 #include <gp_Quaternion.hxx>
 #include <gp_Trsf.hxx>
+#include <gp_XYZ.hxx>
 #include <Poly_Triangulation.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopLoc_Location.hxx>
@@ -118,7 +119,7 @@ rl::math::Transform gpTrsfToRl(const gp_Trsf& trsf)
 	//        官方写法是 linear() / translation()，不要用 T(i,j) 去填 3x3。
 	// Eigen Quaternion(w,x,y,z)；OCCT 是 q.W()/X()/Y()/Z()，构造函数参数顺序相反。
 	const gp_Quaternion q = trsf.GetRotation();
-	const gp_XYZ p = trsf.TranslationPart();
+	const gp_XYZ& p = trsf.TranslationPart();
 	const rl::math::Real s = static_cast<rl::math::Real>(trsf.ScaleFactor());
 
 	rl::math::Transform T;
