@@ -31,6 +31,9 @@ rl::sg::Body* bindAisShapeToRlBody(
 /// 把 AIS 当前世界位姿写到已绑定的 RL Body（拖动后 / 定时器里调用）。
 void syncAisPoseToRlBody(const AIS_Shape* ais, rl::sg::Body* body);
 
+/// 从 AIS 成员 LocalTransformation 按值拷贝。不要写 const gp_Trsf& t = ais->Transformation()。
+gp_Trsf copyAisLocalTrsf(const AIS_Shape* ais);
+
 /// AIS 显示坐标系原点的世界坐标（Transformation 作用在 (0,0,0)）。
 rl::math::Vector3 aisWorldTranslation(const AIS_Shape* ais);
 

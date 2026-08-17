@@ -178,17 +178,29 @@ void syncAisPoseToRlBody(const AIS_Shape* ais, rl::sg::Body* body)
 {
 	if (ais == nullptr || body == nullptr)
 		return;
-	const gp_Trsf& trsf = ais->Transformation();
+	const gp_Trsf trsf = copyAisLocalTrsf(ais);
 	if (!isValidGpTrsf(trsf))
 		return;
 	body->setFrame(gpTrsfToRl(trsf));
+}
+
+gp_Trsf copyAisLocalTrsf(const AIS_Shape* ais)
+{
+	gp_Trsf trsf;
+	if (ais == nullptr)
+		return trsf;
+	trsf = ais->LocalTransformation();
+	return trsf;
 }
 
 rl::math::Vector3 aisWorldTranslation(const AIS_Shape* ais)
 {
 	if (ais == nullptr)
 		return rl::math::Vector3::Zero();
-	const gp_Pnt o = gp_Pnt(0.0, 0.0, 0.0).Transformed(ais->Transformation());
+	const gp_Trsf trsf = copyAisLocalTrsf(ais);
+	if (!isValidGpTrsf(trsf))
+		return rl::math::Vector3::Zero();
+	const gp_Pnt o = gp_Pnt(0.0, 0.0, 0.0).Transformed(trsf);
 	return rl::math::Vector3(
 		static_cast<rl::math::Real>(o.X()),
 		static_cast<rl::math::Real>(o.Y()),
