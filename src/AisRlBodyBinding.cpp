@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <sstream>
 #include <vector>
 
 #include <PrsMgr_PresentableObject.hxx>
@@ -172,14 +174,95 @@ rl::math::Transform gpTrsfToRl(const gp_Trsf& trsf)
 	return T;
 }
 
-void syncAisPoseToRlBody(const AIS_Shape* ais, rl::sg::Body* body)
+rl::math::Transform syncAisPoseToRlBody(const AIS_Shape* ais, rl::sg::Body* body)
 {
+	rl::math::Transform t;
+	t.setIdentity();
 	if (ais == nullptr || body == nullptr)
-		return;
-	const gp_Trsf trsf = copyAisWorldTrsf(ais);
+		return t;
+
+	const gp_Trsf trsf = GetAisShapeWorldTrsf(ais);
 	if (!isValidGpTrsf(trsf))
+		return t;
+
+	t = gpTrsfToRl(trsf);
+	body->setFrame(t);
+	return t;
+}
+
+gp_Trsf GetAisShapeWorldTrsf(const AIS_Shape* ais)
+{
+	return copyAisWorldTrsf(ais);
+}
+
+rl::math::Transform GetAisShapeWorldRl(const AIS_Shape* ais)
+{
+	return gpTrsfToRl(GetAisShapeWorldTrsf(ais));
+}
+
+const char* occAisBodyNamePrefix()
+{
+	return "occ_ais_body_";
+}
+
+bool isOccAisBoundBody(const rl::sg::Body* body)
+{
+	if (body == nullptr)
+		return false;
+	const std::string& name = body->getName();
+	const char* prefix = occAisBodyNamePrefix();
+	return name.rfind(prefix, 0) == 0;
+}
+
+namespace {
+
+bool sameAis(const Handle(AIS_Shape)& handle, const AIS_Shape* ais)
+{
+	return !handle.IsNull() && handle.get() == ais;
+}
+
+} // namespace
+
+AisRlPair* findAisRlPair(std::vector<AisRlPair>& pairs, const AIS_Shape* ais)
+{
+	if (ais == nullptr)
+		return nullptr;
+	const auto it = std::find_if(pairs.begin(), pairs.end(),
+		[ais](const AisRlPair& e) { return sameAis(e.ais, ais); });
+	if (it == pairs.end())
+		return nullptr;
+	return &(*it);
+}
+
+const AisRlPair* findAisRlPair(const std::vector<AisRlPair>& pairs, const AIS_Shape* ais)
+{
+	if (ais == nullptr)
+		return nullptr;
+	const auto it = std::find_if(pairs.begin(), pairs.end(),
+		[ais](const AisRlPair& e) { return sameAis(e.ais, ais); });
+	if (it == pairs.end())
+		return nullptr;
+	return &(*it);
+}
+
+rl::sg::Body* findRlBodyForAis(const std::vector<AisRlPair>& pairs, const AIS_Shape* ais)
+{
+	const AisRlPair* pair = findAisRlPair(pairs, ais);
+	if (pair == nullptr)
+		return nullptr;
+	return pair->body;
+}
+
+void eraseAisRlPair(std::vector<AisRlPair>& pairs, const AIS_Shape* ais)
+{
+	if (ais == nullptr)
 		return;
-	body->setFrame(gpTrsfToRl(trsf));
+	const auto it = std::find_if(pairs.begin(), pairs.end(),
+		[ais](const AisRlPair& e) { return sameAis(e.ais, ais); });
+	if (it == pairs.end())
+		return;
+	unbindAisShapeFromRlBody(it->body);
+	pairs.erase(it);
 }
 
 gp_Trsf copyAisLocalTrsf(const AIS_Shape* ais)
@@ -260,10 +343,37 @@ rl::sg::Body* bindAisShapeToRlBody(
 
 	vrml->ref();
 	rl::sg::Body* body = sgModel->create();
-	body->setName("occ_ais_body");
+
+	static std::uint64_t s_nextId = 0;
+	std::ostringstream name;
+	name << occAisBodyNamePrefix() << ++s_nextId;
+	body->setName(name.str());
+
 	body->create(vrml);
 	vrml->unref();
 
 	syncAisPoseToRlBody(ais, body);
 	return body;
+}
+
+void unbindAisShapeFromRlBody(rl::sg::Body*& body)
+{
+	if (body == nullptr)
+		return;
+	delete body;
+	body = nullptr;
+}
+
+void unbindAisShapesFromRlModel(rl::sg::Model* sgModel)
+{
+	if (sgModel == nullptr)
+		return;
+
+	for (std::size_t i = sgModel->getNumBodies(); i > 0; )
+	{
+		--i;
+		rl::sg::Body* body = sgModel->getBody(i);
+		if (isOccAisBoundBody(body))
+			delete body;
+	}
 }
