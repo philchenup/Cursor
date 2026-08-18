@@ -11,6 +11,8 @@ rl::sg::Body* rlWorkpiece = nullptr;
 
 void MainWindow::loadStepAsRlObstacle(const QString& path)
 {
+	removeLoadShape();
+
 	auto loaded = ReadModel::loadStepModel(path.toLocal8Bit().constData());
 	if (loaded.shape.IsNull())
 		return;
@@ -26,6 +28,21 @@ void MainWindow::loadStepAsRlObstacle(const QString& path)
 
 	// 新建的碰撞体名字是 "occ_ais_body"。场景里原有的 "body" 用 findRlBodyByName 取。
 	rlWorkpiece = bindAisShapeToRlBody(aisWorkpiece.get(), env);
+}
+
+// 从 OCC 删除 loadShape 时，同步删除 getModel(1) 上绑定的 RL Body，避免规划仍碰到旧工件。
+void MainWindow::removeLoadShape()
+{
+	if (this->myOccView != nullptr && !aisWorkpiece.IsNull())
+	{
+		this->myOccView->getContext()->Remove(aisWorkpiece, Standard_True);
+		this->myOccView->Redraw();
+	}
+	aisWorkpiece.Nullify();
+
+	unbindAisShapeFromRlBody(rlWorkpiece);
+	if (this->scene != nullptr && this->scene->getNumModels() > 1)
+		unbindAisShapesFromRlModel(this->scene->getModel(1));
 }
 
 // 已有的场景刷新 / 50 ms 定时器：先同步，再读两边原点

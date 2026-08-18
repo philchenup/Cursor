@@ -28,6 +28,19 @@ rl::sg::Body* bindAisShapeToRlBody(
 	rl::sg::Model* sgModel,
 	Standard_Real linearDeflection = -1.0);
 
+/**
+ * 从 RL 场景删除 bindAisShapeToRlBody 创建的 Body。
+ * delete 会走 Body 析构：注销 FCL 碰撞对象并从 sgModel 列表移除。
+ * body 置为 nullptr，避免后续 sync / 规划继续用悬空指针。
+ */
+void unbindAisShapeFromRlBody(rl::sg::Body*& body);
+
+/**
+ * 删除 sgModel 上所有名为 "occ_ais_body" 的 Body（getModel(1) 上绑定的 OCC 工件）。
+ * 不碰场景 XML 里原有的环境 Body。
+ */
+void unbindAisShapesFromRlModel(rl::sg::Model* sgModel);
+
 /// 把 AIS 当前世界位姿写到已绑定的 RL Body（拖动后 / 定时器里调用）。
 void syncAisPoseToRlBody(const AIS_Shape* ais, rl::sg::Body* body);
 

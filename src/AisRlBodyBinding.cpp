@@ -267,3 +267,25 @@ rl::sg::Body* bindAisShapeToRlBody(
 	syncAisPoseToRlBody(ais, body);
 	return body;
 }
+
+void unbindAisShapeFromRlBody(rl::sg::Body*& body)
+{
+	if (body == nullptr)
+		return;
+	delete body;
+	body = nullptr;
+}
+
+void unbindAisShapesFromRlModel(rl::sg::Model* sgModel)
+{
+	if (sgModel == nullptr)
+		return;
+
+	for (std::size_t i = sgModel->getNumBodies(); i > 0; )
+	{
+		--i;
+		rl::sg::Body* body = sgModel->getBody(i);
+		if (body != nullptr && body->getName() == "occ_ais_body")
+			delete body;
+	}
+}
