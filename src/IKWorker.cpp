@@ -999,17 +999,18 @@ void IKWorker::doGoToStart(const IKGoToStartParams & params)
 
         reportProgress(20);
 
-        // ========== 焊接起点关节解（path2 终点）==========
+        // ========== 固定 Joint0：min = max = 当前 Y，后续 IK / RRT 不再采样地轨 ==========
+        const double yCurrent = path1.back()(0);
         if (railJoint && railJoint->getDofPosition() == 1)
         {
-            const double eps = 1e-6;
             rl::math::Vector lo(1), hi(1);
-            lo << (yTarget - eps);
-            hi << (yTarget + eps);
+            lo << yCurrent;
+            hi << yCurrent;
             railJoint->setMinimum(lo);
             railJoint->setMaximum(hi);
         }
 
+        // ========== 焊接起点关节解（path2 终点）==========
         rl::mdl::JacobianInverseKinematics ik(kinematic.get());
         ik.setDuration(std::chrono::milliseconds(params.timeoutMs));
         ik.addGoal(T_world_tcp_start * T_tcp_to_flange, 0);
@@ -1022,8 +1023,7 @@ void IKWorker::doGoToStart(const IKGoToStartParams & params)
             return;
         }
         rl::math::Vector qGoal = kinematic->getPosition();
-        qGoal(0) = yTarget;
-        // Joint0 限位保持钉在 yTarget，RRT 只采样旋转关节，避免 mm 地轨主导距离度量
+        qGoal(0) = yCurrent;
 
         reportProgress(30);
 
@@ -1096,9 +1096,9 @@ void IKWorker::doGoToStart(const IKGoToStartParams & params)
             }
         }
 
-        // 地轨保持 yTarget，避免限位窗口 eps 漂移
+        // 地轨保持当前 Y，避免规划过程中 Joint0 漂移
         for (rl::math::Vector& q : path2)
-            q(0) = yTarget;
+            q(0) = yCurrent;
 
         restoreRail();
         reportProgress(90);
