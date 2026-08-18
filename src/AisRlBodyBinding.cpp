@@ -352,6 +352,16 @@ void AisRlBodyBinder::unbind(AIS_Shape* ais)
 	m_entries.erase(it);
 }
 
+void AisRlBodyBinder::unbind(const Handle(AIS_InteractiveObject)& obj)
+{
+	if (obj.IsNull())
+		return;
+	Handle(AIS_Shape) ais = Handle(AIS_Shape)::DownCast(obj);
+	if (ais.IsNull())
+		return;
+	unbind(ais.get());
+}
+
 void AisRlBodyBinder::unbindAll()
 {
 	for (Entry& e : m_entries)

@@ -1,6 +1,7 @@
 #ifndef AIS_RL_BODY_BINDING_H
 #define AIS_RL_BODY_BINDING_H
 
+#include <AIS_InteractiveObject.hxx>
 #include <AIS_Shape.hxx>
 #include <Standard_Real.hxx>
 #include <gp_Trsf.hxx>
@@ -46,8 +47,8 @@ void unbindAisShapesFromRlModel(rl::sg::Model* sgModel);
 void syncAisPoseToRlBody(const AIS_Shape* ais, rl::sg::Body* body);
 
 /**
- * 多模型 AIS↔RL 对照表。MainWindow 持有一份：绑定、按 AIS 解绑、定时器 syncAll()。
- * occtUpdate 不再手动配对 (ais, body)。
+ * 多模型 AIS↔RL 对照表。MainWindow 持有一份。
+ * 拖动时用 sync(当前 AIS)，删除时用 unbind(选中 AIS)。不要对拖动调用 syncAll。
  */
 class AisRlBodyBinder
 {
@@ -59,9 +60,10 @@ public:
 	rl::sg::Body* bind(AIS_Shape* ais, rl::sg::Model* sgModel, Standard_Real linearDeflection = -1.0);
 
 	void unbind(AIS_Shape* ais);
+	void unbind(const Handle(AIS_InteractiveObject)& obj);
 	void unbindAll();
 
-	/// 只传 AIS，从表里查 Body 后同步。未绑定则返回 Identity。
+	/// 只同步这一个 AIS 对应的 Body。拖动时必须用这个，不要 syncAll。
 	rl::math::Transform sync(const AIS_Shape* ais);
 	/// 同步全部绑定；AIS 已失效的条目会删掉对应 Body。
 	void syncAll();
