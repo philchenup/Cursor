@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <sstream>
+#include <string>
 #include <vector>
 
 #include <PrsMgr_PresentableObject.hxx>
@@ -260,7 +263,9 @@ rl::sg::Body* bindAisShapeToRlBody(
 
 	vrml->ref();
 	rl::sg::Body* body = sgModel->create();
-	body->setName("occ_ais_body");
+	std::ostringstream name;
+	name << "occ_ais_body_" << reinterpret_cast<std::uintptr_t>(ais);
+	body->setName(name.str());
 	body->create(vrml);
 	vrml->unref();
 
@@ -285,7 +290,105 @@ void unbindAisShapesFromRlModel(rl::sg::Model* sgModel)
 	{
 		--i;
 		rl::sg::Body* body = sgModel->getBody(i);
-		if (body != nullptr && body->getName() == "occ_ais_body")
+		if (body != nullptr && body->getName().rfind("occ_ais_body", 0) == 0)
 			delete body;
 	}
+}
+
+namespace {
+
+bool sameAis(const Handle(AIS_Shape)& handle, const AIS_Shape* ais)
+{
+	return !handle.IsNull() && handle.get() == ais;
+}
+
+} // namespace
+
+std::vector<AisRlBodyBinder::Entry>::iterator
+AisRlBodyBinder::findEntry(const AIS_Shape* ais)
+{
+	return std::find_if(m_entries.begin(), m_entries.end(),
+		[ais](const Entry& e) { return sameAis(e.ais, ais); });
+}
+
+std::vector<AisRlBodyBinder::Entry>::const_iterator
+AisRlBodyBinder::findEntry(const AIS_Shape* ais) const
+{
+	return std::find_if(m_entries.begin(), m_entries.end(),
+		[ais](const Entry& e) { return sameAis(e.ais, ais); });
+}
+
+rl::sg::Body* AisRlBodyBinder::bind(AIS_Shape* ais, Standard_Real linearDeflection)
+{
+	return bind(ais, m_model, linearDeflection);
+}
+
+rl::sg::Body* AisRlBodyBinder::bind(AIS_Shape* ais, rl::sg::Model* sgModel, Standard_Real linearDeflection)
+{
+	if (sgModel != nullptr)
+		m_model = sgModel;
+	if (ais == nullptr || m_model == nullptr)
+		return nullptr;
+
+	unbind(ais);
+
+	rl::sg::Body* body = bindAisShapeToRlBody(ais, m_model, linearDeflection);
+	if (body == nullptr)
+		return nullptr;
+
+	Entry e;
+	e.ais = ais;
+	e.body = body;
+	m_entries.push_back(e);
+	return body;
+}
+
+void AisRlBodyBinder::unbind(AIS_Shape* ais)
+{
+	const auto it = findEntry(ais);
+	if (it == m_entries.end())
+		return;
+	unbindAisShapeFromRlBody(it->body);
+	m_entries.erase(it);
+}
+
+void AisRlBodyBinder::unbindAll()
+{
+	for (Entry& e : m_entries)
+		unbindAisShapeFromRlBody(e.body);
+	m_entries.clear();
+}
+
+rl::math::Transform AisRlBodyBinder::sync(const AIS_Shape* ais)
+{
+	rl::math::Transform t;
+	t.setIdentity();
+	rl::sg::Body* body = bodyOf(ais);
+	if (ais == nullptr || body == nullptr)
+		return t;
+	syncAisPoseToRlBody(ais, body);
+	return body->getFrame();
+}
+
+void AisRlBodyBinder::syncAll()
+{
+	for (auto it = m_entries.begin(); it != m_entries.end(); )
+	{
+		if (it->ais.IsNull())
+		{
+			unbindAisShapeFromRlBody(it->body);
+			it = m_entries.erase(it);
+			continue;
+		}
+		syncAisPoseToRlBody(it->ais.get(), it->body);
+		++it;
+	}
+}
+
+rl::sg::Body* AisRlBodyBinder::bodyOf(const AIS_Shape* ais) const
+{
+	const auto it = findEntry(ais);
+	if (it == m_entries.end())
+		return nullptr;
+	return it->body;
 }
