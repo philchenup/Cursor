@@ -1,5 +1,6 @@
 #include "MovableWrl.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <stdexcept>
 
@@ -7,6 +8,8 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QEvent>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QObject>
@@ -18,10 +21,14 @@
 #include <Inventor/SoFullPath.h>
 #include <Inventor/SoInput.h>
 #include <Inventor/SoInteraction.h>
+#include <Inventor/SoOutput.h>
 #include <Inventor/SoPickedPoint.h>
 #include <Inventor/SoPath.h>
+#include <Inventor/VRMLnodes/SoVRMLGroup.h>
 #include <Inventor/actions/SoRayPickAction.h>
 #include <Inventor/actions/SoSearchAction.h>
+#include <Inventor/actions/SoToVRML2Action.h>
+#include <Inventor/actions/SoWriteAction.h>
 #include <Inventor/manips/SoTransformManip.h>
 #include <Inventor/manips/SoTransformerManip.h>
 #include <Inventor/nodes/SoCamera.h>
@@ -30,6 +37,7 @@
 #include <Inventor/sensors/SoSensor.h>
 
 #include <rl/math/Rotation.h>
+#include <rl/sg/Model.h>
 
 namespace
 {
@@ -117,6 +125,45 @@ qreal widgetDpr(const QWidget* widget)
 	return 1.0;
 #endif
 }
+
+void copyTransformFields(const SoTransform* src, SoTransform* dst)
+{
+	dst->translation = src->translation;
+	dst->rotation = src->rotation;
+	dst->scaleFactor = src->scaleFactor;
+	dst->scaleOrientation = src->scaleOrientation;
+	dst->center = src->center;
+}
+
+bool writeNodeToWrl(SoNode* node, const std::string& file)
+{
+	if (!node || file.empty())
+	{
+		return false;
+	}
+
+	SoToVRML2Action toVrml;
+	toVrml.apply(node);
+	SoVRMLGroup* vrmlRoot = toVrml.getVRML2SceneGraph();
+
+	SoOutput out;
+	if (!out.openFile(file.c_str()))
+	{
+		qWarning() << "无法写入 WRL:" << QString::fromStdString(file);
+		return false;
+	}
+
+	SoNode* toWrite = vrmlRoot ? static_cast<SoNode*>(vrmlRoot) : node;
+	toWrite->ref();
+	out.setHeaderString(vrmlRoot ? "#VRML V2.0 utf8" : "#Inventor V2.1 ascii");
+	SoWriteAction writer(&out);
+	writer.apply(toWrite);
+	out.closeFile();
+	toWrite->unref();
+	return true;
+}
+
+MovableWrlManager* g_manager = nullptr;
 }
 
 class MovableWrlEventFilter : public QObject
@@ -132,10 +179,8 @@ public:
 	{
 		if (event->type() == QEvent::KeyPress)
 		{
-			const auto* keyEvent = static_cast<QKeyEvent*>(event);
-			if (keyEvent->key() == Qt::Key_Escape)
+			if (manager_->handleKey(static_cast<QKeyEvent*>(event), watched))
 			{
-				manager_->exitManipulator();
 				return true;
 			}
 		}
@@ -167,6 +212,9 @@ MovableWrl::MovableWrl() = default;
 
 MovableWrl::~MovableWrl()
 {
+	collisionBody_ = nullptr;
+	onPoseChanged = nullptr;
+
 	if (translationSensor_)
 	{
 		translationSensor_->detach();
@@ -192,6 +240,15 @@ SoTransform* MovableWrl::poseNode() const
 	return static_cast<SoTransform*>(root->getChild(0));
 }
 
+SoNode* MovableWrl::geometryNode() const
+{
+	if (!root || root->getNumChildren() < 2)
+	{
+		return nullptr;
+	}
+	return root->getChild(1);
+}
+
 rl::math::Transform MovableWrl::getPose() const
 {
 	SoTransform* t = poseNode();
@@ -209,14 +266,43 @@ void MovableWrl::setPose(const rl::math::Transform& T)
 
 void MovableWrl::bindCollisionBody(rl::sg::Body* body)
 {
-	onPoseChanged = [body](const rl::math::Transform& T)
-	{
-		if (body)
+	collisionBody_ = body;
+	onPoseChanged = [this](const rl::math::Transform& T)
 		{
-			body->setFrame(T);
-		}
-	};
+			if (collisionBody_)
+			{
+				collisionBody_->setFrame(T);
+			}
+		};
 	syncCollisionBody();
+}
+
+rl::sg::Body* MovableWrl::collisionBody() const
+{
+	return collisionBody_;
+}
+
+void MovableWrl::unbindCollisionBody()
+{
+	collisionBody_ = nullptr;
+	onPoseChanged = nullptr;
+}
+
+void MovableWrl::destroyCollisionBody()
+{
+	rl::sg::Body* body = collisionBody_;
+	collisionBody_ = nullptr;
+	onPoseChanged = nullptr;
+	if (!body)
+	{
+		return;
+	}
+
+	if (rl::sg::Model* model = body->getModel())
+	{
+		model->remove(body);
+	}
+	delete body;
 }
 
 void MovableWrl::syncCollisionBody() const
@@ -250,14 +336,48 @@ void MovableWrl::attachPoseSensors()
 	rotationSensor_->attach(&t->rotation);
 }
 
+bool MovableWrl::saveCurrentPoseWrl(const std::string& file) const
+{
+	SoTransform* pose = poseNode();
+	if (!root || !pose)
+	{
+		qWarning() << "没有可保存的障碍物模型";
+		return false;
+	}
+
+	SoSeparator* exportRoot = new SoSeparator();
+	exportRoot->ref();
+
+	SoTransform* exportPose = new SoTransform();
+	copyTransformFields(pose, exportPose);
+	exportRoot->addChild(exportPose);
+
+	for (int i = 1; i < root->getNumChildren(); ++i)
+	{
+		exportRoot->addChild(root->getChild(i));
+	}
+
+	const bool ok = writeNodeToWrl(exportRoot, file);
+	exportRoot->unref();
+	if (ok)
+	{
+		qDebug() << "已保存当前位姿 WRL:" << QString::fromStdString(file);
+	}
+	return ok;
+}
+
 MovableWrlManager* MovableWrlManager::install(SoGroup* sceneParent, SoQtExaminerViewer* examiner)
 {
-	static MovableWrlManager* instance = nullptr;
-	if (!instance)
+	if (!g_manager)
 	{
-		instance = new MovableWrlManager(sceneParent, examiner);
+		g_manager = new MovableWrlManager(sceneParent, examiner);
 	}
-	return instance;
+	return g_manager;
+}
+
+MovableWrlManager* MovableWrlManager::instance()
+{
+	return g_manager;
 }
 
 void MovableWrlManager::addDraggerDefaultsDir(const std::string& dir)
@@ -331,13 +451,14 @@ MovableWrl* MovableWrlManager::addWrl(const std::string& wrlFile, const rl::math
 	item->root->setName("movableWrl");
 	item->root->addChild(transform);
 	item->root->addChild(wrl);
+	item->sourceFile = wrlFile;
 	item->attachPoseSensors();
 
 	movableRoot_->addChild(item->root);
 	items_.push_back(item);
 
 	qDebug() << "MovableWrl loaded:" << QString::fromStdString(wrlFile)
-		<< "- Ctrl+Left click to show gizmos, ESC to return to camera";
+		<< QString::fromUtf8("- Ctrl+左键选中, Ctrl+Shift+S 保存当前位姿WRL, Delete 删除选中并释放碰撞体, ESC 退出");
 	return item;
 }
 
@@ -364,6 +485,153 @@ void MovableWrlManager::exitManipulator()
 MovableWrl* MovableWrlManager::selectedItem() const
 {
 	return selected_;
+}
+
+const std::vector<MovableWrl*>& MovableWrlManager::items() const
+{
+	return items_;
+}
+
+bool MovableWrlManager::saveWrl(MovableWrl* item, const std::string& file) const
+{
+	return item ? item->saveCurrentPoseWrl(file) : false;
+}
+
+bool MovableWrlManager::saveSelectedWrl(const std::string& file) const
+{
+	if (!selected_)
+	{
+		qWarning() << "请先 Ctrl+左键 选中障碍物模型";
+		return false;
+	}
+	return selected_->saveCurrentPoseWrl(file);
+}
+
+bool MovableWrlManager::saveSelectedWrl()
+{
+	if (!selected_)
+	{
+		qWarning() << "请先 Ctrl+左键 选中障碍物模型";
+		return false;
+	}
+
+	QString defaultPath;
+	if (!selected_->sourceFile.empty())
+	{
+		const QFileInfo info(QString::fromStdString(selected_->sourceFile));
+		defaultPath = info.absolutePath() + "/" + info.completeBaseName() + "_posed.wrl";
+	}
+	else
+	{
+		defaultPath = "obstacle_posed.wrl";
+	}
+
+	const QString path = QFileDialog::getSaveFileName(
+		examiner_ ? examiner_->getWidget() : nullptr,
+		QString::fromUtf8("保存障碍物当前位姿 WRL"),
+		defaultPath,
+		QString::fromUtf8("VRML (*.wrl);;All files (*)")
+	);
+	if (path.isEmpty())
+	{
+		return false;
+	}
+	return selected_->saveCurrentPoseWrl(path.toStdString());
+}
+
+bool MovableWrlManager::removeItem(MovableWrl* item)
+{
+	if (!item)
+	{
+		return false;
+	}
+
+	const auto it = std::find(items_.begin(), items_.end(), item);
+	if (it == items_.end())
+	{
+		return false;
+	}
+
+	if (selected_ == item)
+	{
+		detachManip(item);
+		selected_ = nullptr;
+		examiner_->setViewing(TRUE);
+	}
+
+	if (item->root && movableRoot_)
+	{
+		const int index = movableRoot_->findChild(item->root);
+		if (index >= 0)
+		{
+			movableRoot_->removeChild(index);
+		}
+	}
+
+	item->destroyCollisionBody();
+	items_.erase(it);
+	delete item;
+	return true;
+}
+
+bool MovableWrlManager::removeSelected()
+{
+	if (!selected_)
+	{
+		qWarning() << "请先 Ctrl+左键 选中要删除的障碍物模型";
+		return false;
+	}
+	return removeItem(selected_);
+}
+
+bool MovableWrlManager::handleKey(const QKeyEvent* event, QObject* watched)
+{
+	if (!event)
+	{
+		return false;
+	}
+
+	if (QApplication::activeModalWidget())
+	{
+		return false;
+	}
+
+	if (event->key() == Qt::Key_Escape)
+	{
+		exitManipulator();
+		return true;
+	}
+
+	if (watched &&
+		(watched->inherits("QLineEdit") ||
+			watched->inherits("QTextEdit") ||
+			watched->inherits("QPlainTextEdit") ||
+			watched->inherits("QAbstractSpinBox") ||
+			watched->inherits("QComboBox")))
+	{
+		return false;
+	}
+
+	if (!selected_)
+	{
+		return false;
+	}
+
+	if (event->key() == Qt::Key_Delete)
+	{
+		removeSelected();
+		return true;
+	}
+
+	if (event->key() == Qt::Key_S &&
+		(event->modifiers() & Qt::ControlModifier) &&
+		(event->modifiers() & Qt::ShiftModifier))
+	{
+		saveSelectedWrl();
+		return true;
+	}
+
+	return false;
 }
 
 SoPath* MovableWrlManager::makePosePath(MovableWrl* item) const
@@ -577,10 +845,8 @@ SbBool MovableWrlManager::onViewerEvent(void* userData, QEvent* event)
 
 	if (event->type() == QEvent::KeyPress)
 	{
-		const auto* keyEvent = static_cast<QKeyEvent*>(event);
-		if (keyEvent->key() == Qt::Key_Escape)
+		if (self->handleKey(static_cast<QKeyEvent*>(event), self->examiner_ ? self->examiner_->getWidget() : nullptr))
 		{
-			self->exitManipulator();
 			return TRUE;
 		}
 	}
