@@ -5,6 +5,7 @@
 #include <Standard_Real.hxx>
 #include <gp_Trsf.hxx>
 #include <string>
+#include <vector>
 
 #include <rl/math/Transform.h>
 #include <rl/math/Vector.h>
@@ -28,8 +29,59 @@ rl::sg::Body* bindAisShapeToRlBody(
 	rl::sg::Model* sgModel,
 	Standard_Real linearDeflection = -1.0);
 
-/// 把 AIS 当前世界位姿写到已绑定的 RL Body（拖动后 / 定时器里调用）。
+/**
+ * 从 RL 场景删除 bindAisShapeToRlBody 创建的 Body。
+ * delete 会走 Body 析构：注销 FCL 碰撞对象并从 sgModel 列表移除。
+ * body 置为 nullptr，避免后续 sync / 规划继续用悬空指针。
+ */
+void unbindAisShapeFromRlBody(rl::sg::Body*& body);
+
+/**
+ * 删除 sgModel 上所有名称以 "occ_ais_body" 开头的 Body。
+ * 不碰场景 XML 里原有的环境 Body。
+ */
+void unbindAisShapesFromRlModel(rl::sg::Model* sgModel);
+
+/// 底层同步：把 AIS 世界位姿写到指定 Body。多模型请用 AisRlBodyBinder::sync / syncAll。
 void syncAisPoseToRlBody(const AIS_Shape* ais, rl::sg::Body* body);
+
+/**
+ * 多模型 AIS↔RL 对照表。MainWindow 持有一份：绑定、按 AIS 解绑、定时器 syncAll()。
+ * occtUpdate 不再手动配对 (ais, body)。
+ */
+class AisRlBodyBinder
+{
+public:
+	void setModel(rl::sg::Model* sgModel) { m_model = sgModel; }
+	rl::sg::Model* model() const { return m_model; }
+
+	rl::sg::Body* bind(AIS_Shape* ais, Standard_Real linearDeflection = -1.0);
+	rl::sg::Body* bind(AIS_Shape* ais, rl::sg::Model* sgModel, Standard_Real linearDeflection = -1.0);
+
+	void unbind(AIS_Shape* ais);
+	void unbindAll();
+
+	/// 只传 AIS，从表里查 Body 后同步。未绑定则返回 Identity。
+	rl::math::Transform sync(const AIS_Shape* ais);
+	/// 同步全部绑定；AIS 已失效的条目会删掉对应 Body。
+	void syncAll();
+
+	rl::sg::Body* bodyOf(const AIS_Shape* ais) const;
+	std::size_t size() const { return m_entries.size(); }
+
+private:
+	struct Entry
+	{
+		Handle(AIS_Shape) ais;
+		rl::sg::Body* body = nullptr;
+	};
+
+	std::vector<Entry>::iterator findEntry(const AIS_Shape* ais);
+	std::vector<Entry>::const_iterator findEntry(const AIS_Shape* ais) const;
+
+	std::vector<Entry> m_entries;
+	rl::sg::Model* m_model = nullptr;
+};
 
 /// 从 AIS 成员 LocalTransformation 按值拷贝。不要写 const gp_Trsf& t = ais->Transformation()。
 gp_Trsf copyAisLocalTrsf(const AIS_Shape* ais);

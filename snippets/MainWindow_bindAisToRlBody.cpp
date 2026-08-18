@@ -1,50 +1,57 @@
-// 加载 STEP → AIS_Shape 后，绑定到 RL 环境模型，并在 OCCT 刷新里同步位姿。
-//
-// 1) 加入工程：AisRlBodyBinding.h / AisRlBodyBinding.cpp
-// 2) 环境模型用 scene 里机器人之外的那一组（常见为 getModel(1)），不要绑到 Model 0。
-// 3) 在已有 occtUpdate / 50 ms 定时器里调用 sync。
+// 多模型：MainWindow 持有一份 AisRlBodyBinder。
+// 绑定/解绑按 AIS 对象查表；occtUpdate 只调 syncAll()，不必再传 (ais, body)。
 
 #include "AisRlBodyBinding.h"
 
-Handle(AIS_Shape) aisWorkpiece;   // 成员，即 loadShape
-rl::sg::Body* rlWorkpiece = nullptr;
+AisRlBodyBinder aisRl;   // 成员
 
-void MainWindow::loadStepAsRlObstacle(const QString& path)
+rl::sg::Model* MainWindow::environmentModel()
+{
+	if (this->scene == nullptr)
+		return nullptr;
+	if (this->scene->getNumModels() > 1)
+		return this->scene->getModel(1);
+	return this->scene->create();
+}
+
+Handle(AIS_Shape) MainWindow::addStepAsRlObstacle(const QString& path)
 {
 	auto loaded = ReadModel::loadStepModel(path.toLocal8Bit().constData());
 	if (loaded.shape.IsNull())
-		return;
+		return Handle(AIS_Shape)();
 
-	aisWorkpiece = ReadModel::makeDisplayShape(loaded);
-	this->myOccView->getContext()->Display(aisWorkpiece, Standard_True);
+	Handle(AIS_Shape) ais = ReadModel::makeDisplayShape(loaded);
+	this->myOccView->getContext()->Display(ais, Standard_True);
 
-	rl::sg::Model* env = nullptr;
-	if (this->scene->getNumModels() > 1)
-		env = this->scene->getModel(1);
-	else
-		env = this->scene->create();
-
-	// 新建的碰撞体名字是 "occ_ais_body"。场景里原有的 "body" 用 findRlBodyByName 取。
-	rlWorkpiece = bindAisShapeToRlBody(aisWorkpiece.get(), env);
+	aisRl.bind(ais.get(), environmentModel());
+	return ais;
 }
 
-// 已有的场景刷新 / 50 ms 定时器：先同步，再读两边原点
+// 从 OCC 删除某一个模型时，同步删掉对应 RL Body
+void MainWindow::removeAisObstacle(const Handle(AIS_Shape)& ais)
+{
+	if (ais.IsNull())
+		return;
+
+	aisRl.unbind(ais.get());
+
+	if (this->myOccView != nullptr)
+	{
+		this->myOccView->getContext()->Remove(ais, Standard_True);
+		this->myOccView->Redraw();
+	}
+}
+
+void MainWindow::removeAllAisObstacles()
+{
+	aisRl.unbindAll();
+	// 如还要清 OCC 显示，对每个 AIS 再 Remove；对照表已不再持有 Handle。
+}
+
+// 拖动 / 50 ms 定时器：一次同步全部绑定，不必再写 syncAisPoseToRlBody(ais, body)
 void MainWindow::occtUpdate()
 {
-	AIS_Shape* loadShape = aisWorkpiece.get();
-	syncAisPoseToRlBody(loadShape, rlWorkpiece);
-
-	const rl::math::Vector3 aisP = aisWorldTranslation(loadShape);
-
-	rl::sg::Body* namedBody = findRlBodyByName(this->scene->getModel(1), "body");
-	const rl::math::Vector3 bodyP = rlBodyTranslation(namedBody);
-
-	this->statusBar()->showMessage(
-		QString("AIS xyz=(%1, %2, %3)    body xyz=(%4, %5, %6)")
-			.arg(aisP.x(), 0, 'f', 4)
-			.arg(aisP.y(), 0, 'f', 4)
-			.arg(aisP.z(), 0, 'f', 4)
-			.arg(bodyP.x(), 0, 'f', 4)
-			.arg(bodyP.y(), 0, 'f', 4)
-			.arg(bodyP.z(), 0, 'f', 4));
+	aisRl.syncAll();
+	// 只刷新某一个：aisRl.sync(ais.get());
+	// ... 原来的机器人 link 刷新
 }
