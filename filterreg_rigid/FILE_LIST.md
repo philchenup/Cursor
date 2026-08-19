@@ -10,6 +10,7 @@
 - `apps/rigid_pt2pl/main.cpp`
 - `apps/rigid_pt2pt/bunny.pcd`
 - `apps/rigid_pt2pt/main.cpp`
+- `apps/load_handeye/main.cpp`
 
 ## common
 
@@ -78,6 +79,9 @@
 
 - `io/pcd_io.cpp`
 - `io/pcd_io.h`
+- `io/pose_io.cpp`
+- `io/pose_io.h`
+- `io/HandOnEyeCalib.example.json`
 
 ## visualizer
 

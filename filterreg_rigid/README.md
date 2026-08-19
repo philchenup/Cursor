@@ -31,7 +31,12 @@ cmake --build . -j
 
 # point-to-plane
 ./rigid_pt2pl ./cloud_0.pcd ./cloud_1.pcd
+
+# 手眼标定 JSON（nlohmann）-> Eigen::Affine3d
+./load_handeye ./HandOnEyeCalib.example.json
 ```
+
+`io/pose_io.*` 用 nlohmann JSON 读取 `HandOnEyeCalib-*.json`（字段 `Quaternion` `[x,y,z,w]`、`Translation`、`EIH`），并转换成 `Eigen::Affine3d`。
 
 运行结束后会写出 `matched_live.ply` / `matched_observation.ply`（替代原 PCL 可视化窗口）。
 
@@ -54,7 +59,7 @@ filterreg_rigid/
 ├── geometry_utils/            # mat33/mat34、permutohedral
 ├── kinematic/rigid/           # 刚性运动学 + Kabsch / pt2pl assembler
 ├── corr_search/gmm/           # FilterReg GMM 对应搜索
-├── io/                        # 无 PCL 的 PCD 读取
+├── io/                        # 无 PCL 的 PCD 读取；手眼标定 JSON -> Eigen::Affine3d
 ├── visualizer/                # PLY 导出
 └── external/                  # eigen3 / nlohmann / cuda_stub
 ```
