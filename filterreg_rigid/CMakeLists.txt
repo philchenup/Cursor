@@ -65,6 +65,7 @@ target_link_libraries(gmm_corr_lib PUBLIC common_lib geometry_utils_lib)
 
 add_library(io_lib
 	io/pcd_io.cpp
+	io/pose_io.cpp
 )
 target_link_libraries(io_lib PUBLIC common_lib)
 
@@ -94,6 +95,9 @@ target_link_libraries(rigid_pt2pl
 	dbg_visualizer_lib
 )
 
+add_executable(load_handeye apps/load_handeye/main.cpp)
+target_link_libraries(load_handeye io_lib ${GLOG_LIBRARIES})
+
 # Convenience: copy sample clouds next to binaries
 add_custom_command(TARGET rigid_pt2pt POST_BUILD
 	COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -106,3 +110,7 @@ add_custom_command(TARGET rigid_pt2pl POST_BUILD
 	COMMAND ${CMAKE_COMMAND} -E copy_if_different
 		${CMAKE_SOURCE_DIR}/apps/rigid_pt2pl/cloud_1.pcd
 		$<TARGET_FILE_DIR:rigid_pt2pl>/cloud_1.pcd)
+add_custom_command(TARGET load_handeye POST_BUILD
+	COMMAND ${CMAKE_COMMAND} -E copy_if_different
+		${CMAKE_SOURCE_DIR}/io/HandOnEyeCalib.example.json
+		$<TARGET_FILE_DIR:load_handeye>/HandOnEyeCalib.example.json)
