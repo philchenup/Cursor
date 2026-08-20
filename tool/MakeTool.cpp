@@ -24,6 +24,9 @@
 #include <QKeySequence>
 #include <QAbstractItemView>
 #include <QCheckBox>
+#include <QMetaType>
+#include <QtGlobal>
+#include <QVariant>
 #include <algorithm>
 #include <functional>
 #include <random>
@@ -78,9 +81,11 @@ VTK_MODULE_INIT(vtkRenderingOpenGL2)
 VTK_MODULE_INIT(vtkInteractionStyle)
 VTK_MODULE_INIT(vtkRenderingFreeType)
 
-#define ACTOR_POINTER_ROLE Qt::UserRole + 1
-#define GRASP_DATA_ROLE   Qt::UserRole + 2
-#define HOLE_INDEX_ROLE   Qt::UserRole + 3
+enum GraspItemRole {
+    ACTOR_POINTER_ROLE = Qt::UserRole + 1,
+    GRASP_DATA_ROLE = Qt::UserRole + 2,
+    HOLE_INDEX_ROLE = Qt::UserRole + 3
+};
 
 using json = nlohmann::json;
 
@@ -88,6 +93,70 @@ Eigen::Matrix4d graspInCamMatrix;
 Eigen::Matrix4d multiGraspInCamMatrix;
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(SphereData, X, Y, Z, w, x, y, z)
+
+namespace {
+
+void registerSphereDataMetaType()
+{
+    static const bool registered = []() {
+        qRegisterMetaType<SphereData>("SphereData");
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+        // QListWidgetItem::setData compares old vs new QVariant. Without this,
+        // Qt 5 dereferences a null comparator and crashes (access violation).
+        QMetaType::registerComparators<SphereData>();
+#endif
+        return true;
+    }();
+    Q_UNUSED(registered);
+}
+
+QVariant sphereDataToVariant(const SphereData& data)
+{
+    // Store as a built-in QVariantList so setData comparison never depends on
+    // custom QMetaType comparators.
+    QVariantList list;
+    list.reserve(7);
+    list << data.X << data.Y << data.Z << data.w << data.x << data.y << data.z;
+    return list;
+}
+
+bool variantToSphereData(const QVariant& var, SphereData& data)
+{
+    if (!var.isValid() || var.isNull()) {
+        return false;
+    }
+    if (var.userType() == qMetaTypeId<SphereData>()) {
+        data = var.value<SphereData>();
+        return true;
+    }
+    const QVariantList list = var.toList();
+    if (list.size() == 7) {
+        data.X = list.at(0).toDouble();
+        data.Y = list.at(1).toDouble();
+        data.Z = list.at(2).toDouble();
+        data.w = list.at(3).toDouble();
+        data.x = list.at(4).toDouble();
+        data.y = list.at(5).toDouble();
+        data.z = list.at(6).toDouble();
+        return true;
+    }
+    return false;
+}
+
+void setItemGraspData(QListWidgetItem* item, const SphereData& data)
+{
+    if (!item) {
+        return;
+    }
+    item->setData(GRASP_DATA_ROLE, sphereDataToVariant(data));
+}
+
+bool listOwnsItem(QListWidget* list, QListWidgetItem* item)
+{
+    return list && item && list->row(item) >= 0;
+}
+
+}  // namespace
 
 auto printTransformCallback = [](vtkObject* caller, long unsigned int eventId, void* clientData, void* callData) {
     auto actor = static_cast<vtkActor*>(clientData);
@@ -152,10 +221,11 @@ m_timer_2(new QTimer(this)),
 mu(new MathUtils),
 currentSelectedActor(nullptr),
 m_viewer(nullptr),
-current_item(new QListWidgetItem),
+current_item(nullptr),
 startGlobalChange(false)
 {
     ui->setupUi(this);
+    registerSphereDataMetaType();
 
     if (ui == nullptr) {
         ui = new Ui::MakeTool();
@@ -856,22 +926,32 @@ void MakeTool::timerHandle() {
 }
 
 void MakeTool::timer1Handle() {
-    Eigen::Matrix3d rotation_matrix = multiGraspInCamMatrix.block<3, 3>(0, 0);
-    Eigen::Quaterniond quaternion = Eigen::Quaterniond(rotation_matrix);
+    if (!ui || !listOwnsItem(ui->graspListWidget, current_item)) {
+        return;
+    }
 
-    if (quaternion.w() == 1 && quaternion.x() == 0 && quaternion.y() == 0 && quaternion.z() == 0) return;
+    Eigen::Matrix3d rotation_matrix = multiGraspInCamMatrix.block<3, 3>(0, 0);
+    Eigen::Quaterniond quaternion(rotation_matrix);
+    if (quaternion.coeffs().hasNaN()) {
+        return;
+    }
+    quaternion.normalize();
+
+    // Matrix stays Identity until the VTK callback writes a real actor pose.
+    if (quaternion.isApprox(Eigen::Quaterniond::Identity(), 1e-9)) {
+        return;
+    }
 
     SphereData data;
     data.X = multiGraspInCamMatrix(0, 3);
     data.Y = multiGraspInCamMatrix(1, 3);
     data.Z = multiGraspInCamMatrix(2, 3);
-
     data.w = quaternion.w();
     data.x = quaternion.x();
     data.y = quaternion.y();
     data.z = quaternion.z();
 
-    current_item->setData(GRASP_DATA_ROLE, QVariant::fromValue(data));
+    setItemGraspData(current_item, data);
     updateSpinboxes(data);
 }
 
@@ -961,7 +1041,7 @@ void MakeTool::autoAddGraspPoint(const SphereData& data) {
     item->setFlags(item->flags() | Qt::ItemIsDragEnabled | Qt::ItemIsSelectable | Qt::ItemIsEnabled);
 
     item->setData(ACTOR_POINTER_ROLE, QVariant::fromValue<void*>(new_actor));
-    item->setData(GRASP_DATA_ROLE, QVariant::fromValue(data));
+    setItemGraspData(item, data);
 
     ui->graspListWidget->addItem(item);
     ui->graspListWidget->setCurrentItem(item);
@@ -1010,7 +1090,7 @@ void MakeTool::on_newGraspBtn_clicked() {
     item->setFlags(item->flags() | Qt::ItemIsDragEnabled | Qt::ItemIsSelectable | Qt::ItemIsEnabled);
 
     item->setData(ACTOR_POINTER_ROLE, QVariant::fromValue<void*>(new_actor));
-    item->setData(GRASP_DATA_ROLE, QVariant::fromValue(singleToolPoint));
+    setItemGraspData(item, singleToolPoint);
 
     ui->graspListWidget->addItem(item);
     ui->graspListWidget->setCurrentItem(item);
@@ -1123,11 +1203,11 @@ void MakeTool::captureCadGraspBaselines() {
             cadGraspBaselines_.emplace_back();
             continue;
         }
-        QVariant dataVar = item->data(GRASP_DATA_ROLE);
-        if (dataVar.isNull()) {
+        SphereData stored;
+        if (!variantToSphereData(item->data(GRASP_DATA_ROLE), stored)) {
             cadGraspBaselines_.emplace_back();
         } else {
-            cadGraspBaselines_.push_back(dataVar.value<SphereData>());
+            cadGraspBaselines_.push_back(stored);
         }
     }
 }
@@ -1157,8 +1237,8 @@ void MakeTool::updateCadGraspListExceptSelected() {
         selected.Y - initOff.Y_Offset,
         selected.Z - initOff.Z_Offset);
 
-    if (current_item) {
-        current_item->setData(GRASP_DATA_ROLE, QVariant::fromValue(selected));
+    if (listOwnsItem(ui->cadGraspListWidget, current_item)) {
+        setItemGraspData(current_item, selected);
         updateCadSpinboxes(selected);
     }
 
@@ -1180,7 +1260,7 @@ void MakeTool::updateCadGraspListExceptSelected() {
 
         // Selected actor is already moved by the interactor; only sync its list data.
         if (actor && actor == currentSelectedActor) {
-            item->setData(GRASP_DATA_ROLE, QVariant::fromValue(selected));
+            setItemGraspData(item, selected);
             continue;
         }
 
@@ -1196,7 +1276,7 @@ void MakeTool::updateCadGraspListExceptSelected() {
         data.y = selected.y;
         data.z = selected.z;
 
-        item->setData(GRASP_DATA_ROLE, QVariant::fromValue(data));
+        setItemGraspData(item, data);
         if (actor) {
             updateSphereActor(data, actor);
         }
@@ -1232,8 +1312,8 @@ void MakeTool::timer2Handle() {
 
     if (ui->globalOffCheck && ui->globalOffCheck->isChecked()) {
         updateCadGraspListExceptSelected();
-    } else if (current_item) {
-        current_item->setData(GRASP_DATA_ROLE, QVariant::fromValue(data));
+    } else if (listOwnsItem(ui->cadGraspListWidget, current_item)) {
+        setItemGraspData(current_item, data);
         updateCadSpinboxes(data);
     }
 }
@@ -1269,9 +1349,8 @@ void MakeTool::onListItemClicked(QListWidgetItem* item) {
         renderer_grasp->AddObserver(vtkCommand::EndEvent, transformCallback_multi);
     }
 
-    QVariant dataVar = item->data(GRASP_DATA_ROLE);
-    if (!dataVar.isNull()) {
-        SphereData data = dataVar.value<SphereData>();
+    SphereData data;
+    if (variantToSphereData(item->data(GRASP_DATA_ROLE), data)) {
         updateSpinboxes(data);
     }
     ui->qvtkWidget->renderWindow()->Render();
@@ -1331,6 +1410,9 @@ void MakeTool::onDeleteActionTriggered()
 
     if (reply == QMessageBox::Yes) {
         for (auto item : selectedItems) {
+            if (item == current_item) {
+                current_item = nullptr;
+            }
             delete ui->graspListWidget->takeItem(ui->graspListWidget->row(item));
             renderer_grasp->RemoveActor(currentSelectedActor);
         }
@@ -1374,13 +1456,10 @@ void MakeTool::on_saveMultiGraspDataBtn_clicked() {
 
         if (!item) continue;
 
-        QVariant varData = item->data(GRASP_DATA_ROLE);
-
-        if (varData.isNull() || !varData.canConvert<SphereData>()) {
+        SphereData data;
+        if (!variantToSphereData(item->data(GRASP_DATA_ROLE), data)) {
             continue;
         }
-
-        SphereData data = qvariant_cast<SphereData>(varData);
 
         jArray.push_back(data);
     }   
@@ -1487,6 +1566,7 @@ void MakeTool::loadVisionConfig(const std::string& toolkit_path) {
         }
 
         max_count = 0;
+        current_item = nullptr;
         ui->graspListWidget->clear();
         for (auto pose : vc.multiGrasp) {
             SphereData data;
