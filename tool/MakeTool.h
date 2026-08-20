@@ -16,11 +16,13 @@
 #include <pcl/visualization/point_cloud_color_handlers.h>
 #include <pcl/common/transforms.h>
 #include <QListWidget>
+#include <QMetaType>
 #include <vtkGenericOpenGLRenderWindow.h>
 #include <vtkPolyData.h>
 #include <QTimer>
 #include "CylindricalHoleDetector.h"
 #include <TopoDS_Shape.hxx>
+#include <tuple>
 
 struct SphereData {
     double X, Y, Z;       // Œª÷√
@@ -29,6 +31,23 @@ struct SphereData {
     SphereData() : X(0), Y(0), Z(0), w(0), x(0), y(0), z(0) {}
     SphereData(double _X, double _Y, double _Z, double _w, double _x, double _y, double _z)
         : X(_X), Y(_Y), Z(_Z), w(_w), x(_x), y(_y), z(_z) {}
+
+    bool operator==(const SphereData& other) const
+    {
+        return X == other.X && Y == other.Y && Z == other.Z
+            && w == other.w && x == other.x && y == other.y && z == other.z;
+    }
+
+    bool operator!=(const SphereData& other) const
+    {
+        return !(*this == other);
+    }
+
+    bool operator<(const SphereData& other) const
+    {
+        return std::tie(X, Y, Z, w, x, y, z)
+            < std::tie(other.X, other.Y, other.Z, other.w, other.x, other.y, other.z);
+    }
 };
 
 Q_DECLARE_METATYPE(SphereData)
@@ -203,7 +222,7 @@ private:
 
     vtkNew<vtkCallbackCommand> transformCallback_multi;
     
-    QListWidgetItem* current_item;
+    QListWidgetItem* current_item = nullptr;
 
     vtkActor* currentSelectedActor;
 
