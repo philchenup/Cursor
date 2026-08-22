@@ -73,6 +73,13 @@ add_library(dbg_visualizer_lib
 )
 target_link_libraries(dbg_visualizer_lib PUBLIC common_lib)
 
+add_library(registration_lib
+	registration/kdtree.cpp
+	registration/preprocess.cpp
+	registration/align.cpp
+)
+target_include_directories(registration_lib PUBLIC ${CMAKE_SOURCE_DIR} ${EIGEN_INCLUDE_DIR})
+
 # ---- Apps ----
 add_executable(rigid_pt2pt apps/rigid_pt2pt/main.cpp)
 target_link_libraries(rigid_pt2pt
@@ -92,6 +99,12 @@ target_link_libraries(rigid_pt2pl
 	gmm_corr_lib
 	io_lib
 	dbg_visualizer_lib
+)
+
+add_executable(robust_align apps/robust_align/main.cpp)
+target_link_libraries(robust_align
+	registration_lib
+	io_lib
 )
 
 # Convenience: copy sample clouds next to binaries
