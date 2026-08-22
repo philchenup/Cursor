@@ -11,6 +11,7 @@
 #include <glog/logging.h>
 
 #include <chrono>
+#include <cmath>
 #include <string>
 
 void load_feature_map(poser::FeatureMap& feature_map, const std::string& pcd_cloud_path) {
@@ -59,9 +60,13 @@ void process_pt2pl(const std::string& model_path, const std::string& obs_path) {
 	auto t1 = high_resolution_clock::now();
 
 	UpdateLiveVertexCPU(kinematic, model);
-	float gaussian_sigma = 0.08f; // 8cm
-	corr_search.UpdateObservation(observation, gaussian_sigma);
-	for (auto i = 0; i < 15; i++) {
+	// Coarse-to-fine GMM bandwidth: a fixed 8 cm kernel mixes parallel
+	// surfaces and leaves a systematic gap. Anneal toward point spacing
+	// so the last iterations snap onto a single plane.
+	float gaussian_sigma = 0.08f;
+	const float min_gaussian_sigma = 0.004f;
+	for (auto i = 0; i < 20; i++) {
+		corr_search.UpdateObservation(observation, gaussian_sigma);
 		corr_search.ComputeTarget(observation, model, target);
 
 		JtJ.setZero();
@@ -79,7 +84,10 @@ void process_pt2pl(const std::string& model_path, const std::string& obs_path) {
 
 		kinematic.UpdateWithTwist(d_twist);
 		UpdateLiveVertexCPU(kinematic, model);
+
+		gaussian_sigma = std::max(min_gaussian_sigma, gaussian_sigma * 0.75f);
 	}
+	LOG(INFO) << "Final GMM sigma is " << gaussian_sigma << " meter.";
 
 	auto t2 = high_resolution_clock::now();
 	LOG(INFO) << "The time is " << duration_cast<milliseconds>(t2 - t1).count();

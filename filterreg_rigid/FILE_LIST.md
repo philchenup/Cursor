@@ -10,6 +10,7 @@
 - `apps/rigid_pt2pl/main.cpp`
 - `apps/rigid_pt2pt/bunny.pcd`
 - `apps/rigid_pt2pt/main.cpp`
+- `apps/robust_align/main.cpp`
 
 ## common
 
@@ -74,6 +75,16 @@
 - `corr_search/target_computer_base.cpp`
 - `corr_search/target_computer_base.h`
 
+## registration
+
+- `registration/align.cpp`
+- `registration/align.h`
+- `registration/kdtree.cpp`
+- `registration/kdtree.h`
+- `registration/preprocess.cpp`
+- `registration/preprocess.h`
+- `registration/types.h`
+
 ## io
 
 - `io/pcd_io.cpp`
@@ -104,3 +115,4 @@
 - `.gitignore`
 - `FILE_LIST.md`
 - `README.md`
+- `docs/icp_gicp_gap_analysis.md`

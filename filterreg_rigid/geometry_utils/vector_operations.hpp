@@ -90,6 +90,16 @@ namespace poser {
 		vec.z *= inv_vecnorm;
 	}
 #endif
+
+	// Unit-length xyz of a homogeneous vector; leaves w unchanged.
+	__host__ __device__ __forceinline__ void normalize_xyz(float4& vec) {
+		const float n2 = squared_norm_xyz(vec);
+		if (n2 < 1e-12f) return;
+		const float inv = 1.0f / sqrtf(n2);
+		vec.x *= inv;
+		vec.y *= inv;
+		vec.z *= inv;
+	}
 	
 	
 	/* Return the normlized vector while keeping the original copy

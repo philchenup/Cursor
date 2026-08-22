@@ -1,6 +1,7 @@
 build/
 cmake-build-*/
 matched_*.ply
+aligned_*.ply
 *.o
 *.a
 .DS_Store

@@ -132,6 +132,7 @@ void poser::GMMPermutohedralUpdatedSigmaPt2Pl::ComputeTarget(
 			target_normal_i.x = result.model_weighted_normal.x / result.model_weight;
 			target_normal_i.y = result.model_weighted_normal.y / result.model_weight;
 			target_normal_i.z = result.model_weighted_normal.z / result.model_weight;
+			normalize_xyz(target_normal_i);
 			second_order_momentum_[model_idx] = result.model_weight_momentum / result.model_weight;
 		} else {
 			target_i = make_float4(0, 0, 0, 0);

@@ -1,5 +1,6 @@
 #pragma once
 #include "corr_search/gmm/gmm_permutohedral_fixedvar_pt2pl.h"
+#include "geometry_utils/vector_operations.hpp"
 
 template<int FeatureDim>
 poser::GMMPermutohedralFixedSigmaPt2Pl<FeatureDim>::GMMPermutohedralFixedSigmaPt2Pl(
@@ -127,6 +128,7 @@ void poser::GMMPermutohedralFixedSigmaPt2Pl<FeatureDim>::ComputeTarget(
 			target_normal_i.x = result.model_weighted_normal.x / result.model_weight;
 			target_normal_i.y = result.model_weighted_normal.y / result.model_weight;
 			target_normal_i.z = result.model_weighted_normal.z / result.model_weight;
+			normalize_xyz(target_normal_i);
 			target_i.w = result.model_weight / (result.model_weight + parent_class::outlier_constant_);
 		} else {
 			target_i = make_float4(0, 0, 0, 0);
