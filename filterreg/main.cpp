@@ -5,6 +5,7 @@
 #include <pcl/point_types.h>
 
 #include <Eigen/Geometry>
+#include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <string>
@@ -106,12 +107,31 @@ filterreg::Result RunPt2Pt(const Eigen::MatrixX3f& source_mm,
 filterreg::Result RunPt2Pl(const Eigen::MatrixX3f& source_mm,
                            const Eigen::MatrixX3f& target_mm,
                            const Eigen::MatrixX3f& target_normals) {
+    Eigen::MatrixX3f normals = target_normals;
+    for (int i = 0; i < normals.rows(); ++i) {
+        const float len = normals.row(i).norm();
+        if (len > 1e-6f)
+            normals.row(i) /= len;
+        else
+            normals.row(i).setZero();
+    }
+
+    // Kernel width from the source extent (mm). A fixed 80 mm sigma is far too
+    // large for small grasp-scale clouds and too small for a wide scene gap.
+    const Eigen::Vector3f lo = source_mm.colwise().minCoeff();
+    const Eigen::Vector3f hi = source_mm.colwise().maxCoeff();
+    const float diag_mm = std::max((hi - lo).norm(), 1.f);
+    const float sigma_mm = std::min(std::max(0.15f * diag_mm, 5.f), 80.f);
+    const float sigma_m = sigma_mm / kMmPerM;
+
     filterreg::Options opt;
     opt.objective = filterreg::Objective::PointToPlane;
-    opt.sigma2 = 0.08f * 0.08f;  // 80 mm, stored in meters for the solver
-    opt.update_sigma2 = false;
-    opt.max_iter = 15;
-    return RegisterMm(source_mm, target_mm, target_normals, opt);
+    opt.sigma2 = sigma_m * sigma_m;
+    opt.min_sigma2 = (2.f / kMmPerM) * (2.f / kMmPerM);
+    opt.update_sigma2 = true;
+    opt.max_iter = 30;
+    opt.tol = 1e-5f;
+    return RegisterMm(source_mm, target_mm, normals, opt);
 }
 
 int RunSyntheticTest() {

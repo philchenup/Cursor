@@ -103,10 +103,14 @@ std::pair<Eigen::Matrix<float, 6, 1>, float> twistPt2Pl(const Eigen::MatrixX3f& 
     Eigen::Matrix<float, 6, 1> atb = Eigen::Matrix<float, 6, 1>::Zero();
     float r_sum = 0.f;
     for (int k = 0; k < model.rows(); ++k) {
+        Eigen::Vector3f n = normals.row(k).transpose();
+        const float nlen = n.norm();
+        if (nlen < 1e-4f) continue;
+        n /= nlen;
         const Eigen::Vector3f v = model.row(k).transpose();
         const Eigen::Vector3f y = target.row(k).transpose();
-        const Eigen::Vector3f n = normals.row(k).transpose();
         const float w = weight[k];
+        if (!(w > 0.f) || !std::isfinite(w)) continue;
         const float residual = n.dot(y - v);
         Eigen::Matrix<float, 6, 1> jac;
         jac.head<3>() = v.cross(n);
@@ -115,7 +119,15 @@ std::pair<Eigen::Matrix<float, 6, 1>, float> twistPt2Pl(const Eigen::MatrixX3f& 
         atb += w * residual * jac;
         r_sum += w * w * residual * residual;
     }
-    return {ata.selfadjointView<Eigen::Lower>().ldlt().solve(atb), r_sum};
+    Eigen::Matrix<float, 6, 1> tw = ata.selfadjointView<Eigen::Lower>().ldlt().solve(atb);
+    // One Gauss-Newton step can explode when filtered normals are mixed; clamp.
+    const float ang = tw.head<3>().norm();
+    const float max_ang = 0.4f;
+    if (ang > max_ang) tw *= (max_ang / ang);
+    const float max_t = 0.2f;
+    const float tn = tw.tail<3>().norm();
+    if (tn > max_t) tw.tail<3>() *= (max_t / tn);
+    return {tw, r_sum};
 }
 
 struct Estep {
@@ -169,8 +181,16 @@ Estep expectation(const Eigen::MatrixX3f& t_source,
     if (objective == Objective::PointToPlane) {
         if (target_normals.rows() != y.rows())
             throw std::invalid_argument("pt2pl requires target normals");
+        Eigen::MatrixX3f unit_n = target_normals;
+        for (int i = 0; i < unit_n.rows(); ++i) {
+            const float len = unit_n.row(i).norm();
+            if (len > 1e-6f)
+                unit_n.row(i) /= len;
+            else
+                unit_n.row(i).setZero();
+        }
         Eigen::MatrixXf vin = Eigen::MatrixXf::Zero(3, m + n);
-        vin.rightCols(n) = target_normals.transpose();
+        vin.rightCols(n) = unit_n.transpose();
         out.nx = ph.compute(vin, m).leftCols(m).transpose();
         out.has_nx = true;
     }
@@ -239,7 +259,15 @@ Mstep maximization(const Eigen::MatrixX3f& t_source,
         out.q = q;
     } else {
         Eigen::MatrixX3f nxm0(mk, 3);
-        for (int i = 0; i < mk; ++i) nxm0.row(i) = nx.row(i) / m0[i];
+        for (int i = 0; i < mk; ++i) {
+            Eigen::Vector3f n = (nx.row(i) / m0[i]).transpose();
+            const float len = n.norm();
+            if (len > 1e-6f)
+                n /= len;
+            else
+                n.setZero();
+            nxm0.row(i) = n.transpose();
+        }
         const auto twq = twistPt2Pl(src, m1m0, nxm0, drxdx);
         twistMul(twq.first, trans_p.rot, trans_p.t, out.tf.rot, out.tf.t);
         out.q = twq.second;
@@ -251,7 +279,13 @@ Mstep maximization(const Eigen::MatrixX3f& t_source,
             const float term = m0[i] * src.row(i).squaredNorm() - 2.f * src.row(i).dot(m1.row(i)) + m2[i];
             num += term / (m0[i] + c);
         }
-        out.sigma2 = num / (3.f * m0m0.sum());
+        const float updated = num / (3.f * m0m0.sum());
+        // pt2pl: only anneal sigma down. A growing kernel mixes opposite
+        // normals and makes the twist step diverge on mm-scale clouds.
+        if (objective == Objective::PointToPlane && updated > sigma2)
+            out.sigma2 = sigma2;
+        else
+            out.sigma2 = updated;
     } else {
         out.sigma2 = sigma2;
     }
