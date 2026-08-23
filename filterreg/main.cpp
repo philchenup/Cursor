@@ -1,9 +1,11 @@
 #include "filterreg.h"
-#include "pcd_io.h"
+
+#include <pcl/io/ply_io.h>
+#include <pcl/point_cloud.h>
+#include <pcl/point_types.h>
 
 #include <Eigen/Geometry>
 #include <chrono>
-#include <cmath>
 #include <iostream>
 #include <string>
 
@@ -12,8 +14,8 @@ namespace {
 void PrintUsage() {
     std::cerr << "Usage:\n"
               << "  filterreg_demo --test\n"
-              << "  filterreg_demo pt2pt <cloud.pcd>\n"
-              << "  filterreg_demo pt2pl <source.pcd> <target.pcd>\n";
+              << "  filterreg_demo pt2pt <cloud.ply>\n"
+              << "  filterreg_demo pt2pl <source.ply> <target.ply>\n";
 }
 
 Eigen::Matrix3f AngleAxis(float angle, Eigen::Vector3f axis) {
@@ -23,6 +25,47 @@ Eigen::Matrix3f AngleAxis(float angle, Eigen::Vector3f axis) {
 
 float MeanPointError(const Eigen::MatrixX3f& a, const Eigen::MatrixX3f& b) {
     return (a - b).rowwise().norm().mean();
+}
+
+bool LoadPlyPoints(const std::string& path, Eigen::MatrixX3f& points) {
+    pcl::PointCloud<pcl::PointXYZ> cloud;
+    if (pcl::io::loadPLYFile(path, cloud) < 0 || cloud.empty()) return false;
+    points.resize(static_cast<int>(cloud.size()), 3);
+    for (std::size_t i = 0; i < cloud.size(); ++i) {
+        points(static_cast<int>(i), 0) = cloud[i].x;
+        points(static_cast<int>(i), 1) = cloud[i].y;
+        points(static_cast<int>(i), 2) = cloud[i].z;
+    }
+    return true;
+}
+
+bool LoadPlyPointsAndNormals(const std::string& path,
+                             Eigen::MatrixX3f& points,
+                             Eigen::MatrixX3f& normals) {
+    pcl::PointCloud<pcl::PointNormal> cloud;
+    if (pcl::io::loadPLYFile(path, cloud) < 0 || cloud.empty()) return false;
+    points.resize(static_cast<int>(cloud.size()), 3);
+    normals.resize(static_cast<int>(cloud.size()), 3);
+    for (std::size_t i = 0; i < cloud.size(); ++i) {
+        points(static_cast<int>(i), 0) = cloud[i].x;
+        points(static_cast<int>(i), 1) = cloud[i].y;
+        points(static_cast<int>(i), 2) = cloud[i].z;
+        normals(static_cast<int>(i), 0) = cloud[i].normal_x;
+        normals(static_cast<int>(i), 1) = cloud[i].normal_y;
+        normals(static_cast<int>(i), 2) = cloud[i].normal_z;
+    }
+    return true;
+}
+
+void SavePlyPoints(const std::string& path, const Eigen::MatrixX3f& points) {
+    pcl::PointCloud<pcl::PointXYZ> cloud;
+    cloud.resize(static_cast<std::size_t>(points.rows()));
+    for (int i = 0; i < points.rows(); ++i) {
+        cloud[i].x = points(i, 0);
+        cloud[i].y = points(i, 1);
+        cloud[i].z = points(i, 2);
+    }
+    pcl::io::savePLYFileASCII(path, cloud);
 }
 
 int RunSyntheticTest() {
@@ -73,8 +116,8 @@ int RunSyntheticTest() {
 
 int RunPt2Pt(const std::string& path) {
     Eigen::MatrixX3f cloud;
-    if (!LoadPcdPoints(path, cloud)) {
-        std::cerr << "failed to load " << path << "\n";
+    if (!LoadPlyPoints(path, cloud)) {
+        std::cerr << "failed to load PLY: " << path << "\n";
         return 1;
     }
 
@@ -109,15 +152,14 @@ int RunPt2Pt(const std::string& path) {
 
 int RunPt2Pl(const std::string& src_path, const std::string& dst_path) {
     Eigen::MatrixX3f source, target, target_n, source_n;
-    if (!LoadPcdPointsAndNormals(src_path, source, source_n) ||
-        !LoadPcdPointsAndNormals(dst_path, target, target_n)) {
-        std::cerr << "failed to load PCD files\n";
+    if (!LoadPlyPointsAndNormals(src_path, source, source_n) ||
+        !LoadPlyPointsAndNormals(dst_path, target, target_n)) {
+        std::cerr << "failed to load PLY files\n";
         return 1;
     }
 
     filterreg::Options opt;
     opt.objective = filterreg::Objective::PointToPlane;
-    // Match the original FilterReg pt2pl demo: fixed 8cm Gaussian, no sigma update.
     opt.sigma2 = 0.08f * 0.08f;
     opt.update_sigma2 = false;
     opt.max_iter = 15;
