@@ -11,11 +11,14 @@
 
 namespace {
 
+constexpr float kMmPerM = 1000.f;
+
 void PrintUsage() {
     std::cerr << "Usage:\n"
               << "  filterreg_demo --test\n"
-              << "  filterreg_demo pt2pt <cloud.ply>\n"
-              << "  filterreg_demo pt2pl <source.ply> <target.ply>\n";
+              << "  filterreg_demo pt2pt <source.ply> <target.ply>\n"
+              << "  filterreg_demo pt2pl <source.ply> <target.ply>\n"
+              << "PLY coordinates must be in millimeters.\n";
 }
 
 Eigen::Matrix3f AngleAxis(float angle, Eigen::Vector3f axis) {
@@ -68,45 +71,82 @@ void SavePlyPoints(const std::string& path, const Eigen::MatrixX3f& points) {
     pcl::io::savePLYFileASCII(path, cloud);
 }
 
+void PrintResult(const char* name, const filterreg::Result& res) {
+    std::cout << name << "\n"
+              << "  iterations: " << res.iterations << "\n"
+              << "  sigma2 (mm^2): " << res.sigma2 << "\n"
+              << "  q: " << res.q << "\n"
+              << "  R:\n" << res.transformation.rot << "\n"
+              << "  t (mm): " << res.transformation.t.transpose() << "\n";
+}
+
+// FilterReg internally uses meters. Convert mm clouds, then write t / sigma2 back to mm.
+filterreg::Result RegisterMm(const Eigen::MatrixX3f& source_mm,
+                             const Eigen::MatrixX3f& target_mm,
+                             const Eigen::MatrixX3f& target_normals,
+                             const filterreg::Options& opt_m) {
+    filterreg::Result res = filterreg::registration(
+        source_mm / kMmPerM, target_mm / kMmPerM, target_normals, opt_m);
+    res.transformation.t *= kMmPerM;
+    res.sigma2 *= kMmPerM * kMmPerM;
+    return res;
+}
+
+// source_mm / target_mm: N x 3 and M x 3, coordinates in millimeters.
+filterreg::Result RunPt2Pt(const Eigen::MatrixX3f& source_mm,
+                           const Eigen::MatrixX3f& target_mm) {
+    filterreg::Options opt;
+    opt.objective = filterreg::Objective::PointToPoint;
+    opt.update_sigma2 = true;
+    opt.max_iter = 30;
+    return RegisterMm(source_mm, target_mm, {}, opt);
+}
+
+// source_mm / target_mm: millimeters. target_normals: unit vectors, one per target point.
+filterreg::Result RunPt2Pl(const Eigen::MatrixX3f& source_mm,
+                           const Eigen::MatrixX3f& target_mm,
+                           const Eigen::MatrixX3f& target_normals) {
+    filterreg::Options opt;
+    opt.objective = filterreg::Objective::PointToPlane;
+    opt.sigma2 = 0.08f * 0.08f;  // 80 mm, stored in meters for the solver
+    opt.update_sigma2 = false;
+    opt.max_iter = 15;
+    return RegisterMm(source_mm, target_mm, target_normals, opt);
+}
+
 int RunSyntheticTest() {
     const int n_side = 8;
-    Eigen::MatrixX3f source(n_side * n_side * n_side, 3);
+    Eigen::MatrixX3f source_mm(n_side * n_side * n_side, 3);
     int k = 0;
     for (int z = 0; z < n_side; ++z)
         for (int y = 0; y < n_side; ++y)
             for (int x = 0; x < n_side; ++x, ++k)
-                source.row(k) << (x / float(n_side - 1) - 0.5f),
-                    (y / float(n_side - 1) - 0.5f),
-                    (z / float(n_side - 1) - 0.5f);
+                source_mm.row(k) << (x / float(n_side - 1) - 0.5f) * 1000.f,
+                    (y / float(n_side - 1) - 0.5f) * 1000.f,
+                    (z / float(n_side - 1) - 0.5f) * 1000.f;
 
     filterreg::RigidTransform gt;
     gt.rot = AngleAxis(0.35f, Eigen::Vector3f(0.2f, 0.8f, 0.3f));
-    gt.t << 0.08f, -0.05f, 0.04f;
-    const Eigen::MatrixX3f target = gt.apply(source);
+    gt.t << 80.f, -50.f, 40.f;  // mm
+    const Eigen::MatrixX3f target_mm = gt.apply(source_mm);
 
-    filterreg::Options opt;
-    opt.update_sigma2 = true;
-    opt.max_iter = 40;
     const auto t0 = std::chrono::high_resolution_clock::now();
-    const filterreg::Result res = filterreg::registration(source, target, {}, opt);
+    const filterreg::Result res = RunPt2Pt(source_mm, target_mm);
     const auto t1 = std::chrono::high_resolution_clock::now();
 
-    const Eigen::MatrixX3f aligned = res.transformation.apply(source);
-    const float err = MeanPointError(aligned, target);
+    const Eigen::MatrixX3f aligned = res.transformation.apply(source_mm);
+    const float err = MeanPointError(aligned, target_mm);
     const float rot_err = Eigen::AngleAxisf(res.transformation.rot.transpose() * gt.rot).angle();
     const float t_err = (res.transformation.t - gt.t).norm();
 
-    std::cout << "synthetic pt2pt\n"
-              << "  iterations: " << res.iterations << "\n"
-              << "  sigma2: " << res.sigma2 << "\n"
-              << "  q: " << res.q << "\n"
-              << "  mean point error: " << err << "\n"
+    PrintResult("synthetic pt2pt (mm)", res);
+    std::cout << "  mean point error (mm): " << err << "\n"
               << "  rotation error (rad): " << rot_err << "\n"
-              << "  translation error: " << t_err << "\n"
+              << "  translation error (mm): " << t_err << "\n"
               << "  time_ms: "
               << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count() << "\n";
 
-    if (err > 0.02f || rot_err > 0.05f || t_err > 0.02f) {
+    if (err > 0.05f || rot_err > 0.05f || t_err > 0.05f) {
         std::cerr << "synthetic test failed\n";
         return 1;
     }
@@ -114,73 +154,53 @@ int RunSyntheticTest() {
     return 0;
 }
 
-int RunPt2Pt(const std::string& path) {
-    Eigen::MatrixX3f cloud;
-    if (!LoadPlyPoints(path, cloud)) {
-        std::cerr << "failed to load PLY: " << path << "\n";
+int RunPt2PtFiles(const std::string& src_path, const std::string& dst_path) {
+    Eigen::MatrixX3f source_mm, target_mm;
+    if (!LoadPlyPoints(src_path, source_mm) || !LoadPlyPoints(dst_path, target_mm)) {
+        std::cerr << "failed to load PLY (mm): " << src_path << " / " << dst_path << "\n";
         return 1;
     }
 
-    filterreg::RigidTransform init;
-    init.rot = AngleAxis(0.87f, Eigen::Vector3f(0.3f, 0.5f, 0.8f));
-    init.t << 0.06f, -0.04f, 0.05f;
-
-    filterreg::Options opt;
-    opt.init = init;
-    opt.update_sigma2 = true;
-    opt.max_iter = 30;
-
     const auto t0 = std::chrono::high_resolution_clock::now();
-    const filterreg::Result res = filterreg::registration(cloud, cloud, {}, opt);
+    const filterreg::Result res = RunPt2Pt(source_mm, target_mm);
     const auto t1 = std::chrono::high_resolution_clock::now();
 
-    const Eigen::MatrixX3f aligned = res.transformation.apply(cloud);
-    const float err = MeanPointError(aligned, cloud);
-    std::cout << "pt2pt " << path << "\n"
-              << "  points: " << cloud.rows() << "\n"
-              << "  iterations: " << res.iterations << "\n"
-              << "  sigma2: " << res.sigma2 << "\n"
-              << "  mean alignment error: " << err << "\n"
-              << "  R:\n" << res.transformation.rot << "\n"
-              << "  t: " << res.transformation.t.transpose() << "\n"
-              << "  time_ms: "
+    const Eigen::MatrixX3f aligned_mm = res.transformation.apply(source_mm);
+    std::cout << "pt2pt " << src_path << " -> " << dst_path << "\n"
+              << "  source points: " << source_mm.rows() << "\n"
+              << "  target points: " << target_mm.rows() << "\n";
+    PrintResult("  result", res);
+    if (aligned_mm.rows() == target_mm.rows())
+        std::cout << "  mean alignment error (mm): " << MeanPointError(aligned_mm, target_mm) << "\n";
+    std::cout << "  time_ms: "
               << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count() << "\n";
-    SavePlyPoints("matched_source.ply", aligned);
-    SavePlyPoints("matched_target.ply", cloud);
+    SavePlyPoints("matched_source.ply", aligned_mm);
+    SavePlyPoints("matched_target.ply", target_mm);
     return 0;
 }
 
-int RunPt2Pl(const std::string& src_path, const std::string& dst_path) {
-    Eigen::MatrixX3f source, target, target_n, source_n;
-    if (!LoadPlyPointsAndNormals(src_path, source, source_n) ||
-        !LoadPlyPointsAndNormals(dst_path, target, target_n)) {
-        std::cerr << "failed to load PLY files\n";
+int RunPt2PlFiles(const std::string& src_path, const std::string& dst_path) {
+    Eigen::MatrixX3f source_mm, target_mm, target_n, source_n;
+    if (!LoadPlyPointsAndNormals(src_path, source_mm, source_n) ||
+        !LoadPlyPointsAndNormals(dst_path, target_mm, target_n)) {
+        std::cerr << "failed to load PLY (mm): " << src_path << " / " << dst_path << "\n";
         return 1;
     }
 
-    filterreg::Options opt;
-    opt.objective = filterreg::Objective::PointToPlane;
-    opt.sigma2 = 0.08f * 0.08f;
-    opt.update_sigma2 = false;
-    opt.max_iter = 15;
-
     const auto t0 = std::chrono::high_resolution_clock::now();
-    const filterreg::Result res = filterreg::registration(source, target, target_n, opt);
+    const filterreg::Result res = RunPt2Pl(source_mm, target_mm, target_n);
     const auto t1 = std::chrono::high_resolution_clock::now();
 
-    const Eigen::MatrixX3f aligned = res.transformation.apply(source);
-    std::cout << "pt2pl\n"
-              << "  source points: " << source.rows() << "\n"
-              << "  target points: " << target.rows() << "\n"
-              << "  iterations: " << res.iterations << "\n"
-              << "  sigma2: " << res.sigma2 << "\n"
-              << "  q: " << res.q << "\n"
-              << "  R:\n" << res.transformation.rot << "\n"
-              << "  t: " << res.transformation.t.transpose() << "\n"
-              << "  time_ms: "
+    const Eigen::MatrixX3f aligned_mm = res.transformation.apply(source_mm);
+    std::cout << "pt2pl " << src_path << " -> " << dst_path << "\n"
+              << "  source points: " << source_mm.rows() << "\n"
+              << "  target points: " << target_mm.rows() << "\n";
+    PrintResult("  result", res);
+    std::cout << "  time_ms: "
               << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count() << "\n";
-    SavePlyPoints("matched_source.ply", aligned);
-    SavePlyPoints("matched_target.ply", target);
+    (void)aligned_mm;
+    SavePlyPoints("matched_source.ply", aligned_mm);
+    SavePlyPoints("matched_target.ply", target_mm);
     return 0;
 }
 
@@ -193,8 +213,8 @@ int main(int argc, char** argv) {
     }
     const std::string mode = argv[1];
     if (mode == "--test") return RunSyntheticTest();
-    if (mode == "pt2pt" && argc == 3) return RunPt2Pt(argv[2]);
-    if (mode == "pt2pl" && argc == 4) return RunPt2Pl(argv[2], argv[3]);
+    if (mode == "pt2pt" && argc == 4) return RunPt2PtFiles(argv[2], argv[3]);
+    if (mode == "pt2pl" && argc == 4) return RunPt2PlFiles(argv[2], argv[3]);
     PrintUsage();
     return 1;
 }

@@ -31,8 +31,10 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++
 cmake --build build -j
 
 ./build/filterreg_demo --test
-./build/filterreg_demo pt2pt ./build/bunny.ply
+./build/filterreg_demo pt2pt ./build/bunny.ply ./build/bunny.ply
 ./build/filterreg_demo pt2pl ./build/cloud_0.ply ./build/cloud_1.ply
 ```
 
-配准结果写出 `matched_source.ply` / `matched_target.ply`。
+`RunPt2Pt` / `RunPt2Pl` 接收两个 `N×3` 点云，坐标单位为 **毫米**。算法内部换算成米再求解，输出的平移 `t` 和 `sigma2` 仍是毫米。
+
+配准结果写出 `matched_source.ply` / `matched_target.ply`（毫米）。
