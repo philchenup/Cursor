@@ -1,5 +1,6 @@
-# FilterReg Rigid Standalone
+# FilterReg C++
 
-独立可编译的 FilterReg 刚性配准实现（`rigid_pt2pt` / `rigid_pt2pl`），源码整理自 [bhsphd/FilterReg](https://github.com/bhsphd/FilterReg)，**无需配置 PCL**。
+[neka-nat/probreg](https://github.com/neka-nat/probreg) 中 **FilterReg** 算法的独立 C++ 实现。
+只包含刚性 `pt2pt` / `pt2pl`，不含 CPD 等其它配准算法。
 
-详见 [`filterreg_rigid/README.md`](filterreg_rigid/README.md)。
+见 [`filterreg/README.md`](filterreg/README.md)。
