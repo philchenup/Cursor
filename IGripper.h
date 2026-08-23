@@ -1,15 +1,22 @@
 #ifndef IGRIPPER_H
 #define IGRIPPER_H
 
-#include <QObject>
+#include <QThread>
+#include <QMetaType>
+#include <QObject>  
+#include <QTimer>
 #include <QString>
-#include <cstdint>
+#include <QThread>
+#include <QMutex>
+#include <QObject>  
+#include <vector>
 #include <string>
 
 class IGripper : public QObject {
     Q_OBJECT
 
 public:
+
     explicit IGripper(QObject* parent = nullptr) : QObject(parent) {}
 
     virtual ~IGripper() = default;
@@ -22,7 +29,7 @@ signals:
     void sendConnectStatus(const bool& status);
 
     void sendEnableStatus(const bool& status);
-
+    
     void sendSearchCom(const int& com);
 
     void sendErrorMsg(const QString& msg);
@@ -45,4 +52,4 @@ public slots:
     virtual void close_gripper() = 0;
 };
 
-#endif // IGRIPPER_H
+#endif // ROBOT_ARM_INTERFACE_H

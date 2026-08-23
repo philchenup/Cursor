@@ -4,7 +4,6 @@
 #include "IGripper.h"
 
 #include <boost/asio.hpp>
-#include <boost/system/error_code.hpp>
 #include <chrono>
 #include <cstdint>
 #include <mutex>
@@ -22,6 +21,7 @@ public:
 
     ~YsGripper() override;
 
+    // Non-copyable
     YsGripper(const YsGripper&) = delete;
     YsGripper& operator=(const YsGripper&) = delete;
 
@@ -39,31 +39,13 @@ public slots:
     void close_gripper() override;
 
 private:
-    struct IoResult {
-        bool ok = false;
-        bool lost_connection = false;
-        QString error;
-        QString info;
-    };
-
-    void disconnectSerial(bool emit_signals);
-    bool checkReadyLocked(QString* error);
-    IoResult sendFrame(const std::vector<uint8_t>& frame);
-    void emitIoResult(const IoResult& result);
-
-    bool portExists(const std::string& name) const;
-    std::string asioPortName(const std::string& port) const;
-
+    void disconnectSerial();
+    bool checkReady();
+    bool sendFrame(const std::vector<uint8_t>& frame);
+    bool portExists(const std::string& name);
     bool openAndConfigure(boost::system::error_code& ec);
-    bool applyNativePortTuning(boost::system::error_code& ec);
-    void clearNativeCommError();
-    void purgeNativeBuffers();
     bool reopenPort(boost::system::error_code& ec);
-    void markDisconnectedLocked();
-    void waitInterCommandGap();
-
-    bool isRecoverableSerialError(const boost::system::error_code& ec) const;
-    QString formatAsioError(const char* op, const boost::system::error_code& ec) const;
+    void markDisconnected();
 
     std::string  port_;
     uint16_t     speed_;
@@ -75,7 +57,7 @@ private:
     boost::asio::io_context  io_ctx_;
     boost::asio::serial_port serial_;
 
-    mutable std::recursive_mutex mutex_;
+    std::recursive_mutex mutex_;
     std::chrono::steady_clock::time_point last_send_{};
 };
 
