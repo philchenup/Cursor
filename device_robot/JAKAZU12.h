@@ -72,6 +72,11 @@ public slots:
     bool getEndPose(std::vector<float>& pose) override;
     bool getCurrentJoint(std::vector<float>& j)    override;
 
+    bool quat2eulerJaka(const std::vector<float>& quat_in, std::vector<float>& euler_out);
+
+    void startGraspSequence(const std::vector<std::pair<std::vector<float>, std::vector<float>>>& pose,
+        const Eigen::Affine3f& tcp, const std::string rotType) override;
+
     // ── 拧螺丝序列（控制逻辑对齐 DobotCR5）──────────────────────────────────
     void startScrewSequence(const std::vector<std::pair<std::vector<float>, std::vector<float>>>& pose,
         const Eigen::Affine3f& tcp, const QString rotType) override;
@@ -111,11 +116,17 @@ private:
         const QString& tag,
         int timeoutMs = 15000);
 
+    // pose_in: [x,y,z,rx,ry,rz]，RPY 为 JAKA 弧度；沿 TCP Z 平移 offset_mm（mm）
+    bool offsetPoseAlongTcpZ(const std::vector<float>& pose_in,
+        double offset_mm,
+        std::vector<float>& pose_out);
+
     // ── 螺丝拧紧过程变量（对齐 DobotCR5）────────────────────────────────────
     QMutex m_mutex_recv;
     std::string recvRet_jaka = "";
     Eigen::Affine3f m_tcp;
     QString m_rotType;
+    std::vector<std::pair<std::vector<float>, std::vector<float>>> m_grasp_pose;
     std::vector<std::pair<std::vector<float>, std::vector<float>>> m_pose;
     int currentIndex = 0;
     bool isStop = false;

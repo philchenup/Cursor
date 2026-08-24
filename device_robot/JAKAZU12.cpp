@@ -306,6 +306,103 @@ bool JAKAZU12::getCurrentJoint(std::vector<float>& j)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// offsetPoseAlongTcpZ
+//
+// 以 pose_in 为初始点，沿 TCP 坐标系 Z 轴平移 offset_mm（单位 mm）。
+// 姿态不变。JAKA RotMatrix 的 z 列为工具 Z 在基坐标系中的方向；
+// 再左乘 m_tcp 的旋转，得到法兰→TCP 标定后的真正 TCP Z。
+// ─────────────────────────────────────────────────────────────────────────────
+bool JAKAZU12::offsetPoseAlongTcpZ(const std::vector<float>& pose_in,
+    double offset_mm,
+    std::vector<float>& pose_out)
+{
+    if (pose_in.size() < 6) return false;
+
+    Rpy rpy;
+    rpy.rx = static_cast<double>(pose_in[3]);
+    rpy.ry = static_cast<double>(pose_in[4]);
+    rpy.rz = static_cast<double>(pose_in[5]);
+
+    RotMatrix rot;
+    if (m_robot.rpy_to_rot_matrix(&rpy, &rot) != ERR_SUCC) return false;
+
+    // JAKA 旋转矩阵按列存储：x/y/z 分别为工具 X/Y/Z 轴在基坐标系下的方向
+    Eigen::Matrix3d R_pose;
+    R_pose << rot.x.x, rot.y.x, rot.z.x,
+              rot.x.y, rot.y.y, rot.z.y,
+              rot.x.z, rot.y.z, rot.z.z;
+
+    // TCP Z 在基坐标系：R_pose * R_tcp * [0,0,1]
+    const Eigen::Vector3d z_tcp = m_tcp.cast<double>().linear() * Eigen::Vector3d::UnitZ();
+    const Eigen::Vector3d z_base = R_pose * z_tcp;
+
+    pose_out = pose_in;
+    pose_out.resize(6);
+    pose_out[0] = static_cast<float>(pose_in[0] + offset_mm * z_base.x());
+    pose_out[1] = static_cast<float>(pose_in[1] + offset_mm * z_base.y());
+    pose_out[2] = static_cast<float>(pose_in[2] + offset_mm * z_base.z());
+    pose_out[3] = pose_in[3];
+    pose_out[4] = pose_in[4];
+    pose_out[5] = pose_in[5];
+    return true;
+}
+
+bool JAKAZU12::quat2eulerJaka(const std::vector<float>& quat_in, std::vector<float>& euler_out)
+{
+    if (quat_in.size() < 7) return false;
+
+    Quaternion quat;
+    quat.s = quat_in[3];  quat.x = quat_in[4]; quat.y = quat_in[5];  quat.z = quat_in[6];
+    RotMatrix rot_matrix;
+    int ret = m_robot.quaternion_to_rot_matrix(&quat, &rot_matrix);
+    if (ret != ERR_SUCC) return false;
+    Rpy rpy;
+    ret = m_robot.rot_matrix_to_rpy(&rot_matrix, &rpy);
+    if (ret != ERR_SUCC) return false;
+
+    euler_out.resize(6);
+    for (int i = 0; i < 3; ++i) {
+        euler_out[i] = quat_in[i];
+    }
+    euler_out[3] = static_cast<float>(rpy.rx);
+    euler_out[4] = static_cast<float>(rpy.ry);
+    euler_out[5] = static_cast<float>(rpy.rz);
+    return true;
+}
+
+void JAKAZU12::startGraspSequence(const std::vector<std::pair<std::vector<float>, std::vector<float>>>& pose,
+    const Eigen::Affine3f& tcp, const std::string rotType) {
+    if (!m_connected || isStop) return;
+    if (pose.size() < 1) return;
+    m_tcp = tcp;
+    m_rotType = QString::fromStdString(rotType);
+    getCurrentJoint(capJoint);
+
+    std::vector<float> currentPose;
+    if (!getEndPose(currentPose)) {
+        emit sigError("Get robot end pose error!");
+        return;
+    }
+
+    m_grasp_pose.resize(1);
+    if (!quat2eulerJaka(pose[0].first, m_grasp_pose[0].first)) return;
+    if (!quat2eulerJaka(pose[0].second, m_grasp_pose[0].second)) return;
+
+    // 初始点 m_grasp_pose[0].first，沿 TCP Z 步进 10mm
+    constexpr double kTcpZStepMm = 10.0;
+    std::vector<float> pose_tcp_z10;
+    if (!offsetPoseAlongTcpZ(m_grasp_pose[0].first, kTcpZStepMm, pose_tcp_z10)) {
+        emit sigError(QStringLiteral("JAKA Zu12 计算 TCP Z 步进位姿失败"));
+        return;
+    }
+    m_grasp_pose[0].first = pose_tcp_z10;
+
+    QTimer::singleShot(500, this, [this]() {
+        movePose(m_grasp_pose[0].first, "2_P");
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // startScrewSequence — 拧螺丝序列入口（对齐 DobotCR5）
 // ─────────────────────────────────────────────────────────────────────────────
 void JAKAZU12::startScrewSequence(
@@ -375,6 +472,7 @@ void JAKAZU12::robotStop()
 void JAKAZU12::robotStart()
 {
     isStop = false;
+    m_grasp_pose.clear();
     m_pose.clear();
     currentIndex = 0;
 
@@ -412,6 +510,21 @@ void JAKAZU12::moveNextPose(bool ok, const QString& tag)
         return;
     }
 
+    if (tag == "2_P") {
+        movePose(m_grasp_pose[0].second, "2_T");
+    }
+    else if (tag == "2_T") {
+        emit sigGraspMachine(true);
+        QTimer::singleShot(1000, this, [this]() { movePose(m_grasp_pose[0].first, "2_B"); });
+    }
+    else if (tag == "2_B") {
+        QTimer::singleShot(200, this, [this]() { moveJoint(capJoint, "2_H"); });
+    }
+    else if (tag == "2_H") {
+        QTimer::singleShot(200, this, [this]() { emit sigGraspMachine(false); });
+    }
+
+    if (m_pose.size() < 1) return;
     if (tag == "1_P") {
         movePose(m_pose[currentIndex].second, "1_T");
     }
