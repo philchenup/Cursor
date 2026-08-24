@@ -28,14 +28,16 @@
 #define THREAD_H
 
 #include <QThread>
+#include <vector>
 #include <Eigen/Geometry>
 #include <rl/math/Transform.h>
 #include <rl/math/Vector.h>
 #include <rl/plan/Viewer.h>
 
-// QObject/QThread 的 operator new 不保证 16 字节对齐, 不能把 Affine3f 等
-// 定长可向量化类型直接做成成员, 否则会写坏相邻的 rl::math::Vector.
+// QObject/QThread 的 operator new 不保证 16 字节对齐, 不能把 Affine3f / Transform
+// 等定长可向量化类型直接做成成员, 否则会写坏相邻的 rl::math::Vector.
 typedef Eigen::Matrix<float, 4, 4, Eigen::DontAlign> FlangeMatrix;
+typedef Eigen::Matrix<double, 4, 4, Eigen::DontAlign> TransformMatrix;
 
 class Thread : public QThread, public rl::plan::Viewer
 {
@@ -88,20 +90,32 @@ public:
 	
 	void stop();
 	
-	// 设置目标点法兰位姿 T_base_flange (Eigen::Affine3f).
-	// run() 时先对该位姿做 Jacobian IK 得到 goal 关节角, 再走原 RRT 规划.
+	// 目标点法兰位姿 T_base_flange (替代 DiscretePoint startPoint)
 	void setTargetFlangePose(const Eigen::Affine3f& T_base_flange);
 	
 	void clearTargetFlangePose();
 	
-	// 可选: 显式指定起点关节角. 未设置时用 mdl->getPosition().
-	void setStartConfiguration(const rl::math::Vector& q);
+	// q_home: Home 关节角(含地轨). 未设置时用 mdl->getHomePosition().
+	void setStartConfiguration(const rl::math::Vector& q_home);
 	
 	void clearStartConfiguration();
 	
+	void setFlangeToTcp(const rl::math::Transform& T_flange_to_tcp);
+	
 	void setIkTimeoutMs(int ms);
 	
-	// 写入法兰目标后启动规划线程 (会先 stop 上一次规划).
+	void setRailStepLen(double mm);
+	
+	void setCartStepLen(double step);
+	
+	// 按 IKGoToStartParams 写入参数后启动: 地轨 path1 + 锁 Joint0 + IK(500ms) + RRT path2
+	void planGoToStart(const rl::math::Vector& q_home,
+		const Eigen::Affine3f& T_base_flange,
+		const rl::math::Transform& T_flange_to_tcp,
+		double railStepLen = 5.0,
+		double cartStepLen = 5.0,
+		int timeoutMs = 500);
+	
 	void planToFlange(const Eigen::Affine3f& T_base_flange);
 	
 	bool animate;
@@ -110,7 +124,6 @@ public:
 	
 	bool swept;
 	
-	// 最近一次规划结果, 规划结束后可直接读取
 	rl::plan::VectorList lastPath;
 	
 	double lastPlannerMs;
@@ -120,15 +133,21 @@ public:
 protected:
 	
 private:
-	bool resolveGoalFromFlangePose();
+	bool planGoToStartFromFlange();
 	
 	static void copyConfiguration(rl::math::Vector& dst, const rl::math::Vector& src);
+	
+	static void appendToPath(rl::plan::VectorList& path, const std::vector<rl::math::Vector>& joints, std::size_t begin = 0);
 	
 	bool running;
 	
 	FlangeMatrix targetFlangeMatrix;
 	
+	TransformMatrix flangeToTcpMatrix;
+	
 	bool hasTargetFlangePose;
+	
+	rl::math::Vector qHome;
 	
 	rl::math::Vector qStart;
 	
@@ -137,6 +156,10 @@ private:
 	bool hasExplicitStart;
 	
 	int ikTimeoutMs;
+	
+	double railStepLen;
+	
+	double cartStepLen;
 	
 signals:
 	void configurationRequested(const rl::math::Vector& q);
@@ -177,7 +200,6 @@ signals:
 	
 	void workVertexRequested(const rl::math::Vector& q);
 	
-	// 规划结束: solved=false 时 lastPath 为空
 	void planningFinished(const rl::plan::VectorList& path, bool solved, double plannerMs);
 };
 
