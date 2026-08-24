@@ -53,8 +53,10 @@ Thread::Thread(QObject* parent) :
 	lastPlannerMs(0.0),
 	lastSolved(false),
 	running(false),
-	targetFlangePose(Eigen::Affine3f::Identity()),
+	targetFlangeMatrix(FlangeMatrix::Identity()),
 	hasTargetFlangePose(false),
+	qStart(),
+	qGoal(),
 	hasExplicitStart(false),
 	ikTimeoutMs(500)
 {
@@ -175,7 +177,7 @@ Thread::resetVertices()
 void
 Thread::setTargetFlangePose(const Eigen::Affine3f& T_base_flange)
 {
-	this->targetFlangePose = T_base_flange;
+	this->targetFlangeMatrix = T_base_flange.matrix();
 	this->hasTargetFlangePose = true;
 }
 
@@ -183,13 +185,25 @@ void
 Thread::clearTargetFlangePose()
 {
 	this->hasTargetFlangePose = false;
-	this->targetFlangePose = Eigen::Affine3f::Identity();
+	this->targetFlangeMatrix = FlangeMatrix::Identity();
+}
+
+void
+Thread::copyConfiguration(rl::math::Vector& dst, const rl::math::Vector& src)
+{
+	// 按元素拷贝, 避免跨 DLL 时 Eigen 对动态 Vector 做 move/对齐释放
+	dst.resize(src.size());
+	
+	for (Eigen::Index i = 0; i < src.size(); ++i)
+	{
+		dst[i] = src[i];
+	}
 }
 
 void
 Thread::setStartConfiguration(const rl::math::Vector& q)
 {
-	this->qStart = q;
+	Thread::copyConfiguration(this->qStart, q);
 	this->hasExplicitStart = true;
 }
 
@@ -211,14 +225,6 @@ Thread::planToFlange(const Eigen::Affine3f& T_base_flange)
 	this->stop();
 	this->setTargetFlangePose(T_base_flange);
 	this->start();
-}
-
-rl::math::Transform
-Thread::toRlTransform(const Eigen::Affine3f& pose)
-{
-	rl::math::Transform T;
-	T.matrix() = pose.matrix().cast<rl::math::Real>();
-	return T;
 }
 
 bool
@@ -244,7 +250,7 @@ Thread::resolveGoalFromFlangePose()
 	
 	if (!this->hasExplicitStart)
 	{
-		this->qStart = kinematic->getPosition();
+		Thread::copyConfiguration(this->qStart, kinematic->getPosition());
 	}
 	
 	if (this->qStart.size() != static_cast<Eigen::Index>(dof))
@@ -257,7 +263,8 @@ Thread::resolveGoalFromFlangePose()
 	kinematic->setPosition(this->qStart);
 	kinematic->forwardPosition();
 	
-	const rl::math::Transform T_base_flange = Thread::toRlTransform(this->targetFlangePose);
+	rl::math::Transform T_base_flange;
+	T_base_flange.matrix() = this->targetFlangeMatrix.cast<rl::math::Real>();
 	
 	rl::mdl::JacobianInverseKinematics ik(kinematic);
 	ik.setDuration(std::chrono::milliseconds(this->ikTimeoutMs));
@@ -269,7 +276,7 @@ Thread::resolveGoalFromFlangePose()
 		return false;
 	}
 	
-	this->qGoal = kinematic->getPosition();
+	Thread::copyConfiguration(this->qGoal, kinematic->getPosition());
 	
 	mw->model->setPosition(this->qStart);
 	mw->model->updateFrames();

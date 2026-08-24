@@ -75,6 +75,22 @@ this->thread->planToFlange(pose);
 
 完整调用示例见 [`snippets/MainWindow_planFromFlange.cpp`](snippets/MainWindow_planFromFlange.cpp)。
 
+## `qStart = getPosition()` 崩在 `handmade_aligned_free`
+
+这不是 `getPosition()` 本身写坏了内存，而是 **赋值左侧 `qStart` 里的堆指针已经是脏的**，Eigen 在扩容时去 `free` 那个指针。
+
+根因：`Thread` 继承 `QThread`/`QObject`，Qt 的 `operator new` **不保证 16 字节对齐**。把 `Eigen::Affine3f`（内部是对齐的 4×4 float，会走 SSE/AVX 写）做成成员后：
+
+1. `setTargetFlangePose()` 或构造时对 `Affine3f` 做对齐 SIMD 写
+2. 写越界，破坏紧挨着的 `rl::math::Vector qStart` 的 `data()` 指针
+3. `this->qStart = kinematic->getPosition()` 要先释放旧 buffer → `handmade_aligned_free` 读 `*(ptr-1)` 崩溃
+
+因此法兰矩阵改为 `Eigen::Matrix<float, 4, 4, Eigen::DontAlign>` 存储；关节角用按元素拷贝，避免跨 RL DLL 时 Eigen 对动态 `Vector` 做 move/对齐释放。
+
+**不要**在 `QObject` 子类上用 `EIGEN_MAKE_ALIGNED_OPERATOR_NEW` 来“补”对齐，那会和 Qt 自己的 `operator new` 冲突。
+
+若去掉 `Affine3f` 成员后仍崩在同一处，再查工程与 Robotics Library 是否用了不同的 `/arch:AVX`（Eigen 的 `aligned_malloc`/`aligned_free` 会不一致）。
+
 ## 说明
 
 - 本仓库无 Qt / RL 构建环境，需把文件拷回原工程后在 MSVC 下编译。

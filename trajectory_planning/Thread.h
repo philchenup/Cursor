@@ -33,6 +33,10 @@
 #include <rl/math/Vector.h>
 #include <rl/plan/Viewer.h>
 
+// QObject/QThread 的 operator new 不保证 16 字节对齐, 不能把 Affine3f 等
+// 定长可向量化类型直接做成成员, 否则会写坏相邻的 rl::math::Vector.
+typedef Eigen::Matrix<float, 4, 4, Eigen::DontAlign> FlangeMatrix;
+
 class Thread : public QThread, public rl::plan::Viewer
 {
 	Q_OBJECT
@@ -118,11 +122,11 @@ protected:
 private:
 	bool resolveGoalFromFlangePose();
 	
-	static rl::math::Transform toRlTransform(const Eigen::Affine3f& pose);
+	static void copyConfiguration(rl::math::Vector& dst, const rl::math::Vector& src);
 	
 	bool running;
 	
-	Eigen::Affine3f targetFlangePose;
+	FlangeMatrix targetFlangeMatrix;
 	
 	bool hasTargetFlangePose;
 	
