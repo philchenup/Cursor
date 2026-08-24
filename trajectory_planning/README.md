@@ -30,10 +30,11 @@ path1  只动 Joint0，其它关节保持 q_home
 锁 Joint0 = yTarget ± 1e-6
         │
         ▼
-IK 500ms  addGoal(T_base_flange)   ← 法兰，不再 DiscretePoint / TCP
+IK 500ms  addGoal(T_tcp * T_tcp_to_flange)   ← 与 doGoToStart 相同
         │
         ▼
-path2  RRT：path1.back() → qGoal（Joint0 锁定，optimizer 可选）
+path2  RRT（只在此段锁 MainWindow::mutex）
+        path1.back() → qGoal，optimizer 后按 cartStepLen 插密
         │
         ▼
 path2 各点 q(0) = yTarget，恢复地轨限位

@@ -28,6 +28,7 @@
 #include <chrono>
 #include <cmath>
 #include <fstream>
+#include <memory>
 #include <vector>
 #include <QApplication>
 #include <QDateTime>
@@ -417,10 +418,13 @@ Thread::planGoToStartFromFlange()
 		railGuard.joint->setMaximum(hi);
 	}
 	
-	// ========== 焊接起点关节解（path2 终点），IK 超时 500ms ==========
+	// ========== 焊接起点关节解（path2 终点）==========
+	// 与 doGoToStart 相同: addGoal(T_tcp * T_tcp_to_flange)
+	const rl::math::Transform T_tcp_to_flange = T_flange_to_tcp.inverse();
+	
 	rl::mdl::JacobianInverseKinematics ik(kinematic);
 	ik.setDuration(std::chrono::milliseconds(this->ikTimeoutMs));
-	ik.addGoal(T_base_flange, 0);
+	ik.addGoal(T_world_tcp_start * T_tcp_to_flange, 0);
 	kinematic->setPosition(path1.back());
 	
 	if (!ik.solve())
@@ -434,77 +438,94 @@ Thread::planGoToStartFromFlange()
 	qGoalIk(0) = yTarget;
 	
 	// ========== path2：Joint0 锁定后的 RRT（path1 终点 → 焊接起点）==========
-	Thread::copyConfiguration(this->qStart, path1.back());
-	Thread::copyConfiguration(this->qGoal, qGoalIk);
-	mw->planner->start = &this->qStart;
-	mw->planner->goal = &this->qGoal;
-	mw->planner->viewer = nullptr;
-	
-	if (!mw->planner->verify())
-	{
-		this->showMessage("Invalid start or goal configuration.");
-		return false;
-	}
-	
-	if (checkStop())
-	{
-		this->showMessage("Planning aborted.");
-		return false;
-	}
-	
-	this->showMessage("Solving...");
-	
-	const std::chrono::steady_clock::time_point solveBegin = std::chrono::steady_clock::now();
-	const bool solved = mw->planner->solve();
-	const std::chrono::steady_clock::time_point solveEnd = std::chrono::steady_clock::now();
-	this->lastPlannerMs = std::chrono::duration_cast<std::chrono::duration<double>>(solveEnd - solveBegin).count() * 1000.0;
-	
-	if (!solved)
-	{
-		this->showMessage("Planner failed: home-rail pose to weld start.");
-		return false;
-	}
-	
-	rl::plan::VectorList sparse = mw->planner->getPath();
-	
-	if (nullptr != mw->optimizer)
-	{
-		mw->optimizer->setViewer(nullptr);
-		mw->optimizer->process(sparse);
-	}
-	
-	const double delta = this->cartStepLen;
-	rl::math::Vector inter(mw->model->getDofPosition());
 	std::vector<rl::math::Vector> path2;
-	
-	if (!sparse.empty())
 	{
-		path2.push_back(*sparse.begin());
-	}
-	
-	rl::plan::VectorList::iterator it = sparse.begin();
-	rl::plan::VectorList::iterator jt = sparse.begin();
-	
-	if (jt != sparse.end())
-	{
-		++jt;
-	}
-	
-	for (; it != sparse.end() && jt != sparse.end(); ++it, ++jt)
-	{
+		QMutexLocker lock(&mw->mutex);
+		
+		if (!mw->start)
+		{
+			mw->start = std::make_shared<rl::math::Vector>();
+		}
+		
+		if (!mw->goal)
+		{
+			mw->goal = std::make_shared<rl::math::Vector>();
+		}
+		
+		Thread::copyConfiguration(*mw->start, path1.back());
+		Thread::copyConfiguration(*mw->goal, qGoalIk);
+		Thread::copyConfiguration(this->qStart, *mw->start);
+		Thread::copyConfiguration(this->qGoal, *mw->goal);
+		
+		mw->planner->start = mw->start.get();
+		mw->planner->goal = mw->goal.get();
+		mw->planner->viewer = nullptr;
+		
+		if (!mw->planner->verify())
+		{
+			this->showMessage("Invalid start or goal configuration.");
+			return false;
+		}
+		
 		if (checkStop())
 		{
 			this->showMessage("Planning aborted.");
 			return false;
 		}
 		
-		const rl::math::Real steps = std::ceil(mw->model->distance(*it, *jt) / delta);
-		const rl::math::Real n = (steps < 1.0) ? 1.0 : steps;
+		this->showMessage("Solving...");
 		
-		for (std::size_t k = 1; k < static_cast<std::size_t>(n) + 1; ++k)
+		const std::chrono::steady_clock::time_point solveBegin = std::chrono::steady_clock::now();
+		const bool solved = mw->planner->solve();
+		const std::chrono::steady_clock::time_point solveEnd = std::chrono::steady_clock::now();
+		this->lastPlannerMs = std::chrono::duration_cast<std::chrono::duration<double>>(solveEnd - solveBegin).count() * 1000.0;
+		
+		if (!solved)
 		{
-			mw->model->interpolate(*it, *jt, static_cast<rl::math::Real>(k) / n, inter);
-			path2.push_back(inter);
+			this->showMessage("Planner failed: home-rail pose to weld start.");
+			return false;
+		}
+		
+		rl::plan::VectorList sparse = mw->planner->getPath();
+		
+		if (mw->optimizer)
+		{
+			mw->optimizer->setViewer(nullptr);
+			mw->optimizer->process(sparse);
+		}
+		
+		const double delta = (this->cartStepLen > 0.0) ? this->cartStepLen : 1.0;
+		rl::math::Vector inter(mw->model->getDofPosition());
+		
+		if (!sparse.empty())
+		{
+			path2.push_back(*sparse.begin());
+		}
+		
+		rl::plan::VectorList::iterator it = sparse.begin();
+		rl::plan::VectorList::iterator jt = sparse.begin();
+		
+		if (jt != sparse.end())
+		{
+			++jt;
+		}
+		
+		for (; it != sparse.end() && jt != sparse.end(); ++it, ++jt)
+		{
+			if (checkStop())
+			{
+				this->showMessage("Planning aborted.");
+				return false;
+			}
+			
+			const rl::math::Real steps = std::ceil(mw->model->distance(*it, *jt) / delta);
+			const rl::math::Real n = (steps < 1.0) ? 1.0 : steps;
+			
+			for (std::size_t k = 1; k < static_cast<std::size_t>(n) + 1; ++k)
+			{
+				mw->model->interpolate(*it, *jt, static_cast<rl::math::Real>(k) / n, inter);
+				path2.push_back(inter);
+			}
 		}
 	}
 	
@@ -547,8 +568,6 @@ Thread::planGoToStartFromFlange()
 void
 Thread::run()
 {
-	QMutexLocker lock(&MainWindow::instance()->mutex);
-	
 	this->running = true;
 	this->lastSolved = false;
 	this->lastPlannerMs = 0.0;
@@ -559,6 +578,7 @@ Thread::run()
 	
 	if (this->hasTargetFlangePose)
 	{
+		// path1 / IK 不持锁; path2 的 verify/solve/optimize 与 doGoToStart 一样只锁 mw->mutex
 		solved = this->planGoToStartFromFlange();
 		path = this->lastPath;
 		
@@ -570,6 +590,8 @@ Thread::run()
 	}
 	else
 	{
+		QMutexLocker lock(&MainWindow::instance()->mutex);
+		
 		if (!MainWindow::instance()->planner->verify())
 		{
 			this->showMessage("Invalid start or goal configuration.");
@@ -590,25 +612,13 @@ Thread::run()
 		{
 			path = MainWindow::instance()->planner->getPath();
 			this->lastPath = path;
-		}
-	}
-	
-	if (!MainWindow::instance()->nearestNeighbors.empty())
-	{
-		if (rl::plan::GnatNearestNeighbors* gnatNearestNeighbors = dynamic_cast<rl::plan::GnatNearestNeighbors*>(MainWindow::instance()->nearestNeighbors.front().get()))
-		{
-			boost::optional<std::size_t> checks = gnatNearestNeighbors->getChecks();
-			(void)checks;
-		}
-		else if (rl::plan::KdtreeBoundingBoxNearestNeighbors* kdtreeBoundingBoxNearestNeighbors = dynamic_cast<rl::plan::KdtreeBoundingBoxNearestNeighbors*>(MainWindow::instance()->nearestNeighbors.front().get()))
-		{
-			boost::optional<std::size_t> checks = kdtreeBoundingBoxNearestNeighbors->getChecks();
-			(void)checks;
-		}
-		else if (rl::plan::KdtreeNearestNeighbors* kdtreeNearestNeighbors = dynamic_cast<rl::plan::KdtreeNearestNeighbors*>(MainWindow::instance()->nearestNeighbors.front().get()))
-		{
-			boost::optional<std::size_t> checks = kdtreeNearestNeighbors->getChecks();
-			(void)checks;
+			
+			if (nullptr != MainWindow::instance()->optimizer)
+			{
+				MainWindow::instance()->optimizer->setViewer(nullptr);
+				MainWindow::instance()->optimizer->process(path);
+				this->lastPath = path;
+			}
 		}
 	}
 	
@@ -621,17 +631,34 @@ Thread::run()
 	if (solved)
 	{
 		this->drawConfigurationPath(path);
-		
-		if (!this->hasTargetFlangePose && nullptr != MainWindow::instance()->optimizer)
-		{
-			MainWindow::instance()->optimizer->setViewer(nullptr);
-			MainWindow::instance()->optimizer->process(path);
-			this->lastPath = path;
-			this->drawConfigurationPath(path);
-		}
-		
 		emit planningFinished(this->lastPath, true, this->lastPlannerMs);
 		
+		if (this->hasTargetFlangePose)
+		{
+			// path1+path2 已按 cartStepLen 插密, 直接逐点播放, 不再二次 interpolate
+			while (this->animate)
+			{
+				for (rl::plan::VectorList::const_iterator i = path.begin(); i != path.end(); ++i)
+				{
+					if (!this->running) break;
+					this->drawConfiguration(*i);
+					usleep(static_cast<std::size_t>(0.05f * 1000.0f * 1000.0f));
+				}
+				
+				if (!this->running) break;
+				
+				for (rl::plan::VectorList::const_reverse_iterator ri = path.rbegin(); ri != path.rend(); ++ri)
+				{
+					if (!this->running) break;
+					this->drawConfiguration(*ri);
+					usleep(static_cast<std::size_t>(0.05f * 1000.0f * 1000.0f));
+				}
+			}
+			
+			return;
+		}
+		
+		QMutexLocker lock(&MainWindow::instance()->mutex);
 		rl::math::Vector diff(MainWindow::instance()->model->getDofPosition());
 		rl::math::Vector inter(MainWindow::instance()->model->getDofPosition());
 		
