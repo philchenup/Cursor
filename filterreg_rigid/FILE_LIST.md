@@ -79,6 +79,12 @@
 - `io/pcd_io.cpp`
 - `io/pcd_io.h`
 
+## stack_filter
+
+- `stack_filter/example.cpp`
+- `stack_filter/stacked_object_filter.cpp`
+- `stack_filter/stacked_object_filter.h`
+
 ## visualizer
 
 - `visualizer/debug_visualizer.cpp`

@@ -1,6 +1,8 @@
 build/
 cmake-build-*/
 matched_*.ply
+stack_filter_result.*
+stack_filter_topdown.svg
 *.o
 *.a
 .DS_Store

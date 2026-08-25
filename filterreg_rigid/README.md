@@ -5,7 +5,8 @@
 - `apps/rigid_pt2pt` — FilterReg point-to-point（GMM + Kabsch）
 - `apps/rigid_pt2pl` — FilterReg point-to-plane（GMM + twist）
 
-本目录可独立编译运行，**不依赖 PCL / OpenCV / CUDA Toolkit**。
+本目录可独立编译运行，**刚性配准核心不依赖 PCL / OpenCV / CUDA Toolkit**。
+抓取堆叠过滤（`stack_filter`）是可选模块，需要系统 PCL（`libpcl-dev`）。
 
 ## 依赖
 
@@ -17,6 +18,7 @@
 | Eigen3 | 已内置 `external/eigen3` |
 | nlohmann/json | 已内置 `external/nlohmann` |
 | CUDA stubs | 已内置 `external/cuda_stub`（仅提供 `float3/float4` 等类型，不跑 GPU） |
+| PCL 1.8+（可选） | 仅 `stack_filter` 需要：`sudo apt-get install libpcl-dev` |
 
 ## 构建与运行
 
@@ -31,6 +33,10 @@ cmake --build . -j
 
 # point-to-plane
 ./rigid_pt2pl ./cloud_0.pcd ./cloud_1.pcd
+
+# 堆叠过滤（需 PCL）：从 −Z 朝 +Z 看，Projection2D / BoundingBox3D，VTK 可视化
+./stack_filter_example
+# stack_filter/stacked_object_filter.h|.cpp 与 stack_filter/example.cpp
 ```
 
 运行结束后会写出 `matched_live.ply` / `matched_observation.ply`（替代原 PCL 可视化窗口）。
@@ -50,6 +56,7 @@ cmake --build . -j
 filterreg_rigid/
 ├── apps/rigid_pt2pt/          # pt2pt demo + bunny.pcd
 ├── apps/rigid_pt2pl/          # pt2pl demo + cloud_*.pcd
+├── stack_filter/              # 去压叠：头文件 / cpp / 使用示例
 ├── common/                    # FeatureMap / TensorBlob 等基础设施
 ├── geometry_utils/            # mat33/mat34、permutohedral
 ├── kinematic/rigid/           # 刚性运动学 + Kabsch / pt2pl assembler
