@@ -99,7 +99,7 @@ option(BUILD_STACK_FILTER "Build PCL stacked-object filter" ON)
 if(BUILD_STACK_FILTER)
 	# Ubuntu 24.04 PCL/VTK exports VTK::mpi, which needs MPI::MPI_C.
 	find_package(MPI REQUIRED COMPONENTS C CXX)
-	find_package(PCL 1.8 REQUIRED COMPONENTS common)
+	find_package(PCL 1.8 REQUIRED COMPONENTS common visualization)
 	add_executable(stack_filter_example
 		stack_filter/example.cpp
 		stack_filter/stacked_object_filter.cpp
