@@ -1,31 +1,84 @@
 #include "stack_filter/stacked_object_filter.h"
 
+#include <pcl/common/transforms.h>
 #include <pcl/visualization/pcl_visualizer.h>
 
+#include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-pcl::PointCloud<pcl::PointXYZ> MakePlate(
-	float cx, float cy, float cz, float size_xy, float thickness, float step
-) {
+pcl::PointCloud<pcl::PointXYZ> MakeFlange() {
 	pcl::PointCloud<pcl::PointXYZ> cloud;
-	const float hxy = 0.5f * size_xy;
-	const float hz = 0.5f * thickness;
-	for (float x = cx - hxy; x <= cx + hxy; x += step) {
-		for (float y = cy - hxy; y <= cy + hxy; y += step) {
-			for (int iz = 0; iz < 2; ++iz) {
+	const float outer_r = 55.f;
+	const float inner_r = 18.f;
+	const float hz = 6.f;
+	const float spacing = 2.f;
+	const float bolt_r = 5.f;
+	const float bolt_circle_r = 38.f;
+	const float notch_r = 12.f;
+	const float kPi = 3.14159265f;
+	auto in_solid = [&](float x, float y) {
+		const float r2 = x * x + y * y;
+		if (r2 > outer_r * outer_r || r2 < inner_r * inner_r) {
+			return false;
+		}
+		for (int k = 0; k < 4; ++k) {
+			const float a = static_cast<float>(k) * 0.5f * kPi;
+			const float dx = x - bolt_circle_r * std::cos(a);
+			const float dy = y - bolt_circle_r * std::sin(a);
+			if (dx * dx + dy * dy < bolt_r * bolt_r) {
+				return false;
+			}
+		}
+		const float nx = outer_r - 0.35f * notch_r;
+		const float dxn = x - nx;
+		if (dxn * dxn + y * y < notch_r * notch_r && x > nx - notch_r) {
+			return false;
+		}
+		return true;
+	};
+	const int n = static_cast<int>(std::ceil(2.f * outer_r / spacing));
+	for (int iz = 0; iz < 2; ++iz) {
+		const float z = (iz == 0) ? hz : -hz;
+		for (int ix = 0; ix <= n; ++ix) {
+			const float x = -outer_r + static_cast<float>(ix) * spacing;
+			for (int iy = 0; iy <= n; ++iy) {
+				const float y = -outer_r + static_cast<float>(iy) * spacing;
+				if (!in_solid(x, y)) {
+					continue;
+				}
 				pcl::PointXYZ p;
 				p.x = x;
 				p.y = y;
-				p.z = cz + (iz == 0 ? hz : -hz);
+				p.z = z;
 				cloud.push_back(p);
 			}
 		}
 	}
 	return cloud;
+}
+
+pcl::PointCloud<pcl::PointXYZ> Place(
+	const pcl::PointCloud<pcl::PointXYZ>& model,
+	float x,
+	float y,
+	float z,
+	float yaw,
+	float pitch = 0.f,
+	float roll = 0.f
+) {
+	Eigen::Affine3f t = Eigen::Affine3f::Identity();
+	t.translate(Eigen::Vector3f(x, y, z));
+	t.rotate(Eigen::AngleAxisf(yaw, Eigen::Vector3f::UnitZ()));
+	t.rotate(Eigen::AngleAxisf(pitch, Eigen::Vector3f::UnitY()));
+	t.rotate(Eigen::AngleAxisf(roll, Eigen::Vector3f::UnitX()));
+	pcl::PointCloud<pcl::PointXYZ> out;
+	pcl::transformPointCloud(model, out, t);
+	return out;
 }
 
 pcl::PointCloud<pcl::PointXYZRGB>::Ptr ColorCloud(
@@ -78,27 +131,60 @@ void AddClouds(
 	for (int idx : result.kept) {
 		keep[static_cast<std::size_t>(idx)] = 1;
 	}
-	for (std::size_t i = 0; i < clouds.size(); ++i) {
+	std::vector<std::size_t> order(clouds.size());
+	for (std::size_t i = 0; i < order.size(); ++i) {
+		order[i] = i;
+	}
+	// Farther (larger Z) first so closer clouds paint on top.
+	std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+		float za = 0.f, zb = 0.f;
+		for (const auto& p : clouds[a].points) {
+			za += p.z;
+		}
+		for (const auto& p : clouds[b].points) {
+			zb += p.z;
+		}
+		za /= static_cast<float>(std::max<std::size_t>(clouds[a].size(), 1));
+		zb /= static_cast<float>(std::max<std::size_t>(clouds[b].size(), 1));
+		return za > zb;
+	});
+	for (std::size_t i : order) {
 		const std::string id = prefix + std::to_string(i);
 		viewer.addPointCloud<pcl::PointXYZRGB>(ColorCloud(clouds[i], keep[i] != 0), id, viewport);
 		viewer.setPointCloudRenderingProperties(
-			pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 4, id, viewport);
+			pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 3, id, viewport);
+		pcl::PointXYZ centroid(0.f, 0.f, 0.f);
+		for (const auto& p : clouds[i].points) {
+			centroid.x += p.x;
+			centroid.y += p.y;
+			centroid.z += p.z;
+		}
+		const float n = static_cast<float>(std::max<std::size_t>(clouds[i].size(), 1));
+		centroid.x /= n;
+		centroid.y /= n;
+		centroid.z /= n;
+		viewer.addText3D(
+			std::to_string(i), centroid, 12.0, 1.0, 1.0, 1.0,
+			prefix + "lb" + std::to_string(i), viewport);
 	}
 }
 
 }  // namespace
 
 int main() {
-	// Look from -Z toward +Z. Smaller Z is closer / top layer.
-	// 0 lower, stacked under 1 -> DROP
-	// 1 top layer              -> KEEP
-	// 2 top layer, free        -> KEEP
-	// 3 lower layer, free      -> DROP
+	// Five φ110 mm flanges, view from -Z toward +Z. Smaller Z is closer.
+	// 0 center     under 1 and 3          -> DROP
+	// 1 top-left   top layer              -> KEEP
+	// 2 bot-left   top layer, free        -> KEEP
+	// 3 top-right  under 1, slightly tilt -> DROP
+	// 4 bot-right  under 3                -> DROP
+	const auto model = MakeFlange();
 	std::vector<pcl::PointCloud<pcl::PointXYZ>> clouds;
-	clouds.push_back(MakePlate(0.f, 0.f, 340.f, 80.f, 8.f, 3.f));
-	clouds.push_back(MakePlate(0.f, 0.f, 328.f, 80.f, 8.f, 3.f));
-	clouds.push_back(MakePlate(120.f, 0.f, 329.f, 80.f, 8.f, 3.f));
-	clouds.push_back(MakePlate(240.f, 0.f, 350.f, 80.f, 8.f, 3.f));
+	clouds.push_back(Place(model, 5.f, 5.f, 345.f, 0.20f));
+	clouds.push_back(Place(model, -65.f, 55.f, 322.f, -0.30f));
+	clouds.push_back(Place(model, -80.f, -70.f, 328.f, 0.50f));
+	clouds.push_back(Place(model, 70.f, 45.f, 330.f, 0.40f, 0.45f, 0.25f));
+	clouds.push_back(Place(model, 72.f, -5.f, 338.f, -0.15f));
 
 	const auto r2d = poser::FilterStacked(
 		clouds, poser::StackFilterMethod::Projection2D, 0.1f);
@@ -123,8 +209,8 @@ int main() {
 	AddClouds(viewer, clouds, r3d, vp_3d, "b3d_");
 
 	viewer.initCameraParameters();
-	// Camera on the -Z side, looking toward +Z.
-	viewer.setCameraPosition(120.0, -220.0, -80.0, 120.0, 0.0, 335.0, 0.0, 1.0, 0.0);
+	// Camera on the -Z side, looking toward +Z. Cloud ids are labeled in 3D.
+	viewer.setCameraPosition(0.0, 0.0, -80.0, 0.0, 0.0, 330.0, 0.0, 1.0, 0.0);
 	viewer.spinOnce(100);
 	viewer.saveScreenshot("stack_filter_vis.png");
 	while (!viewer.wasStopped()) {
