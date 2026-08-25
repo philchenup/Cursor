@@ -184,6 +184,7 @@ void SaveTopDownSvg(
 ) {
 	struct Box {
 		float minx, miny, maxx, maxy;
+		float height;
 		std::string label;
 		bool kept;
 	};
@@ -203,6 +204,7 @@ void SaveTopDownSvg(
 		b.maxx = mx.x();
 		b.maxy = mx.y();
 		b.kept = output.instances[i].kept;
+		b.height = output.instances[i].mean_height;
 		std::ostringstream label;
 		label << output.instances[i].id << " "
 		      << (b.kept ? "KEEP" : "DROP") << " "
@@ -235,6 +237,9 @@ void SaveTopDownSvg(
 	ofs << "<svg xmlns='http://www.w3.org/2000/svg' width='" << svg_w
 	    << "' height='" << svg_h << "' viewBox='0 0 " << svg_w << " " << svg_h << "'>\n";
 	ofs << "<rect width='100%' height='100%' fill='#111'/>\n";
+	std::sort(boxes.begin(), boxes.end(), [](const Box& a, const Box& b) {
+		return a.height < b.height;
+	});
 	ofs << "<text x='16' y='24' fill='#ddd' font-size='16' font-family='sans-serif'>"
 	    << "Stack filter top-down (green=KEEP / red=DROP)</text>\n";
 	for (const auto& b : boxes) {
