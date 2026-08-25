@@ -1,0 +1,26 @@
+{
+  "method": "projection_2d",
+  "overlap_ratio_threshold": 0.3,
+  "pixel_size": 0.005,
+  "height_margin": 0.003,
+  "up_axis": [0, 0, 1],
+  "targets": [
+    {
+      "id": "A",
+      "score": 0.91,
+      "translation": [0.0, 0.0, 0.025],
+      "quaternion_wxyz": [1, 0, 0, 0]
+    },
+    {
+      "id": "B",
+      "score": 0.88,
+      "translation": [0.16, 0.0, 0.025],
+      "quaternion_wxyz": [1, 0, 0, 0]
+    },
+    {
+      "id": "C",
+      "score": 0.93,
+      "matrix": [1, 0, 0, 0.0, 0, 1, 0, 0.0, 0, 0, 1, 0.075, 0, 0, 0, 1]
+    }
+  ]
+}
