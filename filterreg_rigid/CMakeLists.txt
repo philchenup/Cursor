@@ -94,35 +94,26 @@ target_link_libraries(rigid_pt2pl
 	dbg_visualizer_lib
 )
 
-# ---- Stacked-object grasp filter (PCL) ----
-option(BUILD_STACK_FILTER "Build PCL stacked-object filter for grasp targets" ON)
+# ---- Stacked-object filter (PCL): three files under stack_filter/ ----
+option(BUILD_STACK_FILTER "Build PCL stacked-object filter" ON)
 if(BUILD_STACK_FILTER)
 	# Ubuntu 24.04 PCL/VTK exports VTK::mpi, which needs MPI::MPI_C.
 	find_package(MPI REQUIRED COMPONENTS C CXX)
-	find_package(PCL 1.8 REQUIRED COMPONENTS common io filters)
-	add_library(stack_filter_lib
+	find_package(PCL 1.8 REQUIRED COMPONENTS common)
+	add_executable(stack_filter_example
+		stack_filter/example.cpp
 		stack_filter/stacked_object_filter.cpp
 	)
-	target_include_directories(stack_filter_lib
-		PUBLIC
+	target_include_directories(stack_filter_example
+		PRIVATE
 			${CMAKE_SOURCE_DIR}
 			${PCL_INCLUDE_DIRS}
 	)
 	if(PCL_LIBRARY_DIRS)
-		target_link_directories(stack_filter_lib PUBLIC ${PCL_LIBRARY_DIRS})
+		target_link_directories(stack_filter_example PRIVATE ${PCL_LIBRARY_DIRS})
 	endif()
-	# PCL_DEFINITIONS holds compiler flags such as -DDISABLE_OPENNI2.
-	target_compile_options(stack_filter_lib PUBLIC ${PCL_DEFINITIONS})
-	target_link_libraries(stack_filter_lib PUBLIC ${PCL_LIBRARIES})
-
-	add_executable(stack_filter
-		apps/stack_filter/main.cpp
-		apps/stack_filter/self_test.cpp
-	)
-	target_link_libraries(stack_filter PRIVATE stack_filter_lib)
-
-	enable_testing()
-	add_test(NAME stack_filter_self_test COMMAND stack_filter --self-test)
+	target_compile_options(stack_filter_example PRIVATE ${PCL_DEFINITIONS})
+	target_link_libraries(stack_filter_example PRIVATE ${PCL_LIBRARIES})
 endif()
 
 # Convenience: copy sample clouds next to binaries

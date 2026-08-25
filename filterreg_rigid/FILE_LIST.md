@@ -10,12 +10,6 @@
 - `apps/rigid_pt2pl/main.cpp`
 - `apps/rigid_pt2pt/bunny.pcd`
 - `apps/rigid_pt2pt/main.cpp`
-- `apps/stack_filter/README.md`
-- `apps/stack_filter/box_cloud.h`
-- `apps/stack_filter/main.cpp`
-- `apps/stack_filter/sample_poses.json`
-- `apps/stack_filter/self_test.cpp`
-- `apps/stack_filter/self_test.h`
 
 ## common
 
@@ -87,6 +81,7 @@
 
 ## stack_filter
 
+- `stack_filter/example.cpp`
 - `stack_filter/stacked_object_filter.cpp`
 - `stack_filter/stacked_object_filter.h`
 
