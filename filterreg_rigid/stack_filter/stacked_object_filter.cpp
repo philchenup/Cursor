@@ -31,7 +31,6 @@ using HeightMap = std::unordered_map<Cell, float, CellHash>;
 
 constexpr float kCellMm = 2.5f;
 constexpr float kZMarginMm = 3.0f;
-constexpr float kMinBandMm = 5.0f;
 
 struct Stats {
 	float min_z = 0.f;
@@ -93,15 +92,6 @@ Stats CloudStats(const pcl::PointCloud<pcl::PointXYZ>& cloud) {
 	}
 	s.valid = cloud.size() > 0 && std::isfinite(s.min_z) && std::isfinite(s.max_z);
 	return s;
-}
-
-float Median(std::vector<float> v) {
-	if (v.empty()) {
-		return kMinBandMm * 2.f;
-	}
-	auto mid = v.begin() + static_cast<std::ptrdiff_t>(v.size() / 2);
-	std::nth_element(v.begin(), mid, v.end());
-	return std::max(*mid, kMinBandMm);
 }
 
 // Pose-aligned cuboid (PCA OBB), not the world AABB. Filling a world AABB
@@ -185,13 +175,7 @@ StackFilterResult Score(
 ) {
 	const std::size_t n = maps.size();
 	HeightMap global_max;
-	std::vector<float> thick;
-	float z_top = std::numeric_limits<float>::infinity();
 	for (std::size_t i = 0; i < n; ++i) {
-		if (stats[i].valid) {
-			z_top = std::min(z_top, stats[i].min_z);
-			thick.push_back(std::max(stats[i].max_z - stats[i].min_z, kMinBandMm));
-		}
 		for (const auto& cell : maps[i]) {
 			auto it = global_max.find(cell.first);
 			if (it == global_max.end()) {
@@ -201,7 +185,6 @@ StackFilterResult Score(
 			}
 		}
 	}
-	const float layer_band = 0.5f * Median(thick);
 
 	StackFilterResult out;
 	out.overlap_ratio.assign(n, 0.f);
@@ -218,9 +201,7 @@ StackFilterResult Score(
 		}
 		out.overlap_ratio[i] =
 			static_cast<float>(stacked) / static_cast<float>(maps[i].size());
-		const bool top_layer = stats[i].min_z <= z_top + layer_band;
-		const bool not_stacked = out.overlap_ratio[i] <= overlap_threshold;
-		if (top_layer && not_stacked) {
+		if (out.overlap_ratio[i] <= overlap_threshold) {
 			out.kept.push_back(static_cast<int>(i));
 		}
 	}

@@ -172,19 +172,20 @@ void AddClouds(
 }  // namespace
 
 int main() {
-	// Five φ110 mm flanges, view from -Z toward +Z. Smaller Z is closer.
-	// 0 center     under 1 and 3          -> DROP
-	// 1 top-left   top layer              -> KEEP
-	// 2 bot-left   top layer, free        -> KEEP
-	// 3 top-right  under 1, slightly tilt -> DROP
-	// 4 bot-right  under 3                -> DROP
+	// Five φ110 mm flanges. View from -Z toward +Z; smaller Z is closer.
+	// Drop only when a closer object covers the XY footprint.
+	// 0 top-left   isolated, closer     -> KEEP
+	// 1 top-right  isolated, farther    -> KEEP (not covered)
+	// 2 bot-left   under 3              -> DROP
+	// 3 center     on top of 2 and 4    -> KEEP
+	// 4 bot-right  under 3              -> DROP
 	const auto model = MakeFlange();
 	std::vector<pcl::PointCloud<pcl::PointXYZ>> clouds;
-	clouds.push_back(Place(model, 5.f, 5.f, 345.f, 0.20f));
-	clouds.push_back(Place(model, -65.f, 55.f, 322.f, -0.30f));
-	clouds.push_back(Place(model, -80.f, -70.f, 328.f, 0.50f));
-	clouds.push_back(Place(model, 70.f, 45.f, 330.f, 0.40f, 0.45f, 0.25f));
-	clouds.push_back(Place(model, 72.f, -5.f, 338.f, -0.15f));
+	clouds.push_back(Place(model, -95.f, 85.f, 322.f, -0.20f));
+	clouds.push_back(Place(model, 95.f, 85.f, 348.f, 0.15f));
+	clouds.push_back(Place(model, -55.f, -75.f, 340.f, 0.40f));
+	clouds.push_back(Place(model, 5.f, -35.f, 324.f, 0.10f));
+	clouds.push_back(Place(model, 70.f, -75.f, 342.f, -0.25f));
 
 	const auto r2d = poser::FilterStacked(
 		clouds, poser::StackFilterMethod::Projection2D, 0.1f);
@@ -209,8 +210,9 @@ int main() {
 	AddClouds(viewer, clouds, r3d, vp_3d, "b3d_");
 
 	viewer.initCameraParameters();
-	// Camera on the -Z side, looking toward +Z. Cloud ids are labeled in 3D.
-	viewer.setCameraPosition(0.0, 0.0, -80.0, 0.0, 0.0, 330.0, 0.0, 1.0, 0.0);
+	// XY top-down so +X is right and +Y is up (cloud 1 at upper-right).
+	// Filter depth is still -Z toward +Z: smaller Z is closer.
+	viewer.setCameraPosition(0.0, 0.0, 700.0, 0.0, 0.0, 330.0, 0.0, 1.0, 0.0);
 	viewer.spinOnce(100);
 	viewer.saveScreenshot("stack_filter_vis.png");
 	while (!viewer.wasStopped()) {

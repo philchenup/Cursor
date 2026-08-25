@@ -8,10 +8,10 @@
 namespace poser {
 
 // Millimetres. Viewpoint is on the -Z side, looking toward +Z.
-// Depth along the view is Z: smaller Z is closer / top layer.
-// Keep only top-layer objects that are not stacked.
-// BoundingBox3D fills a PCA-aligned cuboid (not the world AABB) so a tilted
-// part cannot steal the whole top layer from one close corner.
+// Smaller Z is closer. An object is dropped only if another, closer
+// object covers enough of its XY footprint (overlap > threshold).
+// Isolated objects are kept even when they sit farther along Z.
+// BoundingBox3D fills a PCA-aligned cuboid, not the world AABB.
 
 enum class StackFilterMethod {
 	Projection2D = 0,
@@ -19,7 +19,7 @@ enum class StackFilterMethod {
 };
 
 struct StackFilterResult {
-	std::vector<int> kept;             // top-layer, not stacked; closer first
+	std::vector<int> kept;             // not stacked; closer first
 	std::vector<float> overlap_ratio;  // stacked XY/volume fraction in [0, 1]
 };
 
