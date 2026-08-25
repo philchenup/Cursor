@@ -30,18 +30,21 @@ void PrintUsage(const char* argv0) {
 		<< "                 [--out-dir DIR]\n"
 		<< "  " << argv0 << " --template MODEL.pcd --poses POSES.json [--out-dir DIR]\n"
 		<< "                 [--method projection_2d|bounding_box_3d|highest_layer]\n"
-		<< "                 [--threshold 0.30] [--pixel-size 0.0025]\n"
-		<< "                 [--height-margin 0.003]\n"
+		<< "                 [--units mm|m] [--camera-z-down|--camera-z-up]\n"
+		<< "                 [--threshold 0.30] [--pixel-size 2.5] [--height-margin 3]\n"
+		<< "\n"
+		<< "Default: millimetres, camera +Z pointing into the scene (down).\n"
+		<< "Smaller Z is closer to the camera and counts as on top.\n"
 		<< "\n"
 		<< "poses.json schema:\n"
 		<< "  {\n"
 		<< "    \"method\": \"projection_2d\",\n"
+		<< "    \"units\": \"mm\",\n"
+		<< "    \"camera_z_down\": true,\n"
 		<< "    \"overlap_ratio_threshold\": 0.3,\n"
-		<< "    \"up_axis\": [0, 0, 1],\n"
 		<< "    \"targets\": [\n"
-		<< "      {\"id\": \"A\", \"translation\": [0, 0, 0.025],\n"
-		<< "       \"quaternion_wxyz\": [1, 0, 0, 0], \"score\": 0.9},\n"
-		<< "      {\"id\": \"B\", \"matrix\": [1,0,0,0.1, 0,1,0,0, 0,0,1,0.025, 0,0,0,1]}\n"
+		<< "      {\"id\": \"A\", \"translation\": [0, 0, 345],\n"
+		<< "       \"quaternion_wxyz\": [1, 0, 0, 0], \"score\": 0.9}\n"
 		<< "    ]\n"
 		<< "  }\n";
 }
@@ -119,11 +122,25 @@ json LoadPosesFile(
 	if (root.contains("layer_thickness")) {
 		params->layer_thickness = root["layer_thickness"].get<float>();
 	}
+	if (root.contains("units")) {
+		poser::LengthUnit unit;
+		if (!poser::ParseLengthUnit(root["units"].get<std::string>(), &unit)) {
+			throw std::runtime_error("Unknown units in JSON: " + root["units"].dump());
+		}
+		params->unit = unit;
+	}
+	if (root.contains("camera_z_down")) {
+		params->camera_z_down = root["camera_z_down"].get<bool>();
+	}
+	if (root.contains("dilation_radius")) {
+		params->dilation_radius = root["dilation_radius"].get<int>();
+	}
 	if (root.contains("up_axis") && root["up_axis"].is_array() && root["up_axis"].size() >= 3) {
 		params->up_axis = Eigen::Vector3f(
 			root["up_axis"][0].get<float>(),
 			root["up_axis"][1].get<float>(),
 			root["up_axis"][2].get<float>());
+		params->camera_z_down = false;
 	}
 
 	if (!root.contains("targets") || !root["targets"].is_array()) {
@@ -221,7 +238,8 @@ void SaveTopDownSvg(
 		return;
 	}
 
-	const float pad = 0.02f;
+	const float span = std::max(gmaxx - gminx, gmaxy - gminy);
+	const float pad = std::max(5.0f, 0.04f * span);
 	gminx -= pad;
 	gminy -= pad;
 	gmaxx += pad;
@@ -264,6 +282,8 @@ json ResultToJson(
 ) {
 	json root;
 	root["method"] = poser::StackedObjectFilter::MethodName(params.method);
+	root["units"] = poser::StackedObjectFilter::UnitName(params.unit);
+	root["camera_z_down"] = params.camera_z_down;
 	root["overlap_ratio_threshold"] = params.overlap_ratio_threshold;
 	root["kept_count"] = output.kept_indices.size();
 	root["total_count"] = output.instances.size();
@@ -276,6 +296,7 @@ json ResultToJson(
 		item["score"] = inst.score;
 		item["overlap_ratio"] = inst.overlap_ratio;
 		item["mean_height"] = inst.mean_height;
+		item["mean_z"] = inst.mean_z;
 		item["occupied_cells"] = inst.occupied_cells;
 		item["pressed_cells"] = inst.pressed_cells;
 		item["kept"] = inst.kept;
@@ -288,19 +309,19 @@ json ResultToJson(
 void PrintTable(const poser::StackFilterOutput& output) {
 	std::cout << std::left << std::setw(6) << "idx"
 	          << std::setw(14) << "id"
-	          << std::setw(12) << "height"
+	          << std::setw(12) << "z_cam"
 	          << std::setw(10) << "overlap"
-	          << std::setw(10) << "cells"
+	          << std::setw(12) << "cells"
 	          << "flag\n";
 	for (const auto& inst : output.instances) {
 		std::cout << std::left << std::setw(6) << inst.index
 		          << std::setw(14) << inst.id
-		          << std::setw(12) << std::fixed << std::setprecision(4) << inst.mean_height
+		          << std::setw(12) << std::fixed << std::setprecision(2) << inst.mean_z
 		          << std::setw(10) << std::setprecision(3) << inst.overlap_ratio
 		          << inst.pressed_cells << "/" << inst.occupied_cells << "\t"
 		          << (inst.kept ? "KEEP" : "DROP") << "\n";
 	}
-	std::cout << "kept (high to low):";
+	std::cout << "kept (near camera first):";
 	for (int idx : output.kept_indices) {
 		std::cout << " " << output.instances[idx].id;
 	}
@@ -310,24 +331,20 @@ void PrintTable(const poser::StackFilterOutput& output) {
 std::vector<poser::RegisteredInstance> BuildDemoScene(
 	pcl::PointCloud<pcl::PointXYZ>::Ptr* model_out
 ) {
-	const float sx = 0.10f;
-	const float sy = 0.10f;
-	const float sz = 0.05f;
-	auto model = poser::demo::MakeBoxSurfaceCloud(sx, sy, sz, 0.004f);
+	auto model = poser::demo::MakeFlangeCloud();
 	if (model_out) {
 		*model_out = model;
 	}
 
-	// Two piles plus one free object:
-	//   A (bottom) pressed by C (top)
-	//   B (bottom) partly pressed by D (offset top)
-	//   E free on the table — kept even though globally lower than C/D
+	// Overhead camera, +Z into the scene. Smaller Z = closer = on top.
+	// Layout matches a 5-flange pile: two top parts cover the center and
+	// lower-right, bottom-left stays free.
 	std::vector<std::pair<std::string, Eigen::Matrix4f>> poses = {
-		{"A", poser::demo::MakePose(0.00f, 0.00f, 0.5f * sz)},
-		{"B", poser::demo::MakePose(0.16f, 0.00f, 0.5f * sz)},
-		{"C", poser::demo::MakePose(0.00f, 0.00f, 1.5f * sz)},
-		{"D", poser::demo::MakePose(0.20f, 0.02f, 1.5f * sz)},
-		{"E", poser::demo::MakePose(0.40f, 0.00f, 0.5f * sz)},
+		{"center", poser::demo::MakePose(5.0f, 5.0f, 345.0f, 0.20f)},
+		{"top_left", poser::demo::MakePose(-65.0f, 55.0f, 322.0f, -0.30f)},
+		{"bot_left", poser::demo::MakePose(-80.0f, -70.0f, 328.0f, 0.50f)},
+		{"top_right", poser::demo::MakePose(70.0f, 45.0f, 318.0f, 0.40f)},
+		{"bot_right", poser::demo::MakePose(72.0f, -5.0f, 338.0f, -0.15f)},
 	};
 	std::vector<poser::RegisteredInstance> instances;
 	for (const auto& item : poses) {
@@ -368,6 +385,9 @@ int main(int argc, char** argv) {
 	poser::StackFilterParams params;
 	bool method_set = false;
 	bool threshold_set = false;
+	bool unit_set = false;
+	bool camera_set = false;
+	bool height_margin_set = false;
 
 	for (int i = 1; i < argc; ++i) {
 		const std::string arg = argv[i];
@@ -400,6 +420,20 @@ int main(int argc, char** argv) {
 			params.pixel_size = std::stof(need("--pixel-size"));
 		} else if (arg == "--height-margin") {
 			params.height_margin = std::stof(need("--height-margin"));
+			height_margin_set = true;
+		} else if (arg == "--units") {
+			if (!poser::ParseLengthUnit(need("--units"), &params.unit)) {
+				std::cerr << "Unknown units (use mm or m)\n";
+				return 2;
+			}
+			unit_set = true;
+		} else if (arg == "--camera-z-down") {
+			params.camera_z_down = true;
+			camera_set = true;
+		} else if (arg == "--camera-z-up") {
+			params.camera_z_down = false;
+			params.up_axis = Eigen::Vector3f::UnitZ();
+			camera_set = true;
 		} else if (arg == "--help" || arg == "-h") {
 			PrintUsage(argv[0]);
 			return 0;
@@ -420,7 +454,6 @@ int main(int argc, char** argv) {
 
 		if (demo) {
 			instances = BuildDemoScene(&model);
-			params.pixel_size = (params.pixel_size > 0.0f) ? params.pixel_size : 0.005f;
 		} else {
 			if (template_path.empty() || poses_path.empty()) {
 				PrintUsage(argv[0]);
@@ -442,12 +475,19 @@ int main(int argc, char** argv) {
 			if (params.pixel_size <= 0.0f) {
 				params.pixel_size = json_params.pixel_size;
 			}
-			if (params.height_margin == 0.003f) {
+			if (!height_margin_set) {
 				params.height_margin = json_params.height_margin;
+			}
+			if (!unit_set) {
+				params.unit = json_params.unit;
+			}
+			if (!camera_set) {
+				params.camera_z_down = json_params.camera_z_down;
+				params.up_axis = json_params.up_axis;
 			}
 			params.voxel_size = json_params.voxel_size;
 			params.layer_thickness = json_params.layer_thickness;
-			params.up_axis = json_params.up_axis;
+			params.dilation_radius = json_params.dilation_radius;
 			for (auto& inst : instances) {
 				inst.model = model;
 			}
@@ -456,6 +496,8 @@ int main(int argc, char** argv) {
 		poser::StackedObjectFilter filter(params);
 		const auto output = filter.Filter(instances);
 		std::cout << "method=" << poser::StackedObjectFilter::MethodName(params.method)
+		          << " units=" << poser::StackedObjectFilter::UnitName(params.unit)
+		          << " camera_z_down=" << (params.camera_z_down ? "true" : "false")
 		          << " threshold=" << params.overlap_ratio_threshold
 		          << " kept=" << output.kept_indices.size()
 		          << "/" << output.instances.size() << "\n";

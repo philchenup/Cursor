@@ -63,12 +63,81 @@ inline pcl::PointCloud<pcl::PointXYZ>::Ptr MakeBoxSurfaceCloud(
 	return cloud;
 }
 
-inline Eigen::Matrix4f MakePose(float x, float y, float z) {
+inline Eigen::Matrix4f MakePose(float x, float y, float z, float yaw_rad = 0.0f) {
 	Eigen::Matrix4f pose = Eigen::Matrix4f::Identity();
+	if (std::abs(yaw_rad) > 1e-8f) {
+		pose.block<3, 3>(0, 0) =
+			Eigen::AngleAxisf(yaw_rad, Eigen::Vector3f::UnitZ()).toRotationMatrix();
+	}
 	pose(0, 3) = x;
 	pose(1, 3) = y;
 	pose(2, 3) = z;
 	return pose;
+}
+
+// Camera-down flange template in millimetres: annulus, 4 bolt holes, rim notch.
+inline pcl::PointCloud<pcl::PointXYZ>::Ptr MakeFlangeCloud(
+	float outer_r = 55.0f,
+	float inner_r = 18.0f,
+	float thickness = 12.0f,
+	float spacing = 2.0f,
+	float bolt_r = 5.0f,
+	float bolt_circle_r = 38.0f,
+	int n_bolts = 4,
+	float notch_r = 12.0f
+) {
+	auto cloud = pcl::PointCloud<pcl::PointXYZ>::Ptr(
+		new pcl::PointCloud<pcl::PointXYZ>());
+	spacing = std::max(spacing, 0.5f);
+	const float hz = 0.5f * thickness;
+	const float kPi = 3.14159265f;
+
+	auto in_solid = [&](float x, float y) {
+		const float r2 = x * x + y * y;
+		if (r2 > outer_r * outer_r || r2 < inner_r * inner_r) {
+			return false;
+		}
+		for (int k = 0; k < n_bolts; ++k) {
+			const float a = static_cast<float>(k) * 2.0f * kPi / static_cast<float>(n_bolts);
+			const float bx = bolt_circle_r * std::cos(a);
+			const float by = bolt_circle_r * std::sin(a);
+			const float dx = x - bx;
+			const float dy = y - by;
+			if (dx * dx + dy * dy < bolt_r * bolt_r) {
+				return false;
+			}
+		}
+		const float nx = outer_r - 0.35f * notch_r;
+		const float dxn = x - nx;
+		if (dxn * dxn + y * y < notch_r * notch_r && x > nx - notch_r) {
+			return false;
+		}
+		return true;
+	};
+
+	const int n = std::max(8, static_cast<int>(std::ceil(2.0f * outer_r / spacing)));
+	for (int iz = 0; iz < 2; ++iz) {
+		const float z = (iz == 0) ? hz : -hz;
+		for (int ix = 0; ix <= n; ++ix) {
+			const float x = -outer_r + static_cast<float>(ix) * spacing;
+			for (int iy = 0; iy <= n; ++iy) {
+				const float y = -outer_r + static_cast<float>(iy) * spacing;
+				if (!in_solid(x, y)) {
+					continue;
+				}
+				pcl::PointXYZ pt;
+				pt.x = x;
+				pt.y = y;
+				pt.z = z;
+				cloud->points.push_back(pt);
+			}
+		}
+	}
+
+	cloud->width = static_cast<std::uint32_t>(cloud->points.size());
+	cloud->height = 1;
+	cloud->is_dense = true;
+	return cloud;
 }
 
 inline std::string KeepLabel(bool kept) {

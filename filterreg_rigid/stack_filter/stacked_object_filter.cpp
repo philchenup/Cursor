@@ -42,7 +42,7 @@ void BuildTangentFrame(
 ) {
 	*axis_n = up;
 	if (axis_n->squaredNorm() < 1e-12f) {
-		*axis_n = Eigen::Vector3f::UnitZ();
+		*axis_n = -Eigen::Vector3f::UnitZ();
 	}
 	axis_n->normalize();
 
@@ -58,9 +58,9 @@ pcl::PointCloud<pcl::PointXYZ>::Ptr MaybeDownsample(
 	float leaf,
 	bool enable
 ) {
-	if (!enable || leaf <= 0.0f || cloud->empty()) {
+	if (!enable || leaf <= 0.0f || !cloud || cloud->empty()) {
 		auto copy = pcl::PointCloud<pcl::PointXYZ>::Ptr(
-			new pcl::PointCloud<pcl::PointXYZ>(*cloud));
+			new pcl::PointCloud<pcl::PointXYZ>(cloud ? *cloud : pcl::PointCloud<pcl::PointXYZ>()));
 		return copy;
 	}
 
@@ -108,6 +108,31 @@ HeightMap BuildHeightMap(
 	return map;
 }
 
+HeightMap DilateHeightMap(const HeightMap& src, int radius) {
+	if (radius <= 0 || src.empty()) {
+		return src;
+	}
+	HeightMap out = src;
+	out.reserve(src.size() * static_cast<std::size_t>((2 * radius + 1) * (2 * radius + 1)));
+	for (const auto& cell : src) {
+		for (int dy = -radius; dy <= radius; ++dy) {
+			for (int dx = -radius; dx <= radius; ++dx) {
+				if (dx == 0 && dy == 0) {
+					continue;
+				}
+				const CellKey key{cell.first.x + dx, cell.first.y + dy};
+				auto it = out.find(key);
+				if (it == out.end()) {
+					out.emplace(key, cell.second);
+				} else if (cell.second > it->second) {
+					it->second = cell.second;
+				}
+			}
+		}
+	}
+	return out;
+}
+
 pcl::PointCloud<pcl::PointXYZ>::Ptr FillPoseAlignedBox(
 	const pcl::PointCloud<pcl::PointXYZ>& model,
 	const Eigen::Matrix4f& pose,
@@ -129,26 +154,31 @@ pcl::PointCloud<pcl::PointXYZ>::Ptr FillPoseAlignedBox(
 	half.x() *= std::max(expand_x, 1e-3f);
 	half.y() *= std::max(expand_y, 1e-3f);
 	half.z() *= std::max(expand_z, 1e-3f);
-	// Guard zero-thickness templates (planar face clouds).
 	half = half.cwiseMax(Eigen::Vector3f::Constant(0.5f * voxel_size));
 
 	const Eigen::Vector3f min_local = center - half;
 	const Eigen::Vector3f max_local = center + half;
-	const float leaf = std::max(voxel_size, 1e-4f);
+	const float leaf = std::max(voxel_size, 1e-3f);
 
-	const int nx = std::max(1, static_cast<int>(std::ceil((max_local.x() - min_local.x()) / leaf)));
-	const int ny = std::max(1, static_cast<int>(std::ceil((max_local.y() - min_local.y()) / leaf)));
-	const int nz = std::max(1, static_cast<int>(std::ceil((max_local.z() - min_local.z()) / leaf)));
+	auto count_axis = [&](float lo, float hi) {
+		const int n = std::max(1, static_cast<int>(std::ceil((hi - lo) / leaf)));
+		return std::min(n, 80);
+	};
+	const int nx = count_axis(min_local.x(), max_local.x());
+	const int ny = count_axis(min_local.y(), max_local.y());
+	const int nz = count_axis(min_local.z(), max_local.z());
+	const float dx = (max_local.x() - min_local.x()) / static_cast<float>(nx);
+	const float dy = (max_local.y() - min_local.y()) / static_cast<float>(ny);
+	const float dz = (max_local.z() - min_local.z()) / static_cast<float>(nz);
 
 	filled->points.reserve(static_cast<std::size_t>(nx) * ny * nz);
 	for (int ix = 0; ix < nx; ++ix) {
-		const float x = min_local.x() + (ix + 0.5f) * leaf;
+		const float x = min_local.x() + (ix + 0.5f) * dx;
 		for (int iy = 0; iy < ny; ++iy) {
-			const float y = min_local.y() + (iy + 0.5f) * leaf;
+			const float y = min_local.y() + (iy + 0.5f) * dy;
 			for (int iz = 0; iz < nz; ++iz) {
-				const float z = min_local.z() + (iz + 0.5f) * leaf;
-				const Eigen::Vector4f local(x, y, z, 1.0f);
-				const Eigen::Vector4f world = pose * local;
+				const float z = min_local.z() + (iz + 0.5f) * dz;
+				const Eigen::Vector4f world = pose * Eigen::Vector4f(x, y, z, 1.0f);
 				pcl::PointXYZ pt;
 				pt.x = world.x();
 				pt.y = world.y();
@@ -163,25 +193,41 @@ pcl::PointCloud<pcl::PointXYZ>::Ptr FillPoseAlignedBox(
 	return filled;
 }
 
-float MeanHeight(
-	const pcl::PointCloud<pcl::PointXYZ>& cloud,
-	const Eigen::Vector3f& axis_n
-) {
-	if (cloud.empty()) {
-		return 0.0f;
-	}
-	Eigen::Vector4f centroid;
-	pcl::compute3DCentroid(cloud, centroid);
-	return Eigen::Vector3f(centroid.x(), centroid.y(), centroid.z()).dot(axis_n);
-}
-
 }  // namespace
 
+void StackFilterParams::Normalize() {
+	if (up_axis.squaredNorm() < 1e-12f) {
+		up_axis = camera_z_down
+			? Eigen::Vector3f(0.0f, 0.0f, -1.0f)
+			: Eigen::Vector3f(0.0f, 0.0f, 1.0f);
+	} else {
+		up_axis.normalize();
+	}
+	// Overhead / in-hand camera: +Z into the scene, so "on top" is -Z.
+	if (camera_z_down && up_axis.z() > 0.5f
+		&& std::abs(up_axis.x()) < 0.2f && std::abs(up_axis.y()) < 0.2f) {
+		up_axis = -up_axis;
+	}
+}
+
+Eigen::Vector3f StackFilterParams::ResolvedUpAxis() const {
+	StackFilterParams copy = *this;
+	copy.Normalize();
+	return copy.up_axis;
+}
+
+float StackFilterParams::MillimetreScale() const {
+	return (unit == LengthUnit::Millimeters) ? 1.0f : 1000.0f;
+}
+
 StackedObjectFilter::StackedObjectFilter(StackFilterParams params)
-	: params_(std::move(params)) {}
+	: params_(std::move(params)) {
+	params_.Normalize();
+}
 
 void StackedObjectFilter::set_params(const StackFilterParams& params) {
 	params_ = params;
+	params_.Normalize();
 }
 
 pcl::PointCloud<pcl::PointXYZ>::Ptr StackedObjectFilter::TransformModel(
@@ -206,6 +252,10 @@ const char* StackedObjectFilter::MethodName(StackFilterMethod method) {
 	return "unknown";
 }
 
+const char* StackedObjectFilter::UnitName(LengthUnit unit) {
+	return (unit == LengthUnit::Meters) ? "m" : "mm";
+}
+
 bool ParseStackFilterMethod(const std::string& name, StackFilterMethod* method) {
 	if (!method) {
 		return false;
@@ -225,14 +275,27 @@ bool ParseStackFilterMethod(const std::string& name, StackFilterMethod* method) 
 	return false;
 }
 
+bool ParseLengthUnit(const std::string& name, LengthUnit* unit) {
+	if (!unit) {
+		return false;
+	}
+	if (name == "mm" || name == "millimeter" || name == "millimetre") {
+		*unit = LengthUnit::Millimeters;
+		return true;
+	}
+	if (name == "m" || name == "meter" || name == "metre") {
+		*unit = LengthUnit::Meters;
+		return true;
+	}
+	return false;
+}
+
 std::vector<StackedObjectFilter::PreparedInstance> StackedObjectFilter::Prepare(
 	const std::vector<RegisteredInstance>& instances
 ) const {
 	std::vector<PreparedInstance> prepared;
 	prepared.reserve(instances.size());
-
-	Eigen::Vector3f axis_u, axis_v, axis_n;
-	BuildTangentFrame(params_.up_axis, &axis_u, &axis_v, &axis_n);
+	const Eigen::Vector3f axis_n = params_.ResolvedUpAxis();
 
 	for (std::size_t i = 0; i < instances.size(); ++i) {
 		PreparedInstance item;
@@ -242,15 +305,15 @@ std::vector<StackedObjectFilter::PreparedInstance> StackedObjectFilter::Prepare(
 			prepared.push_back(item);
 			continue;
 		}
-		auto world = TransformModel(*instances[i].model, instances[i].pose);
-		const float leaf = (params_.pixel_size > 0.0f) ? params_.pixel_size : 0.0f;
-		item.world_cloud = MaybeDownsample(world, leaf, params_.downsample);
+		item.world_cloud = TransformModel(*instances[i].model, instances[i].pose);
 
-		Eigen::Vector4f min_pt, max_pt;
+		Eigen::Vector4f min_pt, max_pt, centroid;
 		pcl::getMinMax3D(*item.world_cloud, min_pt, max_pt);
+		pcl::compute3DCentroid(*item.world_cloud, centroid);
 		item.min_pt = min_pt.head<3>();
 		item.max_pt = max_pt.head<3>();
-		item.mean_height = MeanHeight(*item.world_cloud, axis_n);
+		item.mean_z = centroid.z();
+		item.mean_height = Eigen::Vector3f(centroid.x(), centroid.y(), centroid.z()).dot(axis_n);
 		prepared.push_back(item);
 	}
 	return prepared;
@@ -260,24 +323,35 @@ float StackedObjectFilter::ResolveCellSize(
 	const std::vector<PreparedInstance>& prepared,
 	float requested
 ) const {
+	const float mm = params_.MillimetreScale();
+	const float min_cell = 0.2f * mm;       // 0.2 mm
+	const float fallback = 2.5f * mm;       // 2.5 mm
 	if (requested > 0.0f) {
-		return requested;
+		return std::max(requested, min_cell);
 	}
-	double sum_diag = 0.0;
+	double sum_xy = 0.0;
 	int count = 0;
 	for (const auto& item : prepared) {
 		if (!item.world_cloud || item.world_cloud->empty()) {
 			continue;
 		}
-		const Eigen::Vector3f extent = item.max_pt - item.min_pt;
-		sum_diag += extent.norm();
+		const float dx = item.max_pt.x() - item.min_pt.x();
+		const float dy = item.max_pt.y() - item.min_pt.y();
+		sum_xy += std::sqrt(dx * dx + dy * dy);
 		++count;
 	}
 	if (count == 0) {
-		return 0.005f;
+		return fallback;
 	}
-	// Mech-Vision default: cube side = 2% of the point-cloud diagonal.
-	return static_cast<float>(std::max(1e-4, 0.02 * (sum_diag / count)));
+	// Mech-Vision: ~2% of the XY diagonal of the template.
+	return std::max(min_cell, static_cast<float>(0.02 * (sum_xy / count)));
+}
+
+float StackedObjectFilter::ResolveHeightMargin() const {
+	if (params_.height_margin > 0.0f) {
+		return params_.height_margin;
+	}
+	return 3.0f * params_.MillimetreScale();
 }
 
 void StackedObjectFilter::FinalizeKeepFlags(StackFilterOutput* output) const {
@@ -299,19 +373,31 @@ void StackedObjectFilter::FinalizeKeepFlags(StackFilterOutput* output) const {
 StackFilterOutput StackedObjectFilter::ScoreProjection2D(
 	const std::vector<RegisteredInstance>& instances,
 	const std::vector<PreparedInstance>& prepared,
-	float cell_size
+	float cell_size,
+	float height_margin
 ) const {
 	StackFilterOutput output;
 	output.instances.resize(instances.size());
 
 	Eigen::Vector3f axis_u, axis_v, axis_n;
-	BuildTangentFrame(params_.up_axis, &axis_u, &axis_v, &axis_n);
+	BuildTangentFrame(params_.ResolvedUpAxis(), &axis_u, &axis_v, &axis_n);
 
 	std::vector<HeightMap> maps(prepared.size());
+	HeightMap global_max;
 	for (std::size_t i = 0; i < prepared.size(); ++i) {
-		if (prepared[i].world_cloud) {
-			maps[i] = BuildHeightMap(
-				*prepared[i].world_cloud, axis_u, axis_v, axis_n, cell_size);
+		if (!prepared[i].world_cloud) {
+			continue;
+		}
+		auto raw = BuildHeightMap(
+			*prepared[i].world_cloud, axis_u, axis_v, axis_n, cell_size);
+		maps[i] = DilateHeightMap(raw, params_.dilation_radius);
+		for (const auto& cell : maps[i]) {
+			auto it = global_max.find(cell.first);
+			if (it == global_max.end()) {
+				global_max.emplace(cell.first, cell.second);
+			} else if (cell.second > it->second) {
+				it->second = cell.second;
+			}
 		}
 	}
 
@@ -322,24 +408,13 @@ StackFilterOutput StackedObjectFilter::ScoreProjection2D(
 		result.score = instances[i].score;
 		result.pose = instances[i].pose;
 		result.mean_height = prepared[i].mean_height;
+		result.mean_z = prepared[i].mean_z;
 		result.occupied_cells = static_cast<int>(maps[i].size());
 
 		int pressed = 0;
 		for (const auto& cell : maps[i]) {
-			bool covered = false;
-			for (std::size_t j = 0; j < maps.size() && !covered; ++j) {
-				if (j == i) {
-					continue;
-				}
-				auto it = maps[j].find(cell.first);
-				if (it == maps[j].end()) {
-					continue;
-				}
-				if (it->second > cell.second + params_.height_margin) {
-					covered = true;
-				}
-			}
-			if (covered) {
+			auto it = global_max.find(cell.first);
+			if (it != global_max.end() && it->second > cell.second + height_margin) {
 				++pressed;
 			}
 		}
@@ -356,7 +431,8 @@ StackFilterOutput StackedObjectFilter::ScoreProjection2D(
 
 StackFilterOutput StackedObjectFilter::ScoreBoundingBox3D(
 	const std::vector<RegisteredInstance>& instances,
-	const std::vector<PreparedInstance>& prepared
+	const std::vector<PreparedInstance>& prepared,
+	float height_margin
 ) const {
 	const float voxel = ResolveCellSize(
 		prepared,
@@ -384,37 +460,40 @@ StackFilterOutput StackedObjectFilter::ScoreBoundingBox3D(
 		}
 	}
 
-	return ScoreProjection2D(solid, solid_prep, voxel);
+	return ScoreProjection2D(solid, solid_prep, voxel, height_margin);
 }
 
 StackFilterOutput StackedObjectFilter::ScoreHighestLayer(
 	const std::vector<RegisteredInstance>& instances,
-	const std::vector<PreparedInstance>& prepared
+	const std::vector<PreparedInstance>& prepared,
+	float cell_size,
+	float height_margin
 ) const {
-	const float cell_size = ResolveCellSize(prepared, params_.pixel_size);
-	auto output = ScoreProjection2D(instances, prepared, cell_size);
+	auto output = ScoreProjection2D(instances, prepared, cell_size, height_margin);
 
 	float max_height = -std::numeric_limits<float>::infinity();
 	std::vector<float> extents;
 	extents.reserve(prepared.size());
+	const Eigen::Vector3f axis_n = params_.ResolvedUpAxis();
 	for (const auto& item : prepared) {
 		max_height = std::max(max_height, item.mean_height);
-		const float extent = (item.max_pt - item.min_pt).norm();
+		const float extent = std::abs((item.max_pt - item.min_pt).dot(axis_n.cwiseAbs()));
 		if (extent > 0.0f) {
-			extents.push_back(item.max_pt.z() - item.min_pt.z());
+			extents.push_back(std::abs(item.max_pt.z() - item.min_pt.z()));
 		}
 	}
 
+	const float mm = params_.MillimetreScale();
 	float thickness = params_.layer_thickness;
 	if (thickness <= 0.0f) {
 		if (extents.empty()) {
-			thickness = 0.05f;
+			thickness = 20.0f * mm;
 		} else {
 			std::nth_element(
 				extents.begin(),
 				extents.begin() + static_cast<std::ptrdiff_t>(extents.size() / 2),
 				extents.end());
-			thickness = std::max(extents[extents.size() / 2], 1e-3f);
+			thickness = std::max(extents[extents.size() / 2], 1.0f * mm);
 		}
 	}
 
@@ -440,18 +519,22 @@ StackFilterOutput StackedObjectFilter::ScoreHighestLayer(
 StackFilterOutput StackedObjectFilter::Filter(
 	const std::vector<RegisteredInstance>& instances
 ) const {
-	const auto prepared = Prepare(instances);
+	auto prepared = Prepare(instances);
+	const float cell = ResolveCellSize(prepared, params_.pixel_size);
+	const float margin = ResolveHeightMargin();
+	if (params_.downsample) {
+		for (auto& item : prepared) {
+			item.world_cloud = MaybeDownsample(item.world_cloud, cell, true);
+		}
+	}
 	switch (params_.method) {
 	case StackFilterMethod::BoundingBox3D:
-		return ScoreBoundingBox3D(instances, prepared);
+		return ScoreBoundingBox3D(instances, prepared, margin);
 	case StackFilterMethod::HighestLayer:
-		return ScoreHighestLayer(instances, prepared);
+		return ScoreHighestLayer(instances, prepared, cell, margin);
 	case StackFilterMethod::Projection2D:
 	default:
-		return ScoreProjection2D(
-			instances,
-			prepared,
-			ResolveCellSize(prepared, params_.pixel_size));
+		return ScoreProjection2D(instances, prepared, cell, margin);
 	}
 }
 

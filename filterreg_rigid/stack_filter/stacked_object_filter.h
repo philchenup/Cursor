@@ -10,59 +10,69 @@
 
 namespace poser {
 
-// Grasp-time stacking filter: keep instances that are not pressed down by
-// another registered object. Input is a template cloud (model frame) plus a
-// rigid pose per detection — the same contract used by Mech-Vision
-// "Remove Overlapped Objects" and TransferTech "Extract Top-layer Point Clouds".
+// Grasp-time stacking filter: keep instances that are not pressed by another
+// registered object. Input is a template cloud (model frame) plus a rigid pose
+// per detection.
 //
-// Units are meters. Default "up" is +Z.
+// Defaults match eye-in-hand / overhead camera bin picking:
+//   - coordinates in millimetres
+//   - camera +Z points into the scene (down), so "up"/graspable is -Z
+//     (smaller camera Z = closer to the camera = on top)
 
 enum class StackFilterMethod {
-	// Orthographic 2D occupancy along the up-axis.
-	// overlap_ratio = area(cells with a higher object) / area(this object).
-	// Recommended after surface-template 3D matching (Mech-Vision Projection 2D).
+	// Orthographic occupancy in the plane perpendicular to up_axis.
+	// overlap_ratio = area(cells with a closer/higher object) / area(this object).
 	Projection2D = 0,
 
-	// Fill each pose-aligned AABB with voxels and apply the same "something
-	// above" test. Better for sparse/edge templates (Mech-Vision Bounding Box 3D).
+	// Fill each pose-aligned AABB with voxels, then the same coverage test.
 	BoundingBox3D = 1,
 
-	// Global height gate: keep objects whose mean height is within
-	// layer_thickness/2 of the highest instance (TransferTech PointsUpJudge).
+	// Projection test plus a global height gate (TransferTech PointsUpJudge).
 	HighestLayer = 2,
+};
+
+enum class LengthUnit {
+	Millimeters = 0,
+	Meters = 1,
 };
 
 struct StackFilterParams {
 	StackFilterMethod method = StackFilterMethod::Projection2D;
+	LengthUnit unit = LengthUnit::Millimeters;
 
-	// Drop an instance when overlap_ratio exceeds this value. Default 0.30
-	// matches Mech-Vision / TransferTech.
+	// Camera looks along +Z into the scene. When true, up_axis becomes -Z
+	// unless the caller already set a non-+Z up_axis.
+	bool camera_z_down = true;
+
 	float overlap_ratio_threshold = 0.30f;
 
-	// Orthographic cell size (m). <= 0 means auto: 2% of the mean cloud diagonal.
+	// Orthographic cell size in the same unit as the cloud. <= 0 = auto
+	// (2% of mean XY diagonal; ~2.5 mm for a ~120 mm flange).
 	float pixel_size = 0.0f;
 
-	// Voxel size for BoundingBox3D (m). <= 0 means auto (same rule as pixel_size).
 	float voxel_size = 0.0f;
 
-	// A column counts as pressed only if another instance is higher by this
-	// margin. Absorbs contact between stacked faces and pose noise.
-	float height_margin = 0.003f;
+	// A cell is pressed only if another instance is closer/higher by more
+	// than this. <= 0 = auto (3 mm or 0.003 m).
+	float height_margin = 0.0f;
 
-	// Gravity / "up" direction in the pose frame (usually the robot/world Z).
-	Eigen::Vector3f up_axis = Eigen::Vector3f::UnitZ();
+	// Direction of "on top" / toward the gripper. Default -Z (camera down).
+	Eigen::Vector3f up_axis = Eigen::Vector3f(0.0f, 0.0f, -1.0f);
 
-	// HighestLayer only. <= 0 means auto: median instance height extent.
 	float layer_thickness = 0.0f;
-
-	// Downsample transformed clouds with pcl::VoxelGrid before scoring.
 	bool downsample = true;
 
-	// AABB expansion along the pose axes (BoundingBox3D). Z defaults larger
-	// so a thin surface cloud still has volume, matching Mech-Vision.
+	// Dilate each instance's 2D occupancy by this many cells so ring holes
+	// and sparse templates still overlap stably. 1 is enough for flanges.
+	int dilation_radius = 1;
+
 	float expand_x = 1.0f;
 	float expand_y = 1.0f;
 	float expand_z = 3.0f;
+
+	void Normalize();
+	Eigen::Vector3f ResolvedUpAxis() const;
+	float MillimetreScale() const;
 };
 
 struct RegisteredInstance {
@@ -81,7 +91,8 @@ struct InstanceFilterResult {
 	std::string id;
 	float score = 1.0f;
 	float overlap_ratio = 0.0f;
-	float mean_height = 0.0f;
+	float mean_height = 0.0f;  // along up_axis; larger = closer to gripper
+	float mean_z = 0.0f;       // raw camera/world Z of the centroid
 	int occupied_cells = 0;
 	int pressed_cells = 0;
 	bool kept = true;
@@ -102,12 +113,12 @@ public:
 
 	StackFilterOutput Filter(const std::vector<RegisteredInstance>& instances) const;
 
-	// Transform a model-frame template by a 4x4 pose (PCL transformPointCloud).
 	static pcl::PointCloud<pcl::PointXYZ>::Ptr TransformModel(
 		const pcl::PointCloud<pcl::PointXYZ>& model,
 		const Eigen::Matrix4f& pose);
 
 	static const char* MethodName(StackFilterMethod method);
+	static const char* UnitName(LengthUnit unit);
 
 private:
 	struct PreparedInstance {
@@ -116,6 +127,7 @@ private:
 		Eigen::Vector3f min_pt = Eigen::Vector3f::Zero();
 		Eigen::Vector3f max_pt = Eigen::Vector3f::Zero();
 		float mean_height = 0.0f;
+		float mean_z = 0.0f;
 	};
 
 	std::vector<PreparedInstance> Prepare(
@@ -124,15 +136,19 @@ private:
 	StackFilterOutput ScoreProjection2D(
 		const std::vector<RegisteredInstance>& instances,
 		const std::vector<PreparedInstance>& prepared,
-		float cell_size) const;
+		float cell_size,
+		float height_margin) const;
 
 	StackFilterOutput ScoreBoundingBox3D(
 		const std::vector<RegisteredInstance>& instances,
-		const std::vector<PreparedInstance>& prepared) const;
+		const std::vector<PreparedInstance>& prepared,
+		float height_margin) const;
 
 	StackFilterOutput ScoreHighestLayer(
 		const std::vector<RegisteredInstance>& instances,
-		const std::vector<PreparedInstance>& prepared) const;
+		const std::vector<PreparedInstance>& prepared,
+		float cell_size,
+		float height_margin) const;
 
 	void FinalizeKeepFlags(StackFilterOutput* output) const;
 
@@ -140,10 +156,12 @@ private:
 		const std::vector<PreparedInstance>& prepared,
 		float requested) const;
 
+	float ResolveHeightMargin() const;
+
 	StackFilterParams params_;
 };
 
-// Parse CLI / JSON method names: projection_2d, bounding_box_3d, highest_layer.
 bool ParseStackFilterMethod(const std::string& name, StackFilterMethod* method);
+bool ParseLengthUnit(const std::string& name, LengthUnit* unit);
 
 }  // namespace poser

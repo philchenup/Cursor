@@ -34,7 +34,7 @@ cmake --build . -j
 # point-to-plane
 ./rigid_pt2pl ./cloud_0.pcd ./cloud_1.pcd
 
-# 堆叠过滤（需 PCL）：模板点云 + 配准位姿 → 保留未被压住的最上层目标
+# 堆叠过滤（需 PCL）：毫米点云 + 相机 Z 朝下，模板 + 配准位姿 → 最上层未压叠目标
 ./stack_filter --self-test
 ./stack_filter --demo --out-dir .
 # 详见 apps/stack_filter/README.md
