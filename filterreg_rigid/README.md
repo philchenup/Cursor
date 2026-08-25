@@ -34,9 +34,9 @@ cmake --build . -j
 # point-to-plane
 ./rigid_pt2pl ./cloud_0.pcd ./cloud_1.pcd
 
-# 堆叠过滤（需 PCL）：毫米点云列表，相机 Z 朝下，重叠阈值 0.1
+# 堆叠过滤（需 PCL）：原点沿 +Z 顶层过滤，Projection2D / BoundingBox3D，VTK 可视化
 ./stack_filter_example
-# 三个文件：stack_filter/stacked_object_filter.h|.cpp 与 stack_filter/example.cpp
+# stack_filter/stacked_object_filter.h|.cpp 与 stack_filter/example.cpp
 ```
 
 运行结束后会写出 `matched_live.ply` / `matched_observation.ply`（替代原 PCL 可视化窗口）。

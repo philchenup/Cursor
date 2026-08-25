@@ -7,17 +7,23 @@
 
 namespace poser {
 
-// Camera-frame clouds in millimetres, camera +Z down (smaller Z = closer).
-// Keep only the global top layer, and only those not pressed from above.
-// A lower-layer object is never graspable, even if nothing sits on it.
+// Viewpoint is the origin, looking along +Z (millimetres).
+// Smaller Z is closer to the camera and counts as the top layer.
+// An object is kept only if it is on that top layer and not stacked.
+
+enum class StackFilterMethod {
+	Projection2D = 0,
+	BoundingBox3D = 1,
+};
 
 struct StackFilterResult {
-	std::vector<int> kept;              // top-layer, uncovered; near-camera first
-	std::vector<float> overlap_ratio;   // XY fraction covered by a closer cloud
+	std::vector<int> kept;             // top-layer, not stacked; closer first
+	std::vector<float> overlap_ratio;  // stacked XY/volume fraction in [0, 1]
 };
 
 StackFilterResult FilterStacked(
 	const std::vector<pcl::PointCloud<pcl::PointXYZ>>& clouds,
+	StackFilterMethod method = StackFilterMethod::Projection2D,
 	float overlap_threshold = 0.1f);
 
 }  // namespace poser
