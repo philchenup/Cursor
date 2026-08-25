@@ -52,7 +52,7 @@ HeightMap ProjectFromOrigin(const pcl::PointCloud<pcl::PointXYZ>& cloud) {
 		const Cell key{
 			static_cast<int>(std::floor(p.x * inv)),
 			static_cast<int>(std::floor(p.y * inv))};
-		// Origin looks along +Z: closer to origin has smaller Z, larger height.
+		// From -Z toward +Z: smaller Z is closer, so height = -Z.
 		const float height = -p.z;
 		auto it = map.find(key);
 		if (it == map.end()) {

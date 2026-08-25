@@ -89,11 +89,11 @@ void AddClouds(
 }  // namespace
 
 int main() {
-	// Origin looks along +Z. Smaller Z is the top layer.
+	// Look from -Z toward +Z. Smaller Z is closer / top layer.
 	// 0 lower, stacked under 1 -> DROP
 	// 1 top layer              -> KEEP
 	// 2 top layer, free        -> KEEP
-	// 3 lower layer, free      -> DROP (cannot grasp)
+	// 3 lower layer, free      -> DROP
 	std::vector<pcl::PointCloud<pcl::PointXYZ>> clouds;
 	clouds.push_back(MakePlate(0.f, 0.f, 340.f, 80.f, 8.f, 3.f));
 	clouds.push_back(MakePlate(0.f, 0.f, 328.f, 80.f, 8.f, 3.f));
@@ -107,7 +107,7 @@ int main() {
 	PrintResult("Projection2D", r2d, clouds.size());
 	PrintResult("BoundingBox3D", r3d, clouds.size());
 
-	pcl::visualization::PCLVisualizer viewer("origin +Z  green=KEEP  red=DROP");
+	pcl::visualization::PCLVisualizer viewer("-Z -> +Z  green=KEEP  red=DROP");
 	int vp_2d = 0;
 	int vp_3d = 0;
 	viewer.createViewPort(0.0, 0.0, 0.5, 1.0, vp_2d);
@@ -123,7 +123,8 @@ int main() {
 	AddClouds(viewer, clouds, r3d, vp_3d, "b3d_");
 
 	viewer.initCameraParameters();
-	viewer.setCameraPosition(-180.0, -480.0, 120.0, 120.0, 0.0, 335.0, 0.0, 0.0, -1.0);
+	// Camera on the -Z side, looking toward +Z.
+	viewer.setCameraPosition(120.0, -220.0, -80.0, 120.0, 0.0, 335.0, 0.0, 1.0, 0.0);
 	viewer.spinOnce(100);
 	viewer.saveScreenshot("stack_filter_vis.png");
 	while (!viewer.wasStopped()) {

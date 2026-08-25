@@ -7,9 +7,9 @@
 
 namespace poser {
 
-// Viewpoint is the origin, looking along +Z (millimetres).
-// Smaller Z is closer to the camera and counts as the top layer.
-// An object is kept only if it is on that top layer and not stacked.
+// Millimetres. Viewpoint is on the -Z side, looking toward +Z.
+// Depth along the view is Z: smaller Z is closer / top layer.
+// Keep only top-layer objects that are not stacked.
 
 enum class StackFilterMethod {
 	Projection2D = 0,

@@ -34,7 +34,7 @@ cmake --build . -j
 # point-to-plane
 ./rigid_pt2pl ./cloud_0.pcd ./cloud_1.pcd
 
-# 堆叠过滤（需 PCL）：原点沿 +Z 顶层过滤，Projection2D / BoundingBox3D，VTK 可视化
+# 堆叠过滤（需 PCL）：从 −Z 朝 +Z 看，Projection2D / BoundingBox3D，VTK 可视化
 ./stack_filter_example
 # stack_filter/stacked_object_filter.h|.cpp 与 stack_filter/example.cpp
 ```
