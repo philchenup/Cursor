@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <unordered_map>
-#include <utility>
+#include <vector>
 
 namespace poser {
 namespace {
@@ -26,6 +28,13 @@ using HeightMap = std::unordered_map<Cell, float, CellHash>;
 
 constexpr float kCellSizeMm = 2.5f;
 constexpr float kHeightMarginMm = 3.0f;
+constexpr float kMinLayerBandMm = 5.0f;
+
+struct CloudStats {
+	float min_z = 0.0f;
+	float max_z = 0.0f;
+	bool valid = false;
+};
 
 HeightMap ProjectXY(const pcl::PointCloud<pcl::PointXYZ>& cloud) {
 	HeightMap map;
@@ -41,8 +50,7 @@ HeightMap ProjectXY(const pcl::PointCloud<pcl::PointXYZ>& cloud) {
 		const Cell key{
 			static_cast<int>(std::floor(p.x * inv)),
 			static_cast<int>(std::floor(p.y * inv))};
-		// Camera +Z down: height toward the camera is -Z.
-		const float height = -p.z;
+		const float height = -p.z;  // closer to camera = larger height
 		auto it = map.find(key);
 		if (it == map.end()) {
 			map.emplace(key, height);
@@ -53,6 +61,30 @@ HeightMap ProjectXY(const pcl::PointCloud<pcl::PointXYZ>& cloud) {
 	return map;
 }
 
+CloudStats ComputeStats(const pcl::PointCloud<pcl::PointXYZ>& cloud) {
+	CloudStats s;
+	s.min_z = std::numeric_limits<float>::infinity();
+	s.max_z = -std::numeric_limits<float>::infinity();
+	for (const auto& p : cloud.points) {
+		if (!std::isfinite(p.z)) {
+			continue;
+		}
+		s.min_z = std::min(s.min_z, p.z);
+		s.max_z = std::max(s.max_z, p.z);
+		s.valid = true;
+	}
+	return s;
+}
+
+float MedianPositive(std::vector<float> values) {
+	if (values.empty()) {
+		return kMinLayerBandMm * 2.0f;
+	}
+	const auto mid = values.begin() + static_cast<std::ptrdiff_t>(values.size() / 2);
+	std::nth_element(values.begin(), mid, values.end());
+	return std::max(*mid, kMinLayerBandMm);
+}
+
 }  // namespace
 
 StackFilterResult FilterStacked(
@@ -61,9 +93,19 @@ StackFilterResult FilterStacked(
 ) {
 	const std::size_t n = clouds.size();
 	std::vector<HeightMap> maps(n);
+	std::vector<CloudStats> stats(n);
 	HeightMap global_max;
+	std::vector<float> thicknesses;
+	thicknesses.reserve(n);
+
+	float z_top = std::numeric_limits<float>::infinity();  // closest-to-camera min-z
 	for (std::size_t i = 0; i < n; ++i) {
 		maps[i] = ProjectXY(clouds[i]);
+		stats[i] = ComputeStats(clouds[i]);
+		if (stats[i].valid) {
+			z_top = std::min(z_top, stats[i].min_z);
+			thicknesses.push_back(std::max(stats[i].max_z - stats[i].min_z, kMinLayerBandMm));
+		}
 		for (const auto& cell : maps[i]) {
 			auto it = global_max.find(cell.first);
 			if (it == global_max.end()) {
@@ -74,18 +116,19 @@ StackFilterResult FilterStacked(
 		}
 	}
 
+	// Top layer = objects whose nearest point is within half a part-thickness
+	// of the globally closest object. Anything deeper is a lower layer.
+	const float layer_band = 0.5f * MedianPositive(thicknesses);
+
 	StackFilterResult out;
 	out.overlap_ratio.assign(n, 0.0f);
-	std::vector<float> mean_height(n, 0.0f);
 
 	for (std::size_t i = 0; i < n; ++i) {
-		if (maps[i].empty()) {
+		if (maps[i].empty() || !stats[i].valid) {
 			continue;
 		}
 		int pressed = 0;
-		double height_sum = 0.0;
 		for (const auto& cell : maps[i]) {
-			height_sum += cell.second;
 			auto it = global_max.find(cell.first);
 			if (it != global_max.end() && it->second > cell.second + kHeightMarginMm) {
 				++pressed;
@@ -93,14 +136,16 @@ StackFilterResult FilterStacked(
 		}
 		out.overlap_ratio[i] =
 			static_cast<float>(pressed) / static_cast<float>(maps[i].size());
-		mean_height[i] = static_cast<float>(height_sum / maps[i].size());
-		if (out.overlap_ratio[i] <= overlap_threshold) {
+
+		const bool on_top_layer = stats[i].min_z <= z_top + layer_band;
+		const bool uncovered = out.overlap_ratio[i] <= overlap_threshold;
+		if (on_top_layer && uncovered) {
 			out.kept.push_back(static_cast<int>(i));
 		}
 	}
 
 	std::sort(out.kept.begin(), out.kept.end(), [&](int a, int b) {
-		return mean_height[a] > mean_height[b];
+		return stats[a].min_z < stats[b].min_z;
 	});
 	return out;
 }

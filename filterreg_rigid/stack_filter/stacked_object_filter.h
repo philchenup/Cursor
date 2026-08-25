@@ -7,13 +7,13 @@
 
 namespace poser {
 
-// Input clouds are already in the camera/world frame, millimetres.
-// Camera +Z points into the scene (down): smaller Z is closer / on top.
-// overlap_ratio = XY area covered by a closer cloud / this cloud's XY area.
+// Camera-frame clouds in millimetres, camera +Z down (smaller Z = closer).
+// Keep only the global top layer, and only those not pressed from above.
+// A lower-layer object is never graspable, even if nothing sits on it.
 
 struct StackFilterResult {
-	std::vector<int> kept;              // uncovered top-layer indices, near-camera first
-	std::vector<float> overlap_ratio;   // one value per input cloud in [0, 1]
+	std::vector<int> kept;              // top-layer, uncovered; near-camera first
+	std::vector<float> overlap_ratio;   // XY fraction covered by a closer cloud
 };
 
 StackFilterResult FilterStacked(
