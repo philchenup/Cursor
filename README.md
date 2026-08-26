@@ -10,6 +10,17 @@
 AIS_Shape* ais = /* 已有对象 */;
 AIS_Shape* scaled = ScaleAISShapeBy1000(ais);
 
-// 推荐用 Handle 接管返回值，避免泄漏
 Handle(AIS_Shape) scaledHandle = ScaleAISShapeBy1000(ais);
 ```
+
+## JAKA Zu12 轨迹跟踪
+
+机械臂已登录并使能、JAKA SDK 与 RL 已集成时，直接调用：
+
+```cpp
+#include "JakaZu12Trajectory.h"
+
+errno_t ret = runJakaZu12Trajectory(robot, traj);
+```
+
+`traj` 为已经按 8ms 加密过的关节轨迹（每个点 6 维，单位 rad）。函数不再二次插值，按点以 `servo_j(ABS, 1)` 直接下发。
