@@ -23,4 +23,4 @@ Handle(AIS_Shape) scaledHandle = ScaleAISShapeBy1000(ais);
 errno_t ret = runJakaZu12Trajectory(robot, traj);
 ```
 
-`traj` 为 `std::vector<rl::math::Vector>`，每个点 6 维关节角（rad）。函数按 JAKA 官方 8ms `servo_j` 周期线性加密后连续下发，并在进入伺服前设置 `servo_move_use_joint_LPF(0.5)`。
+`traj` 为已经按 8ms 加密过的关节轨迹（每个点 6 维，单位 rad）。函数不再二次插值，按点以 `servo_j(ABS, 1)` 直接下发。

@@ -8,8 +8,6 @@
 namespace {
 
 constexpr int kDof = 6;
-constexpr double kPeriodS = 0.008;
-constexpr double kMaxVel = 1.0; // rad/s，低于伺服 180 deg/s 硬限，利于平滑
 constexpr double kApproachTol = 0.02;
 
 JointValue toJoint(const rl::math::Vector& q)
@@ -56,6 +54,7 @@ errno_t runJakaZu12Trajectory(JAKAZuRobot& robot, const std::vector<rl::math::Ve
     }
 
     const JointValue first = toJoint(traj.front());
+    std::size_t start = 0;
     if (maxAbsDiff(current, first) > kApproachTol)
     {
         BOOL in_servo = FALSE;
@@ -69,42 +68,31 @@ errno_t runJakaZu12Trajectory(JAKAZuRobot& robot, const std::vector<rl::math::Ve
         {
             return ret;
         }
+        start = 1;
     }
 
-    robot.servo_move_use_joint_LPF(0.5);
+    robot.servo_move_use_none_filter();
     ret = robot.servo_move_enable(TRUE);
     if (ret != ERR_SUCC)
     {
         return ret;
     }
 
-    JointValue prev = first;
     auto tick = std::chrono::steady_clock::now();
     const auto period = std::chrono::milliseconds(8);
 
-    for (std::size_t n = 1; n < traj.size(); ++n)
+    for (std::size_t n = start; n < traj.size(); ++n)
     {
-        const JointValue target = toJoint(traj[n]);
-        const int steps = std::max(1, static_cast<int>(std::ceil(maxAbsDiff(prev, target) / kMaxVel / kPeriodS)));
-        for (int k = 1; k <= steps; ++k)
+        const JointValue cmd = toJoint(traj[n]);
+        ret = robot.servo_j(&cmd, ABS, 1);
+        if (ret != ERR_SUCC)
         {
-            const double s = static_cast<double>(k) / static_cast<double>(steps);
-            JointValue cmd{};
-            for (int i = 0; i < kDof; ++i)
-            {
-                cmd.jVal[i] = prev.jVal[i] + (target.jVal[i] - prev.jVal[i]) * s;
-            }
-            ret = robot.servo_j(&cmd, ABS, 1);
-            if (ret != ERR_SUCC)
-            {
-                robot.motion_abort();
-                robot.servo_move_enable(FALSE);
-                return ret;
-            }
-            tick += period;
-            std::this_thread::sleep_until(tick);
+            robot.motion_abort();
+            robot.servo_move_enable(FALSE);
+            return ret;
         }
-        prev = target;
+        tick += period;
+        std::this_thread::sleep_until(tick);
     }
 
     robot.servo_move_enable(FALSE);
