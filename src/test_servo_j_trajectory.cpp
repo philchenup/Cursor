@@ -163,6 +163,33 @@ int main()
 		}
 	}
 
+	// 9) float 关节接口：未加密 -> 8 ms 加密
+	{
+		std::vector<std::vector<float> > sparse(2, std::vector<float>(6, 0.0f));
+		sparse[1][0] = 30.0f;
+		sparse[1][1] = -12.0f;
+
+		const std::vector<std::vector<float> > dense = servo_j::densifyJoints8ms(sparse);
+		expect(dense.size() > sparse.size(), "float densify adds samples");
+		expectNear(dense.front()[0], 0.0, 1e-5, "float starts at first waypoint");
+		expectNear(dense.back()[0], 30.0, 1e-4, "float ends at last waypoint");
+		expectNear(dense.back()[1], -12.0, 1e-4, "float joint1 end");
+
+		const double dqHard = 180.0 * 0.008;
+		for (std::size_t k = 1; k < dense.size(); ++k)
+		{
+			double dq = 0.0;
+			for (std::size_t d = 0; d < dense[k].size(); ++d)
+			{
+				dq = std::max(dq, static_cast<double>(std::abs(dense[k][d] - dense[k - 1][d])));
+			}
+			expect(dq <= dqHard * 1.001, "float step <= 1.44 deg");
+		}
+
+		const std::vector<std::vector<float> > empty = servo_j::densifyJoints8ms(std::vector<std::vector<float> >());
+		expect(empty.empty(), "empty input stays empty");
+	}
+
 	if (gFailures == 0)
 	{
 		std::cout << "All servo_j trajectory tests passed." << std::endl;

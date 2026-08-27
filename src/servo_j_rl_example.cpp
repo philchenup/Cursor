@@ -8,7 +8,14 @@
  *   steps = ceil(distance(i, j) / delta) 只保证显示间距，
  *   与 servo_j 的 8 ms 周期、180 deg/s 单轴限速无关。
  *
- * 用法：路点为弧度时用 Params::forRadianPath()；发给 JAKA 前再转成度。
+ * 规划结果转成 std::vector<std::vector<float>> 后，直接调用：
+ *
+ *	std::vector<std::vector<float> > sparse = toFloatTraj(path); // 未加密路点，单位为度
+ *	std::vector<std::vector<float> > traj = servo_j::densifyJoints8ms(sparse);
+ *	emit planningFinished(traj, plannerDuration);
+ *
+ * 若 toFloatTraj 仍是弧度：
+ *	traj = servo_j::densifyJoints8ms(sparse, servo_j::Params::forRadianPath());
  */
 
 #if defined(SERVO_J_RL_SNIPPET)
@@ -31,22 +38,14 @@ std::vector<std::vector<float> > toJakaDegreeTrajFromRl(const rl::plan::VectorLi
 
 void Thread::interpolateForServoJ(const rl::plan::VectorList& path)
 {
-	const servo_j::Params params = servo_j::Params::forRadianPath(90.0, 400.0);
-
-	rl::plan::VectorList interplotPath = servo_j::densifyPath(
-		path,
-		MainWindow::instance()->model,
-		params,
-		this->running);
-
-	this->drawConfigurationPath(interplotPath);
+	this->drawConfigurationPath(path);
 
 	std::chrono::steady_clock::time_point stop = std::chrono::steady_clock::now();
 	double plannerDuration =
 		std::chrono::duration_cast<std::chrono::duration<double> >(stop - start).count() * 1000.0;
 
-	// 规划器内部是弧度；JAKA servo_j 的 JointValue 是角度
-	std::vector<std::vector<float> > traj = toJakaDegreeTrajFromRl(interplotPath);
+	std::vector<std::vector<float> > sparse = toFloatTraj(path); // 未加密，单位须为度
+	std::vector<std::vector<float> > traj = servo_j::densifyJoints8ms(sparse);
 	emit planningFinished(traj, plannerDuration);
 }
 

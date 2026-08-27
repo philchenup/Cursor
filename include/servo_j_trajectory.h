@@ -256,6 +256,42 @@ inline std::vector<std::vector<double> > densify(
 	return out;
 }
 
+/**
+ * 按 8 ms 周期加密关节轨迹（对外主接口）。
+ *
+ * @param joints 未加密路点。每个内层 vector 是一组绝对关节角。
+ *               默认按角度（deg）解释，与 JAKA JointValue 一致。
+ * @param params 速度/加速度约束。路点为角度用 Params::forDegreePath()；
+ *               若 toFloatTraj 仍是弧度，传入 Params::forRadianPath()。
+ * @return 8 ms 等间隔、段间停稳梯形加减速后的绝对关节角，单位与输入相同。
+ */
+inline std::vector<std::vector<float> > densifyJoints8ms(
+	const std::vector<std::vector<float> >& joints,
+	const Params& params)
+{
+	std::vector<std::vector<double> > waypoints;
+	waypoints.reserve(joints.size());
+	for (std::size_t i = 0; i < joints.size(); ++i)
+	{
+		waypoints.push_back(std::vector<double>(joints[i].begin(), joints[i].end()));
+	}
+
+	const std::vector<std::vector<double> > dense = densify(waypoints, params);
+
+	std::vector<std::vector<float> > out;
+	out.reserve(dense.size());
+	for (std::size_t i = 0; i < dense.size(); ++i)
+	{
+		out.push_back(std::vector<float>(dense[i].begin(), dense[i].end()));
+	}
+	return out;
+}
+
+inline std::vector<std::vector<float> > densifyJoints8ms(const std::vector<std::vector<float> >& joints)
+{
+	return densifyJoints8ms(joints, Params::forDegreePath());
+}
+
 /** 弧度轨迹转为 JAKA JointValue 所用的角度。 */
 inline std::vector<std::vector<float> > toJakaDegreeTraj(const std::vector<std::vector<double> >& pathRad)
 {
