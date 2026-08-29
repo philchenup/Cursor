@@ -290,7 +290,9 @@ errno_t JAKAZU12::runTrajectoryPoint(const std::vector<std::vector<float>>& m_pa
     const std::vector<std::vector<float>> pathCopy = m_path;
 
     std::thread([=]() {
-        errno_t ret = m_robot.servo_move_use_joint_NLF(10, 4, 4);
+        // NLF 单位是 °/s、°/s²、°/s³。必须高于 densifyJoints 的巡航速度，否则会把轨迹再削慢。
+        // 80/180/720 接近 JAKA 文档默认值，让速度由插补梯形决定。
+        errno_t ret = m_robot.servo_move_use_joint_NLF(80, 180, 720);
         ret = m_robot.servo_move_enable(TRUE);
         if (ret != ERR_SUCC) {
             QMetaObject::invokeMethod(this, [=]() {
@@ -731,9 +733,13 @@ JointValue JAKAZU12::toJoint(const std::vector<float>& joint_vec) {
 inline std::vector<std::vector<float>> JAKAZU12::densifyJoints(const std::vector<std::vector<float>>& joints)
  {
      const double dt = 0.008;                          // s
-     const double maxVel = 4.0 * M_PI / 180.0;        // rad/s（低于 180 deg/s 硬限）
-     const double maxAcc = 2.0;       // rad/s^2
-     const double hardVel = 2.0;      // rad/s
+     // 默认 m_globalSpeed=5 → 40 deg/s（原先写死 4 deg/s）。上限 90，避开 180 deg/s 硬限。
+     double maxVelDeg = m_globalSpeed * 8.0;
+     if (maxVelDeg < 20.0) maxVelDeg = 20.0;
+     if (maxVelDeg > 90.0) maxVelDeg = 90.0;
+     const double maxVel = maxVelDeg * M_PI / 180.0;   // rad/s
+     const double maxAcc = 3.0;       // rad/s^2
+     const double hardVel = 2.0;      // rad/s，单步安全（≈114 deg/s）
      const double minDisp = 1e-6;
      std::vector<std::vector<float>> out;
      if (joints.empty())
