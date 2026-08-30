@@ -26,6 +26,7 @@
 
 #include <chrono>
 #include <fstream>
+#include <string>
 #include <QApplication>
 #include <QDateTime>
 #include <QMutexLocker>
@@ -269,6 +270,7 @@ Thread::sortPose(const std::vector<std::pair<Eigen::Affine3f, Eigen::Affine3f>>&
 	const rl::math::Vector qStart = *mw->start;
 	mw->planner->start = mw->start.get();
 	mw->syncObstaclesToPlanner();
+	this->tgt_joint.resize(0);
 
 	auto solveIk = [&](const Eigen::Affine3f& pose, const rl::math::Vector& qSeed, rl::math::Vector& qOut) -> bool
 		{
@@ -288,9 +290,13 @@ Thread::sortPose(const std::vector<std::pair<Eigen::Affine3f, Eigen::Affine3f>>&
 			return true;
 		};
 
+	// setPosition() only writes joint values. ODE body frames stay stale until
+	// updateFrames(), so a later candidate would otherwise inherit the previous
+	// colliding pose and be rejected without being tested.
 	auto colliding = [&](const rl::math::Vector& q) -> bool
 		{
 			mw->model->setPosition(q);
+			mw->model->updateFrames();
 			return mw->model->isColliding();
 		};
 
@@ -318,40 +324,54 @@ Thread::sortPose(const std::vector<std::pair<Eigen::Affine3f, Eigen::Affine3f>>&
 			return true;
 		};
 
-	bool found = false;
-	for (const auto& pt : target_pose)
+	auto acceptGoal = [&](const rl::math::Vector& qGoal, const rl::math::Vector& qExtra) -> bool
+		{
+			if (colliding(qGoal))
+			{
+				return false;
+			}
+			*mw->goal = qGoal;
+			mw->planner->goal = mw->goal.get();
+			mw->planner->reset();
+			if (!mw->planner->verify())
+			{
+				return false;
+			}
+			this->tgt_joint = qExtra;
+			return true;
+		};
+
+	if (colliding(qStart))
 	{
+		emit sendErrorMessage("sortPose: start configuration is colliding; every verify() will fail.");
+	}
+
+	bool found = false;
+	for (std::size_t i = 0; i < target_pose.size(); ++i)
+	{
+		const auto& pt = target_pose[i];
 		rl::math::Vector qPre;
-		if (!solveIk(pt.first, qStart, qPre))
-		{
-			continue;
-		}
-		if (colliding(qPre))
-		{
-			continue;
-		}
-
 		rl::math::Vector qGrasp;
-		if (!solveIk(pt.second, qPre, qGrasp))
+		const bool preOk = solveIk(pt.first, qStart, qPre);
+		const bool graspOk = solveIk(pt.second, preOk ? qPre : qStart, qGrasp);
+
+		const bool preFree = preOk && !colliding(qPre);
+		if (preFree && graspOk && segmentFree(qPre, qGrasp) && acceptGoal(qPre, qGrasp))
 		{
-			continue;
-		}
-		if (!segmentFree(qPre, qGrasp))
-		{
-			continue;
+			found = true;
+			emit sendInfoMessage("sortPose: use candidate " + std::to_string(i) + " pre-grasp as goal.");
+			break;
 		}
 
-		*mw->goal = qPre;
-		mw->planner->goal = mw->goal.get();
-		mw->planner->reset();
-		if (!mw->planner->verify())
-		{
-			continue;
-		}
+		emit sendInfoMessage("sortPose: candidate " + std::to_string(i) +
+			" first endpoint rejected, try second pose as goal.");
 
-		this->tgt_joint = qGrasp;
-		found = true;
-		break;
+		if (graspOk && acceptGoal(qGrasp, rl::math::Vector()))
+		{
+			found = true;
+			emit sendInfoMessage("sortPose: use candidate " + std::to_string(i) + " grasp as goal.");
+			break;
+		}
 	}
 
 	if (!found)
