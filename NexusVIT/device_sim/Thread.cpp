@@ -25,7 +25,9 @@
 //
 
 #include <chrono>
+#include <cmath>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <QApplication>
 #include <QDateTime>
@@ -41,6 +43,7 @@
 #include <rl/plan/LinearNearestNeighbors.h>
 #include <rl/plan/Prm.h>
 #include <rl/plan/Rrt.h>
+#include <rl/plan/SimpleModel.h>
 
 #include "MainWindow.h"
 #include "Thread.h"
@@ -63,6 +66,94 @@ namespace
 			q[static_cast<int>(i)] = static_cast<rl::math::Real>(pt[i]) / 180.0 * M_PI;
 		}
 		return q;
+	}
+
+	rl::math::Real configurationPathLength(rl::plan::Model* model, const rl::plan::VectorList& path)
+	{
+		if (!model || path.size() < 2)
+		{
+			return 0;
+		}
+		rl::math::Real length = 0;
+		auto i = path.begin();
+		for (auto j = std::next(i); j != path.end(); ++i, ++j)
+		{
+			length += model->distance(*i, *j);
+		}
+		return length;
+	}
+
+	bool configurationSegmentFree(rl::plan::SimpleModel* model, const rl::math::Vector& q0, const rl::math::Vector& q1, rl::math::Real delta)
+	{
+		if (!model)
+		{
+			return false;
+		}
+		if (delta <= 0)
+		{
+			delta = static_cast<rl::math::Real>(0.05);
+		}
+
+		auto colliding = [&](const rl::math::Vector& q) -> bool
+		{
+			model->setPosition(q);
+			model->updateFrames();
+			return model->isColliding();
+		};
+
+		if (colliding(q0) || colliding(q1))
+		{
+			return false;
+		}
+
+		rl::math::Real steps = std::ceil(model->distance(q0, q1) / delta);
+		if (steps < 1.0)
+		{
+			steps = 1.0;
+		}
+		rl::math::Vector q(q0.size());
+		for (int k = 1; k <= static_cast<int>(steps); ++k)
+		{
+			model->interpolate(q0, q1, static_cast<rl::math::Real>(k) / steps, q);
+			if (colliding(q))
+			{
+				return false;
+			}
+		}
+		return true;
+	}
+
+	// AdvancedOptimizer only deletes the middle of consecutive triples. A long
+	// RRT detour that is locally smooth will survive. Try far-to-near shortcuts.
+	void shortcutConfigurationPath(rl::plan::SimpleModel* model, rl::plan::VectorList& path, rl::math::Real delta)
+	{
+		if (!model || path.size() < 3)
+		{
+			return;
+		}
+
+		bool changed = true;
+		for (int pass = 0; changed && path.size() > 2 && pass < 8; ++pass)
+		{
+			changed = false;
+			for (auto i = path.begin(); i != path.end(); ++i)
+			{
+				auto next = std::next(i);
+				if (next == path.end())
+				{
+					break;
+				}
+				for (auto j = std::prev(path.end()); std::distance(i, j) > 1; --j)
+				{
+					if (configurationSegmentFree(model, *i, *j, delta))
+					{
+						path.erase(std::next(i), j);
+						changed = true;
+						break;
+					}
+				}
+			}
+		}
 	}
 }
 
@@ -389,25 +480,54 @@ Thread::run()
 	QMutexLocker lock(&MainWindow::instance()->mutex);
 
 	this->running = true;
-	MainWindow::instance()->syncObstaclesToPlanner();
+	MainWindow* mw = MainWindow::instance();
+	mw->syncObstaclesToPlanner();
 
 	std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
-	bool solved = MainWindow::instance()->planner->solve();
+	rl::plan::VectorList path;
+	bool solved = false;
+	const rl::math::Real checkDelta = (nullptr != mw->viewer) ? mw->viewer->delta : static_cast<rl::math::Real>(0.05);
+
+	// rrtConCon returns the first feasible C-space path, often a long detour.
+	// If start and goal already connect, skip RRT and keep the short interpolation.
+	if (mw->planner->start && mw->planner->goal &&
+		configurationSegmentFree(mw->model.get(), *mw->planner->start, *mw->planner->goal, checkDelta))
+	{
+		path.push_back(*mw->planner->start);
+		path.push_back(*mw->planner->goal);
+		solved = true;
+		emit sendInfoMessage("run: start-goal segment is free, skip rrtConCon.");
+	}
+	else
+	{
+		solved = mw->planner->solve();
+		if (solved)
+		{
+			path = mw->planner->getPath();
+		}
+	}
 
 	if (solved)
 	{
-		rl::plan::VectorList path;
-		path = MainWindow::instance()->planner->getPath();
-
 		if (!this->running) { this->running = false; return; }
 
-		if (nullptr != MainWindow::instance()->optimizer)
+		const rl::math::Real lengthRaw = configurationPathLength(mw->model.get(), path);
+		if (nullptr != mw->optimizer)
 		{
-			MainWindow::instance()->optimizer->setViewer(nullptr);
-			MainWindow::instance()->optimizer->process(path);
-			if (tgt_joint.size() == 6) path.push_back(tgt_joint);
-			this->drawConfigurationPath(path);
+			mw->optimizer->setViewer(nullptr);
+			mw->optimizer->process(path);
 		}
+		shortcutConfigurationPath(mw->model.get(), path, checkDelta);
+		const rl::math::Real lengthShort = configurationPathLength(mw->model.get(), path);
+		emit sendInfoMessage("run: C-space path length " +
+			std::to_string(lengthRaw * rl::math::RAD2DEG) + " deg -> " +
+			std::to_string(lengthShort * rl::math::RAD2DEG) + " deg.");
+
+		if (tgt_joint.size() == 6)
+		{
+			path.push_back(tgt_joint);
+		}
+		this->drawConfigurationPath(path);
 		
 		rl::plan::VectorList interplotPath;
 		rl::math::Vector diff(MainWindow::instance()->model->getDofPosition());
