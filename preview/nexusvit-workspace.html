@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NexusVIT · Command Workspace</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg-app: #1c1e22;
+    --bg-chrome: #16181c;
+    --bg-panel: #22252a;
+    --bg-elev: #2a2e35;
+    --bg-input: #14161a;
+    --bg-view: #121416;
+    --line: #3a3f47;
+    --line-soft: #2e333b;
+    --text: #e8eaed;
+    --muted: #9aa0a8;
+    --faint: #6b7280;
+    --accent: #5eead4;
+    --accent-dim: rgba(94, 234, 212, 0.16);
+    --connect: #34d399;
+    --go: #fbbf24;
+    --set: #60a5fa;
+    --danger: #f87171;
+    --pause: #fb923c;
+    --run: #4ade80;
+    --radius: 6px;
+    --font: "IBM Plex Sans", "Noto Sans SC", system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: #0e1013; }
+  body {
+    font-family: var(--font);
+    color: var(--text);
+    font-size: 12.5px;
+    overflow: hidden;
+  }
+
+  button, input, select, textarea { font-family: inherit; font-size: inherit; color: inherit; }
+  button { cursor: pointer; border: 0; background: none; }
+
+  .app {
+    height: 100%;
+    display: grid;
+    grid-template-rows: 36px 46px minmax(0, 1fr) auto;
+    background: var(--bg-app);
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+
+  /* —— Title / menu chrome —— */
+  .titlebar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 10px 0 12px;
+    background: var(--bg-chrome);
+    border-bottom: 1px solid var(--line);
+    user-select: none;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-right: 6px;
+  }
+  .mark {
+    width: 18px; height: 18px;
+    border-radius: 4px;
+    background: linear-gradient(135deg, #5eead4, #2dd4bf 55%, #0ea5e9);
+  }
+  .brand-name { font-weight: 600; letter-spacing: 0.04em; font-size: 13px; }
+  .menus { display: flex; align-items: stretch; height: 100%; position: relative; }
+  .menu {
+    position: relative;
+    padding: 0 10px;
+    display: flex; align-items: center;
+    color: var(--muted);
+  }
+  .menu:hover, .menu.open { color: var(--text); background: var(--bg-elev); }
+  .dropdown {
+    display: none;
+    position: absolute;
+    top: 100%; left: 0;
+    min-width: 168px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: 0 0 var(--radius) var(--radius);
+    padding: 4px 0;
+    z-index: 40;
+    box-shadow: 0 12px 28px rgba(0,0,0,.45);
+  }
+  .menu.open .dropdown { display: block; }
+  .dropdown button, .dropdown .item {
+    display: flex; width: 100%;
+    padding: 6px 12px;
+    color: var(--text);
+    text-align: left;
+  }
+  .dropdown button:hover { background: var(--accent-dim); color: var(--accent); }
+  .dropdown .sep { height: 1px; background: var(--line); margin: 4px 0; }
+
+  .status-pills { display: flex; gap: 6px; margin-left: auto; }
+  .pill {
+    display: flex; align-items: center; gap: 6px;
+    height: 22px; padding: 0 8px;
+    border-radius: 999px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .led { width: 7px; height: 7px; border-radius: 50%; background: #4b5563; }
+  .pill.on .led { background: var(--connect); box-shadow: 0 0 6px var(--connect); }
+  .pill.warn .led { background: var(--go); }
+  .win-btns { display: flex; gap: 6px; margin-left: 10px; }
+  .win-btns span { width: 10px; height: 10px; border-radius: 50%; background: #3f4450; }
+
+  /* —— Command strip —— */
+  .commands {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 10px;
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--line);
+    overflow-x: auto;
+  }
+  .cmd-group {
+    display: flex; align-items: center; gap: 4px;
+    padding: 0 8px;
+  }
+  .cmd-group + .cmd-group { border-left: 1px solid var(--line-soft); }
+  .cmd-label {
+    font-size: 10px; color: var(--faint);
+    letter-spacing: 0.12em; text-transform: uppercase;
+    margin-right: 4px; min-width: 28px;
+  }
+  .cmd {
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    min-width: 52px; height: 34px; justify-content: center;
+    border-radius: var(--radius);
+    color: var(--muted);
+    padding: 0 6px;
+  }
+  .cmd svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.7; }
+  .cmd span { font-size: 10px; line-height: 1; }
+  .cmd:hover { background: var(--bg-elev); color: var(--text); }
+  .cmd.active { color: var(--accent); background: var(--accent-dim); }
+  .cmd.run { color: var(--run); }
+  .cmd.pause { color: var(--pause); }
+  .cmd.reset { color: var(--set); }
+
+  /* —— Workspace —— */
+  .workspace {
+    display: grid;
+    grid-template-columns: 228px minmax(0, 1fr) 252px;
+    min-height: 0;
+  }
+  .pane {
+    background: var(--bg-panel);
+    min-height: 0;
+    display: flex; flex-direction: column;
+  }
+  .pane.left { border-right: 1px solid var(--line); }
+  .pane.right { border-left: 1px solid var(--line); }
+  .pane-h {
+    height: 28px;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 10px;
+    font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--faint);
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .tree { padding: 8px; overflow: auto; flex: 1; }
+  .node { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 4px; color: var(--muted); }
+  .node:hover { background: var(--bg-elev); }
+  .node.sel { background: var(--accent-dim); color: var(--accent); }
+  .chev { width: 8px; opacity: .6; }
+  .dot-pc { width: 8px; height: 8px; border-radius: 2px; background: #7dd3fc; }
+
+  table.props { width: 100%; border-collapse: collapse; }
+  table.props th, table.props td {
+    padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--line-soft);
+  }
+  table.props th { color: var(--faint); font-weight: 500; width: 42%; }
+  table.props td { color: var(--text); }
+
+  .viewport {
+    position: relative;
+    background:
+      linear-gradient(180deg, #16181c 0%, var(--bg-view) 100%);
+    overflow: hidden;
+  }
+  .view-grid {
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px);
+    background-size: 32px 32px;
+    mask-image: radial-gradient(ellipse at 50% 45%, #000 35%, transparent 78%);
+  }
+  .view-tabs {
+    position: absolute; top: 10px; left: 10px;
+    display: flex; gap: 2px;
+    background: rgba(22,24,28,.78);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 3px;
+    z-index: 2; backdrop-filter: blur(8px);
+  }
+  .view-tabs button {
+    padding: 4px 12px; border-radius: 6px; color: var(--muted);
+  }
+  .view-tabs button.on { background: var(--accent-dim); color: var(--accent); }
+  .gizmo {
+    position: absolute; left: 16px; bottom: 16px; z-index: 2;
+  }
+  .viewcube {
+    position: absolute; right: 14px; top: 12px; z-index: 2;
+    width: 54px; height: 54px; opacity: .85;
+  }
+  .hud {
+    position: absolute; right: 12px; bottom: 12px; z-index: 2;
+    color: var(--faint); font-size: 11px;
+    background: rgba(22,24,28,.7);
+    border: 1px solid var(--line-soft);
+    border-radius: 6px;
+    padding: 6px 8px;
+  }
+  .scene-svg, .cam-feed { position: absolute; inset: 0; }
+  .cam-feed { display: none; background: #0a0c0e; }
+  .viewport.cam .scene-svg { display: none; }
+  .viewport.cam .cam-feed { display: block; }
+  .cam-cross {
+    position: absolute; inset: 0;
+    background:
+      linear-gradient(#5eead455, #5eead455) center/1px 40% no-repeat,
+      linear-gradient(#5eead455, #5eead455) center/40% 1px no-repeat;
+  }
+  .cam-meta {
+    position: absolute; left: 16px; bottom: 16px; color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* —— Control deck —— */
+  .deck {
+    border-top: 1px solid var(--line);
+    background: var(--bg-chrome);
+    display: flex; flex-direction: column;
+  }
+  .deck.collapsed .deck-body { display: none; }
+  .deck-tabs {
+    display: flex; align-items: center;
+    height: 34px;
+    padding: 0 8px;
+    gap: 2px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .deck-tab {
+    height: 28px; padding: 0 12px;
+    color: var(--muted);
+    border-radius: 6px 6px 0 0;
+  }
+  .deck-tab.on {
+    color: var(--accent);
+    background: var(--bg-panel);
+    box-shadow: inset 0 -2px 0 var(--accent);
+  }
+  .deck-tab:hover { color: var(--text); }
+  .deck-spacer { flex: 1; }
+  .collapse-btn { color: var(--faint); padding: 4px 8px; }
+  .deck-body {
+    height: 248px;
+    background: var(--bg-panel);
+    padding: 12px;
+    overflow: auto;
+  }
+  .panel { display: none; height: 100%; }
+  .panel.on { display: block; }
+
+  .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .field { display: flex; align-items: center; gap: 6px; }
+  .field label { color: var(--muted); min-width: 28px; }
+  input[type="text"], input[type="number"], select, textarea {
+    background: var(--bg-input);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 5px 8px;
+    outline: none;
+  }
+  input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+  input.ip { width: 118px; }
+  input.port { width: 64px; }
+  input.num { width: 72px; font-variant-numeric: tabular-nums; }
+  textarea { width: 100%; min-height: 72px; resize: none; }
+
+  .btn {
+    height: 26px; padding: 0 12px;
+    border-radius: 999px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    color: var(--text);
+  }
+  .btn:hover { border-color: #5b6570; }
+  .btn-connect { background: #113226; border-color: #1f6b4a; color: var(--connect); }
+  .btn-connect.on { background: #34d399; color: #06281c; border-color: #34d399; }
+  .btn-go { background: #3a2d0c; border-color: #8a6a12; color: var(--go); }
+  .btn-set { background: #13283f; border-color: #2b5f8f; color: var(--set); }
+  .btn-danger { background: #3a1515; border-color: #7f2d2d; color: var(--danger); }
+  .btn-ghost { background: transparent; }
+
+  .jog {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    height: calc(100% - 78px);
+  }
+  .jog-card {
+    background: var(--bg-elev);
+    border: 1px solid var(--line-soft);
+    border-radius: 8px;
+    padding: 10px;
+  }
+  .jog-card h4 { font-size: 11px; color: var(--faint); letter-spacing: .12em; margin-bottom: 8px; font-weight: 500; }
+  .axes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .axis { display: flex; flex-direction: column; gap: 3px; }
+  .axis span { color: var(--muted); font-size: 11px; }
+  .check { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  input[type="range"] { width: 120px; accent-color: var(--accent); }
+  .search { flex: 1; min-width: 140px; }
+
+  .console {
+    height: 100%;
+    background: #101216;
+    border: 1px solid var(--line-soft);
+    border-radius: 8px;
+    padding: 8px 10px;
+    overflow: auto;
+    font-family: ui-monospace, "IBM Plex Mono", monospace;
+    font-size: 12px;
+    color: #c5d0c8;
+  }
+  .console .ts { color: var(--faint); margin-right: 8px; }
+  .console .ok { color: var(--connect); }
+  .console .act { color: var(--accent); }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; height: 100%; }
+  .stack { display: flex; flex-direction: column; gap: 8px; height: 100%; }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <header class="titlebar">
+    <div class="brand">
+      <div class="mark"></div>
+      <div class="brand-name">NexusVIT</div>
+    </div>
+    <nav class="menus" id="menus">
+      <div class="menu" data-menu="file">文件
+        <div class="dropdown">
+          <button data-action="打开">打开</button>
+          <button data-action="保存">保存</button>
+          <div class="sep"></div>
+          <button data-action="退出">退出</button>
+        </div>
+      </div>
+      <div class="menu" data-menu="edit">编辑
+        <div class="dropdown">
+          <button data-action="删除">删除</button>
+          <button data-action="全删">全部删除</button>
+        </div>
+      </div>
+      <div class="menu" data-menu="tools">工具
+        <div class="dropdown">
+          <button data-action="着色">着色</button>
+          <button data-action="坐标系">坐标系</button>
+          <button data-action="变换">变换</button>
+          <button data-action="降采样">降采样</button>
+          <button data-action="合并">合并</button>
+          <button data-action="裁剪">裁剪</button>
+        </div>
+      </div>
+      <div class="menu" data-menu="ctrl">控制
+        <div class="dropdown">
+          <button data-action="单步">单步</button>
+          <button data-action="连续">连续</button>
+          <button data-action="暂停">暂停</button>
+          <button data-action="重置">重置</button>
+        </div>
+      </div>
+      <div class="menu" data-menu="view">视图
+        <div class="dropdown">
+          <button data-action="截图">截图</button>
+          <button id="toggleDeckMenu">折叠控制台</button>
+        </div>
+      </div>
+      <div class="menu" data-menu="opt">选项
+        <div class="dropdown">
+          <button data-action="视觉配置">视觉配置</button>
+          <button data-action="摆放设置">摆放设置</button>
+        </div>
+      </div>
+      <div class="menu" data-menu="help">帮助
+        <div class="dropdown">
+          <button data-action="关于">关于 NexusVIT</button>
+        </div>
+      </div>
+    </nav>
+    <div class="status-pills">
+      <div class="pill" id="pillRobot"><span class="led"></span>机器人 待机</div>
+      <div class="pill" id="pillVision"><span class="led"></span>视觉 待机</div>
+      <div class="pill" id="pillComm"><span class="led"></span>通信 待机</div>
+      <div class="pill" id="pillScrew"><span class="led"></span>工具 待机</div>
+    </div>
+    <div class="win-btns"><span></span><span></span><span></span></div>
+  </header>
+
+  <div class="commands" id="commands">
+    <div class="cmd-group">
+      <div class="cmd-label">文件</div>
+      <button class="cmd" data-action="打开" title="打开"><svg viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v10H3z"/></svg><span>打开</span></button>
+      <button class="cmd" data-action="保存"><svg viewBox="0 0 24 24"><path d="M5 4h11l4 4v12H5z"/><path d="M8 4v6h8"/></svg><span>保存</span></button>
+      <button class="cmd" data-action="删除"><svg viewBox="0 0 24 24"><path d="M5 7h14M9 7V5h6v2m-8 0l1 12h8l1-12"/></svg><span>删除</span></button>
+      <button class="cmd" data-action="全删"><svg viewBox="0 0 24 24"><path d="M4 7h16M8 7l1 13h6l1-13"/><path d="M9 4h6"/></svg><span>全删</span></button>
+    </div>
+    <div class="cmd-group">
+      <div class="cmd-label">点云</div>
+      <button class="cmd" data-action="着色"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/></svg><span>着色</span></button>
+      <button class="cmd" data-action="坐标系"><svg viewBox="0 0 24 24"><path d="M4 20V4m0 16h16M4 20l6-6M4 8h4M12 20v-4"/></svg><span>坐标</span></button>
+      <button class="cmd" data-action="变换"><svg viewBox="0 0 24 24"><path d="M4 12h16M12 4v16M7 8l-3 4 3 4M17 8l3 4-3 4"/></svg><span>变换</span></button>
+      <button class="cmd" data-action="降采样"><svg viewBox="0 0 24 24"><circle cx="7" cy="8" r="1.5"/><circle cx="16" cy="7" r="1.5"/><circle cx="12" cy="15" r="1.5"/><circle cx="6" cy="17" r="1.5"/></svg><span>降采样</span></button>
+      <button class="cmd" data-action="合并"><svg viewBox="0 0 24 24"><path d="M8 6h8v5H8zM6 13h12v5H6z"/></svg><span>合并</span></button>
+      <button class="cmd" data-action="裁剪"><svg viewBox="0 0 24 24"><path d="M6 6h8v8H6zM10 10h8v8h-8"/></svg><span>裁剪</span></button>
+    </div>
+    <div class="cmd-group">
+      <div class="cmd-label">标定</div>
+      <button class="cmd" data-action="TCP标定"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 4v4M12 16v4M4 12h4M16 12h4"/></svg><span>TCP</span></button>
+      <button class="cmd" data-action="手眼标定"><svg viewBox="0 0 24 24"><circle cx="9" cy="12" r="3"/><circle cx="16" cy="12" r="3"/></svg><span>手眼</span></button>
+      <button class="cmd" data-action="工件库"><svg viewBox="0 0 24 24"><path d="M4 8l8-4 8 4-8 4-8-4z"/><path d="M4 8v8l8 4 8-4V8"/></svg><span>工件库</span></button>
+      <button class="cmd" data-action="视觉配置"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M5 12a7 7 0 0 1 14 0"/></svg><span>视觉</span></button>
+      <button class="cmd" data-action="摆放设置"><svg viewBox="0 0 24 24"><rect x="5" y="8" width="14" height="10" rx="1"/><path d="M9 8V6h6v2"/></svg><span>摆放</span></button>
+      <button class="cmd" data-action="截图"><svg viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="2"/><circle cx="12" cy="13" r="3"/></svg><span>截图</span></button>
+    </div>
+    <div class="cmd-group">
+      <div class="cmd-label">运行</div>
+      <button class="cmd run" data-action="单步"><svg viewBox="0 0 24 24"><path d="M7 6l10 6-10 6z" fill="currentColor" stroke="none"/></svg><span>单步</span></button>
+      <button class="cmd run" data-action="连续"><svg viewBox="0 0 24 24"><path d="M5 6l8 6-8 6zM14 6l8 6-8 6z" fill="currentColor" stroke="none"/></svg><span>连续</span></button>
+      <button class="cmd pause" data-action="暂停"><svg viewBox="0 0 24 24"><path d="M7 6h3v12H7zM14 6h3v12h-3z" fill="currentColor" stroke="none"/></svg><span>暂停</span></button>
+      <button class="cmd reset" data-action="重置"><svg viewBox="0 0 24 24"><path d="M5 12a7 7 0 1 0 2-5"/><path d="M5 5v5h5"/></svg><span>重置</span></button>
+    </div>
+  </div>
+
+  <div class="workspace">
+    <aside class="pane left">
+      <div class="pane-h">数据</div>
+      <div class="tree" id="tree">
+        <div class="node sel" data-id="PointCloud">
+          <span class="chev">▾</span><span class="dot-pc"></span>PointCloud
+        </div>
+        <div class="node" data-id="SceneBody" style="padding-left:22px">
+          <span class="dot-pc" style="background:#fca5a5"></span>Workpiece
+        </div>
+        <div class="node" data-id="Robot">
+          <span class="chev">▸</span><span class="dot-pc" style="background:#86efac"></span>Robot
+        </div>
+      </div>
+    </aside>
+
+    <section class="viewport" id="viewport">
+      <div class="view-grid"></div>
+      <div class="view-tabs">
+        <button class="on" id="tabScene">Scene</button>
+        <button id="tabCamera">Camera</button>
+      </div>
+      <svg class="viewcube" viewBox="0 0 64 64" aria-hidden="true">
+        <g fill="none" stroke="#8b939e" stroke-width="1.2">
+          <path d="M12 24 L32 14 L52 24 L32 34 Z" fill="#2a313a"/>
+          <path d="M12 24 L12 42 L32 52 L32 34 Z" fill="#1e242c"/>
+          <path d="M52 24 L52 42 L32 52 L32 34 Z" fill="#3a434e"/>
+        </g>
+      </svg>
+      <svg class="scene-svg" viewBox="0 0 900 560" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <linearGradient id="metal" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#d7dde4"/><stop offset="1" stop-color="#8b949e"/>
+          </linearGradient>
+          <linearGradient id="redcap" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#f87171"/><stop offset="1" stop-color="#b91c1c"/>
+          </linearGradient>
+        </defs>
+        <g transform="translate(250,90)">
+          <ellipse cx="200" cy="360" rx="210" ry="18" fill="rgba(0,0,0,.35)"/>
+          <path d="M80 300 L140 210 L260 210 L320 300 L260 330 L140 330 Z" fill="#3f4650" stroke="#6b7280"/>
+          <rect x="155" y="120" width="90" height="100" rx="6" fill="url(#metal)" stroke="#9aa3ad"/>
+          <rect x="168" y="40" width="64" height="90" rx="8" fill="url(#redcap)" stroke="#7f1d1d"/>
+          <circle cx="200" cy="58" r="10" fill="#1f2933"/>
+          <rect x="188" y="8" width="24" height="36" rx="4" fill="#9ca3af"/>
+          <path d="M110 250 h180 v24 h-180z" fill="#ef4444" opacity=".85"/>
+          <path d="M70 310 h260 v18 h-260z" fill="#4b5563"/>
+        </g>
+      </svg>
+      <div class="cam-feed">
+        <div class="cam-cross"></div>
+        <div class="cam-meta">CAMERA · 1920×1200 · 曝光 8.2ms</div>
+      </div>
+      <svg class="gizmo" width="72" height="72" viewBox="0 0 72 72">
+        <line x1="12" y1="60" x2="60" y2="60" stroke="#ef4444" stroke-width="2"/>
+        <line x1="12" y1="60" x2="12" y2="12" stroke="#22c55e" stroke-width="2"/>
+        <line x1="12" y1="60" x2="40" y2="32" stroke="#3b82f6" stroke-width="2"/>
+        <text x="62" y="64" fill="#ef4444" font-size="10">X</text>
+        <text x="4" y="12" fill="#22c55e" font-size="10">Y</text>
+        <text x="42" y="30" fill="#3b82f6" font-size="10">Z</text>
+      </svg>
+      <div class="hud">透视 · 网格开 · mm</div>
+    </section>
+
+    <aside class="pane right">
+      <div class="pane-h">属性</div>
+      <table class="props" id="props">
+        <tr><th>ID</th><td>PointCloud</td></tr>
+        <tr><th>类别</th><td>—</td></tr>
+        <tr><th>长度</th><td>—</td></tr>
+        <tr><th>分辨率</th><td>—</td></tr>
+        <tr><th>体积</th><td>—</td></tr>
+      </table>
+    </aside>
+  </div>
+
+  <footer class="deck" id="deck">
+    <div class="deck-tabs">
+      <button class="deck-tab on" data-panel="robot">机器人</button>
+      <button class="deck-tab" data-panel="vision">视觉</button>
+      <button class="deck-tab" data-panel="tool">工具</button>
+      <button class="deck-tab" data-panel="comm">通信</button>
+      <button class="deck-tab" data-panel="console">控制台</button>
+      <div class="deck-spacer"></div>
+      <button class="collapse-btn" id="toggleDeck">▾ 折叠</button>
+    </div>
+    <div class="deck-body">
+      <div class="panel on" id="panel-robot">
+        <div class="row">
+          <div class="field"><label>IP</label><input class="ip" id="robotIp" type="text" value="192.168.5.1"></div>
+          <div class="field"><label>Port</label><input class="port" id="robotPort" type="text" value="29999"></div>
+          <button class="btn" data-action="InitializeRobot" id="InitializeRobot">Initialize</button>
+          <button class="btn btn-connect" data-action="ConnectRobot" id="robotConnectBtn">Connect</button>
+          <button class="btn btn-connect" data-action="EnableRobot" id="robotEnableBtn">Enable</button>
+          <div class="field"><label>Speed</label><input type="range" id="robotSpeed" min="1" max="100" value="5"><span id="speedVal">5</span></div>
+        </div>
+        <div class="jog">
+          <div class="jog-card">
+            <h4>关节 J0–J5</h4>
+            <div class="axes" id="joints"></div>
+          </div>
+          <div class="jog-card">
+            <h4>笛卡尔 X Y Z Rx Ry Rz</h4>
+            <div class="axes" id="cart"></div>
+            <div class="row" style="margin-top:10px">
+              <button class="btn btn-go" data-action="GoCap" id="GoCapBtn">GoCap</button>
+              <button class="btn btn-set" data-action="setCap" id="setCapBtn">setCap</button>
+              <button class="btn btn-go" data-action="GoHom" id="GoHomBtn">GoHom</button>
+              <button class="btn btn-set" data-action="setHom" id="setHomBtn">setHom</button>
+              <div class="field"><label>Down Speed</label><input class="num" id="downSpeed" value="10"><button class="btn" data-action="SetDownSpeed">Set</button></div>
+              <button class="btn" data-action="PlaceConfig" id="PlaceConfigBtn">PlaceConfig</button>
+              <button class="btn" data-action="AutoCalib" id="AutoCalibBtn">AutoCalib</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" id="panel-vision">
+        <div class="row">
+          <label class="check"><input type="checkbox" id="InitializeCamera"> Initialize</label>
+          <label class="check"><input type="checkbox" id="SaveVision"> Save</label>
+          <input class="search" id="cam_btn_search" type="text" placeholder="Search">
+          <button class="btn btn-connect" data-action="ConnectCamera" id="cam_btn_connect">Connect</button>
+          <button class="btn" data-action="Cap" id="cam_btn_capture">Cap</button>
+          <button class="btn" data-action="AddVision" id="cam_btn_add">Add</button>
+          <button class="btn btn-set" data-action="ResetVision" id="cam_btn_reset">Reset</button>
+        </div>
+        <div class="row">
+          <div class="field"><label style="min-width:72px">Work Path</label>
+            <select id="workPath" style="min-width:220px"><option>选择工作路径</option></select>
+          </div>
+          <div class="field"><label style="min-width:88px">Vision Config</label>
+            <select id="visionConfigEdit" style="min-width:220px"><option>选择视觉配置</option></select>
+            <button class="btn" data-action="LoadVisionConfig" id="loadVisionConfigBtn">…</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" id="panel-tool">
+        <div class="row">
+          <select id="screwType"><option>Screw</option></select>
+        </div>
+        <div class="row">
+          <div class="field"><label>IP</label><input class="ip" id="screwIp" value="192.168.5.50"></div>
+          <div class="field"><label>Port</label><input class="port" id="screwPort" value="5000"></div>
+          <button class="btn" data-action="InitializeScrew" id="InitializeLaser">Initialize</button>
+          <button class="btn btn-connect" data-action="ConnectScrew" id="connectLaserBtn">Connect</button>
+          <button class="btn btn-go" data-action="StartScrew">Start</button>
+          <button class="btn" data-action="BackScrew">Back</button>
+          <button class="btn btn-set" data-action="ResetScrew">Reset</button>
+        </div>
+      </div>
+
+      <div class="panel" id="panel-comm">
+        <div class="row">
+          <select id="scoketComb"><option>TCP Server</option><option>TCP Client</option><option>UDP</option></select>
+        </div>
+        <div class="row">
+          <div class="field"><label>IP</label><input class="ip" id="commIp" value="127.0.0.1"></div>
+          <div class="field"><label>Port</label><input class="port" id="commPort" value="3000"></div>
+          <button class="btn" data-action="InitializeComm">Initialize</button>
+          <button class="btn btn-connect" data-action="ConnectComm" id="connectCommBtn">Connect</button>
+          <button class="btn btn-set" data-action="SendComm" id="sendCommBtn">Send</button>
+        </div>
+        <div class="two-col">
+          <div class="stack"><label class="field">Recv</label><textarea id="recvBox" readonly></textarea></div>
+          <div class="stack"><label class="field">Send</label><textarea id="sendBox">NexusVIT ping</textarea></div>
+        </div>
+      </div>
+
+      <div class="panel" id="panel-console">
+        <div class="console" id="console"></div>
+      </div>
+    </div>
+  </footer>
+</div>
+<script>
+  const consoleEl = document.getElementById("console");
+  function now() {
+    return new Date().toLocaleTimeString("en-GB", { hour12: false });
+  }
+  function log(msg, cls = "act") {
+    const line = document.createElement("div");
+    line.innerHTML = `<span class="ts">[${now()}]</span><span class="${cls}">${msg}</span>`;
+    consoleEl.appendChild(line);
+    consoleEl.scrollTop = consoleEl.scrollHeight;
+  }
+  log("NexusVIT started!", "ok");
+
+  function wireActions(root) {
+    root.querySelectorAll("[data-action]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        log(el.dataset.action);
+      });
+    });
+  }
+  wireActions(document);
+
+  document.querySelectorAll(".menu").forEach((menu) => {
+    menu.addEventListener("click", (e) => {
+      e.stopPropagation();
+      document.querySelectorAll(".menu").forEach((m) => m.classList.toggle("open", m === menu && !menu.classList.contains("open")));
+    });
+  });
+  document.addEventListener("click", () => document.querySelectorAll(".menu").forEach((m) => m.classList.remove("open")));
+
+  const viewport = document.getElementById("viewport");
+  document.getElementById("tabScene").onclick = () => {
+    viewport.classList.remove("cam");
+    document.getElementById("tabScene").classList.add("on");
+    document.getElementById("tabCamera").classList.remove("on");
+    log("Scene");
+  };
+  document.getElementById("tabCamera").onclick = () => {
+    viewport.classList.add("cam");
+    document.getElementById("tabCamera").classList.add("on");
+    document.getElementById("tabScene").classList.remove("on");
+    log("Camera");
+  };
+
+  document.querySelectorAll(".deck-tab").forEach((tab) => {
+    tab.onclick = () => {
+      document.querySelectorAll(".deck-tab").forEach((t) => t.classList.remove("on"));
+      document.querySelectorAll(".panel").forEach((p) => p.classList.remove("on"));
+      tab.classList.add("on");
+      document.getElementById("panel-" + tab.dataset.panel).classList.add("on");
+      log("切换面板 " + tab.textContent);
+    };
+  });
+
+  const deck = document.getElementById("deck");
+  function toggleDeck() {
+    deck.classList.toggle("collapsed");
+    document.getElementById("toggleDeck").textContent = deck.classList.contains("collapsed") ? "▴ 展开" : "▾ 折叠";
+  }
+  document.getElementById("toggleDeck").onclick = toggleDeck;
+  document.getElementById("toggleDeckMenu").onclick = toggleDeck;
+
+  function togglePill(id, connectedLabel, idleLabel) {
+    const pill = document.getElementById(id);
+    const on = pill.classList.toggle("on");
+    pill.lastChild.textContent = " " + (on ? connectedLabel : idleLabel);
+    return on;
+  }
+  function bindToggle(btnId, pillId, actionOn, actionOff, labels) {
+    const btn = document.getElementById(btnId);
+    btn.addEventListener("click", () => {
+      const on = btn.classList.toggle("on");
+      btn.textContent = on ? labels[0] : labels[1];
+      const pill = document.getElementById(pillId);
+      pill.classList.toggle("on", on);
+      pill.childNodes[1].textContent = on ? " " + labels[2] : " " + labels[3];
+    });
+  }
+  bindToggle("robotConnectBtn", "pillRobot", "Connect", "Connect", ["Connected", "Connect", "机器人 已连接", "机器人 待机"]);
+  document.getElementById("robotEnableBtn").addEventListener("click", function () {
+    this.classList.toggle("on");
+    log(this.classList.contains("on") ? "Enable" : "Disable", "ok");
+  });
+  bindToggle("cam_btn_connect", "pillVision", "Connect", "Connect", ["Connected", "Connect", "视觉 已连接", "视觉 待机"]);
+  bindToggle("connectLaserBtn", "pillScrew", "Connect", "Connect", ["Connected", "Connect", "工具 已连接", "工具 待机"]);
+  bindToggle("connectCommBtn", "pillComm", "Connect", "Connect", ["Connected", "Connect", "通信 监听中", "通信 待机"]);
+
+  document.getElementById("sendCommBtn").addEventListener("click", () => {
+    const msg = document.getElementById("sendBox").value;
+    document.getElementById("recvBox").value += `[${now()}] ${msg}\n`;
+  });
+
+  document.getElementById("robotSpeed").oninput = (e) => {
+    document.getElementById("speedVal").textContent = e.target.value;
+  };
+
+  function axes(container, names) {
+    const el = document.getElementById(container);
+    names.forEach((n) => {
+      const wrap = document.createElement("div");
+      wrap.className = "axis";
+      wrap.innerHTML = `<span>${n}</span><input class="num" type="number" step="0.001" value="0.000">`;
+      el.appendChild(wrap);
+    });
+  }
+  axes("joints", ["J0","J1","J2","J3","J4","J5"]);
+  axes("cart", ["X","Y","Z","Rx","Ry","Rz"]);
+
+  const propMap = {
+    PointCloud: { ID: "PointCloud", 类别: "—", 长度: "—", 分辨率: "—", 体积: "—" },
+    SceneBody: { ID: "Workpiece", 类别: "AIS_Shape", 长度: "184.2", 分辨率: "0.50", 体积: "12.4" },
+    Robot: { ID: "Robot", 类别: "JAKA Zu12", 长度: "—", 分辨率: "—", 体积: "—" }
+  };
+  document.getElementById("tree").addEventListener("click", (e) => {
+    const node = e.target.closest(".node");
+    if (!node) return;
+    document.querySelectorAll(".node").forEach((n) => n.classList.remove("sel"));
+    node.classList.add("sel");
+    const data = propMap[node.dataset.id];
+    document.getElementById("props").innerHTML = Object.entries(data).map(([k,v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join("");
+    log("选择 " + data.ID);
+  });
+</script>
+</body>
+</html>

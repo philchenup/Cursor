@@ -1,5 +1,11 @@
 # Cursor
 
+## NexusVIT Command Workspace UI
+
+原界面是左右堆叠面板 + 彩色大图标工具条。新界面改成视口优先的 Command Workspace（底部控制甲板），**所有原按钮保留、objectName 不变**，背景仍为炭灰。
+
+详见 [README_UI.md](README_UI.md)，交互预览：`preview/nexusvit-workspace.html`。
+
 ## ScaleAISShapeBy1000
 
 将 OpenCASCADE 的 `AIS_Shape*` 缩小 1000 倍，并返回一个新的 `AIS_Shape*`。
