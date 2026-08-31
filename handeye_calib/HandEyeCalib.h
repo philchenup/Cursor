@@ -130,6 +130,11 @@ public:
         const std::string& save_path,
         Point3DConsistency& cons);
 
+    /**
+     * @brief 眼在手上 3D 点一致性评估（基座系）。
+     *        与 updateTable 一致：输入第 0 帧不参与参考点/误差，对应表格行 XYZ 为 "-"。
+     *        perPoseMeanAbsError 长度为 n-1，从第 1 帧起与 validIndex 对齐。
+     */
     Point3DConsistency evaluate3DPointConsistencyEyeInHand(
         const std::vector<cv::Mat>& R_board2cams,
         const std::vector<cv::Mat>& t_board2cams,
@@ -139,10 +144,11 @@ public:
         const std::vector<cv::Point3f>& objp);
 
     /**
-     * @brief 眼在手外 3D 点一致性评估
+     * @brief 眼在手外 3D 点一致性评估（末端系）。
      * @param R_end2bases / t_end2bases 与 EyeInHand 相同：机器人原始位姿 end->base
      *        （函数内部取逆得到 base->end，再变到末端系评估）
      * @param T_cam2base calibrateHandEye 得到的相机到基座变换
+     *        与 updateTable 一致：输入第 0 帧不参与参考点/误差，对应表格行 XYZ 为 "-"。
      */
     Point3DConsistency evaluate3DPointConsistencyEyeOnHand(
         const std::vector<cv::Mat>& R_board2cams,

@@ -39,6 +39,64 @@ namespace {
                 T.matrix()(r, c) = M.at<double>(r, c);
         return T;
     }
+
+    // 与 updateTable 一致：第 0 帧不选（该行 X/Y/Z 显示 "-"）。
+    // 参考点与误差只使用 i = 1 .. n-1；perPose* 按该顺序打包，长度为 n-1，
+    // 这样 validIndex[0]==false 时 validCnt 从第 1 行开始对应 res[0]。
+    constexpr size_t kSkipFirstPose = 1;
+
+    void accumulateSkippedFirstPoseConsistency(
+        const std::vector<eigenVector>& ptsPerPoint,
+        Point3DConsistency& res)
+    {
+        const size_t numPts = ptsPerPoint.size();
+        const size_t numPoses = (numPts == 0) ? 0 : ptsPerPoint[0].size();
+        if (numPoses <= kSkipFirstPose || numPts == 0)
+            return;
+
+        res.perPointDev.assign(numPoses, std::vector<Eigen::Vector3d>(numPts, Eigen::Vector3d::Zero()));
+        res.pointMeanInBase.assign(numPts, Eigen::Vector3d::Zero());
+
+        std::vector<Eigen::Vector3d> perPoseSumAbs(numPoses, Eigen::Vector3d::Zero());
+        std::vector<double> perPoseSumDist(numPoses, 0.0);
+
+        Eigen::Vector3d sumAbs = Eigen::Vector3d::Zero();
+        size_t totalSamples = 0;
+        const double nRef = static_cast<double>(numPoses - kSkipFirstPose);
+
+        for (size_t jj = 0; jj < numPts; ++jj) {
+            const eigenVector& obs = ptsPerPoint[jj];
+            Eigen::Vector3d mean = Eigen::Vector3d::Zero();
+            for (size_t i = kSkipFirstPose; i < numPoses; ++i)
+                mean += obs[i];
+            mean /= nRef;
+            res.pointMeanInBase[jj] = mean;
+
+            for (size_t i = 0; i < numPoses; ++i) {
+                const Eigen::Vector3d d = obs[i] - mean;
+                res.perPointDev[i][jj] = d;
+                if (i < kSkipFirstPose)
+                    continue;
+                perPoseSumAbs[i] += d.cwiseAbs();
+                perPoseSumDist[i] += d.norm();
+                sumAbs += d.cwiseAbs();
+                ++totalSamples;
+            }
+        }
+
+        if (totalSamples > 0)
+            res.meanAbsError = sumAbs / static_cast<double>(totalSamples);
+
+        const size_t nOut = numPoses - kSkipFirstPose;
+        res.numPoses = static_cast<int>(nOut);
+        res.perPoseMeanAbsError.resize(nOut);
+        res.perPoseError.resize(nOut);
+        const double invNumPts = 1.0 / static_cast<double>(numPts);
+        for (size_t i = kSkipFirstPose; i < numPoses; ++i) {
+            res.perPoseMeanAbsError[i - kSkipFirstPose] = perPoseSumAbs[i] * invNumPts;
+            res.perPoseError[i - kSkipFirstPose] = perPoseSumDist[i] * invNumPts;
+        }
+    }
 }
 
 HandEyeCalib::HandEyeCalib(QWidget* parent) :CustomDialog(parent),
@@ -408,14 +466,22 @@ Eigen::Affine3f HandEyeCalib::eye_on_hand(
     cv::Mat gray; // 声明在循环外，用于获取图像尺寸
 
     for (size_t i = 0; i < image_paths.size(); ++i) {
+        // 第 0 帧始终采集（评估函数内部再按 updateTable 不选），其余尊重勾选
+        if (i != 0 && i < keptIndices.size() && !keptIndices[i])
+            continue;
+
         cv::Mat img = cv::imread(image_paths[i]);
-        if (img.empty()) continue;
+        if (img.empty()) {
+            if (i < keptIndices.size()) keptIndices[i] = false;
+            continue;
+        }
 
         double quality_score = AssessImageQuality(img);
         double quality_threshold = 20.0;
 
         if (quality_score < quality_threshold) {
             printW(tr("Image Quality low!"));
+            if (i < keptIndices.size()) keptIndices[i] = false;
             continue;
         }
 
@@ -629,6 +695,9 @@ Eigen::Affine3f HandEyeCalib::eye_on_hand(
         }
     }
 
+    // 与评估函数一致：第 0 帧不选，updateTable 该行 X/Y/Z 显示 "-"
+    if (!keptIndices.empty())
+        keptIndices[0] = false;
     updateTable(ui->validTable, keptIndices, cons);
 
     return trans.cast<float>();
@@ -724,16 +793,22 @@ Eigen::Affine3f HandEyeCalib::eye_in_hand(
 
     for (size_t i = 0; i < image_paths.size(); ++i) {
 
-        if (!keptIndices[i]) continue;
+        // 第 0 帧始终采集（评估函数内部再按 updateTable 不选），其余尊重勾选
+        if (i != 0 && i < keptIndices.size() && !keptIndices[i])
+            continue;
 
         cv::Mat img = cv::imread(image_paths[i]);
-        if (img.empty()) continue;
+        if (img.empty()) {
+            if (i < keptIndices.size()) keptIndices[i] = false;
+            continue;
+        }
 
         double quality_score = AssessImageQuality(img);
         double quality_threshold = 20.0;
 
         if (quality_score < quality_threshold) {
             printW("Image Quality Low, Pass away!");
+            if (i < keptIndices.size()) keptIndices[i] = false;
             continue;
         }
 
@@ -897,6 +972,9 @@ Eigen::Affine3f HandEyeCalib::eye_in_hand(
         }
     }
 
+    // 与评估函数一致：第 0 帧不选，updateTable 该行 X/Y/Z 显示 "-"
+    if (!keptIndices.empty())
+        keptIndices[0] = false;
     updateTable(ui->validTable, keptIndices, cons);
 
     return trans.cast<float>();
@@ -927,8 +1005,9 @@ Point3DConsistency HandEyeCalib::evaluate3DPointConsistencyEyeInHand(
     const size_t numPts = objp.size();
     res.numPoses = static_cast<int>(numPoses);
 
-    if (numPoses < 2 || numPts == 0) {
-        printW(tr("3D consistency eval skipped: need >=2 poses and >=1 point."));
+    // 第 0 帧按 updateTable 不选，至少还需要 2 帧才能评估
+    if (numPoses < 2 + kSkipFirstPose || numPts == 0) {
+        printW(tr("3D consistency eval skipped: need >=3 poses (first unused) and >=1 point."));
         return res;
     }
 
@@ -946,57 +1025,11 @@ Point3DConsistency HandEyeCalib::evaluate3DPointConsistencyEyeInHand(
 
         for (size_t jj = 0; jj < numPts; ++jj) {
             Eigen::Vector3d p_board(objp[jj].x, objp[jj].y, objp[jj].z);
-            ptsInBase[jj].push_back(Tboard2base * p_board); // 索引 i 与位姿对齐
+            ptsInBase[jj].push_back(Tboard2base * p_board);
         }
     }
 
-    // —— 预分配完整记录 ——
-    res.perPointDev.assign(numPoses, std::vector<Eigen::Vector3d>(numPts, Eigen::Vector3d::Zero()));
-    res.pointMeanInBase.assign(numPts, Eigen::Vector3d::Zero());
-
-    std::vector<Eigen::Vector3d> perPoseSumAbs(numPoses, Eigen::Vector3d::Zero());
-    std::vector<double>          perPoseSumDist(numPoses, 0.0);
-
-    Eigen::Vector3d sumAbs = Eigen::Vector3d::Zero(); // 全局
-    size_t totalSamples = 0;
-
-    for (size_t jj = 0; jj < numPts; ++jj) {
-        const eigenVector& obs = ptsInBase[jj];
-        const size_t n = obs.size(); // == numPoses
-
-        // 该点跨所有位姿的均值（基座系“真值”）
-        Eigen::Vector3d mean = Eigen::Vector3d::Zero();
-        for (const auto& p : obs) mean += p;
-        mean /= static_cast<double>(n);
-        res.pointMeanInBase[jj] = mean;
-
-        for (size_t i = 0; i < n; ++i) {
-            const Eigen::Vector3d d = obs[i] - mean;   // 带符号偏差
-            const Eigen::Vector3d dabs = d.cwiseAbs();
-
-            res.perPointDev[i][jj] = d;                   // ★ 完整记录每个位姿每个点的偏差
-
-            perPoseSumAbs[i] += dabs;
-            perPoseSumDist[i] += d.norm();
-
-            sumAbs += dabs;
-            ++totalSamples;
-        }
-    }
-
-    if (totalSamples > 0)
-        res.meanAbsError = sumAbs / static_cast<double>(totalSamples);
-
-    // 逐位姿平均（仍然全部保留，不再只取 worst/best）
-    res.perPoseMeanAbsError.resize(numPoses);
-    res.perPoseError.resize(numPoses);
-
-    const double invNumPts = 1.0 / static_cast<double>(numPts);
-    for (size_t i = 0; i < numPoses; ++i) {
-        res.perPoseMeanAbsError[i] = perPoseSumAbs[i] * invNumPts;
-        res.perPoseError[i] = perPoseSumDist[i] * invNumPts;
-    }
-
+    accumulateSkippedFirstPoseConsistency(ptsInBase, res);
     return res;
 }
 
@@ -1010,14 +1043,14 @@ Point3DConsistency HandEyeCalib::evaluate3DPointConsistencyEyeOnHand(
 {
     // 眼在手外：标定板固连末端，必须变到末端系再比一致性。
     // p_end = T_end2base^{-1} * T_cam2base * T_board2cam * p_board
-    // 不能复用 EyeInHand 核（那个核左乘 T_end2base，点会落到运动系里）。
+    // 第 0 帧按 updateTable 不选，与 EyeInHand 相同打包方式。
     Point3DConsistency res;
     const size_t numPoses = R_board2cams.size();
     const size_t numPts = objp.size();
     res.numPoses = static_cast<int>(numPoses);
 
-    if (numPoses < 2 || numPts == 0) {
-        printW(tr("3D consistency eval skipped: need >=2 poses and >=1 point."));
+    if (numPoses < 2 + kSkipFirstPose || numPts == 0) {
+        printW(tr("3D consistency eval skipped: need >=3 poses (first unused) and >=1 point."));
         return res;
     }
 
@@ -1038,50 +1071,7 @@ Point3DConsistency HandEyeCalib::evaluate3DPointConsistencyEyeOnHand(
         }
     }
 
-    res.perPointDev.assign(numPoses, std::vector<Eigen::Vector3d>(numPts, Eigen::Vector3d::Zero()));
-    res.pointMeanInBase.assign(numPts, Eigen::Vector3d::Zero());
-
-    std::vector<Eigen::Vector3d> perPoseSumAbs(numPoses, Eigen::Vector3d::Zero());
-    std::vector<double>          perPoseSumDist(numPoses, 0.0);
-
-    Eigen::Vector3d sumAbs = Eigen::Vector3d::Zero();
-    size_t totalSamples = 0;
-
-    for (size_t jj = 0; jj < numPts; ++jj) {
-        const eigenVector& obs = ptsInEnd[jj];
-        const size_t n = obs.size();
-
-        Eigen::Vector3d mean = Eigen::Vector3d::Zero();
-        for (const auto& p : obs) mean += p;
-        mean /= static_cast<double>(n);
-        res.pointMeanInBase[jj] = mean;
-
-        for (size_t i = 0; i < n; ++i) {
-            const Eigen::Vector3d d = obs[i] - mean;
-            const Eigen::Vector3d dabs = d.cwiseAbs();
-
-            res.perPointDev[i][jj] = d;
-
-            perPoseSumAbs[i] += dabs;
-            perPoseSumDist[i] += d.norm();
-
-            sumAbs += dabs;
-            ++totalSamples;
-        }
-    }
-
-    if (totalSamples > 0)
-        res.meanAbsError = sumAbs / static_cast<double>(totalSamples);
-
-    res.perPoseMeanAbsError.resize(numPoses);
-    res.perPoseError.resize(numPoses);
-
-    const double invNumPts = 1.0 / static_cast<double>(numPts);
-    for (size_t i = 0; i < numPoses; ++i) {
-        res.perPoseMeanAbsError[i] = perPoseSumAbs[i] * invNumPts;
-        res.perPoseError[i] = perPoseSumDist[i] * invNumPts;
-    }
-
+    accumulateSkippedFirstPoseConsistency(ptsInEnd, res);
     return res;
 }
 
