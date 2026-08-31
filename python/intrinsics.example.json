@@ -1,0 +1,10 @@
+{
+  "fx": 525.0,
+  "fy": 525.0,
+  "cx": 319.5,
+  "cy": 239.5,
+  "width": 640,
+  "height": 480,
+  "depth_scale": 1000.0,
+  "comment": "depth_scale=1000 表示 16 位 PNG 存储的是毫米，点云单位为米。也可用 K 矩阵代替 fx/fy/cx/cy。"
+}
