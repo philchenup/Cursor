@@ -1,0 +1,246 @@
+/* NexusVIT Command Workspace
+ *
+ * Drop this file onto the existing MainWindow (or QApplication) after setupUi().
+ * It restyles widgets by type and objectName. Slot connections stay valid
+ * because no objectName is renamed.
+ *
+ * Palette stays in the original charcoal family (#1c1e22 / #22252a).
+ */
+
+QMainWindow, QDialog, QWidget {
+    background-color: #1c1e22;
+    color: #e8eaed;
+    font-family: "IBM Plex Sans", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+    font-size: 12px;
+}
+
+QMenuBar {
+    background: #16181c;
+    color: #9aa0a8;
+    border-bottom: 1px solid #3a3f47;
+    padding: 0 8px;
+    spacing: 4px;
+}
+QMenuBar::item { padding: 6px 10px; background: transparent; }
+QMenuBar::item:selected { background: #2a2e35; color: #e8eaed; }
+QMenu {
+    background: #2a2e35;
+    color: #e8eaed;
+    border: 1px solid #3a3f47;
+    padding: 4px 0;
+}
+QMenu::item { padding: 6px 18px; }
+QMenu::item:selected { background: rgba(94, 234, 212, 0.16); color: #5eead4; }
+QMenu::separator { height: 1px; background: #3a3f47; margin: 4px 0; }
+
+QToolBar {
+    background: #22252a;
+    border: 0;
+    border-bottom: 1px solid #3a3f47;
+    spacing: 4px;
+    padding: 6px 8px;
+}
+QToolBar::separator { width: 1px; background: #2e333b; margin: 4px 8px; }
+QToolButton {
+    color: #9aa0a8;
+    background: transparent;
+    border-radius: 6px;
+    padding: 4px 8px;
+}
+QToolButton:hover { background: #2a2e35; color: #e8eaed; }
+QToolButton:pressed, QToolButton:checked {
+    background: rgba(94, 234, 212, 0.16);
+    color: #5eead4;
+}
+
+QStatusBar {
+    background: #16181c;
+    color: #9aa0a8;
+    border-top: 1px solid #3a3f47;
+}
+
+QDockWidget {
+    titlebar-close-icon: none;
+    color: #9aa0a8;
+}
+QDockWidget::title {
+    background: #22252a;
+    padding: 4px 8px;
+    border-bottom: 1px solid #2e333b;
+    text-transform: uppercase;
+}
+
+QGroupBox {
+    background: #2a2e35;
+    border: 1px solid #2e333b;
+    border-radius: 8px;
+    margin-top: 12px;
+    padding: 10px 8px 8px 8px;
+    font-weight: 500;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 6px;
+    color: #6b7280;
+}
+
+QTabWidget::pane {
+    border: 0;
+    background: #22252a;
+}
+QTabBar::tab {
+    background: transparent;
+    color: #9aa0a8;
+    padding: 6px 14px;
+    border-radius: 6px 6px 0 0;
+    margin-right: 2px;
+}
+QTabBar::tab:selected {
+    background: #22252a;
+    color: #5eead4;
+    border-bottom: 2px solid #5eead4;
+}
+QTabBar::tab:hover { color: #e8eaed; }
+
+QPushButton {
+    background: #2a2e35;
+    color: #e8eaed;
+    border: 1px solid #3a3f47;
+    border-radius: 13px;
+    padding: 4px 12px;
+    min-height: 24px;
+}
+QPushButton:hover { border-color: #5b6570; }
+QPushButton:pressed { background: #1c1e22; }
+QPushButton:disabled { color: #6b7280; }
+
+/* Semantic object names from the original UI — colors only, no rename */
+QPushButton#robotConnectBtn,
+QPushButton#cam_btn_connect,
+QPushButton#connectLaserBtn,
+QPushButton#openCamBtn,
+QPushButton#openLaserBtn {
+    background: #113226;
+    border-color: #1f6b4a;
+    color: #34d399;
+}
+QPushButton#GoCapBtn,
+QPushButton#GoHomBtn {
+    background: #3a2d0c;
+    border-color: #8a6a12;
+    color: #fbbf24;
+}
+QPushButton#setCapBtn,
+QPushButton#setHomBtn,
+QPushButton#cam_btn_reset {
+    background: #13283f;
+    border-color: #2b5f8f;
+    color: #60a5fa;
+}
+QPushButton#actionRemove,
+QPushButton[text="删除"] {
+    background: #3a1515;
+    border-color: #7f2d2d;
+    color: #f87171;
+}
+
+QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QPlainTextEdit, QTextEdit {
+    background: #14161a;
+    color: #e8eaed;
+    border: 1px solid #3a3f47;
+    border-radius: 5px;
+    padding: 4px 8px;
+    selection-background-color: #134e4a;
+}
+QLineEdit:focus, QComboBox:focus, QTextEdit:focus {
+    border-color: #5eead4;
+}
+QComboBox::drop-down { border: 0; width: 18px; }
+QComboBox QAbstractItemView {
+    background: #2a2e35;
+    color: #e8eaed;
+    selection-background-color: rgba(94, 234, 212, 0.16);
+    border: 1px solid #3a3f47;
+}
+
+QTreeView, QTreeWidget, QListView, QTableView, QTableWidget {
+    background: #22252a;
+    alternate-background-color: #1c1e22;
+    color: #e8eaed;
+    border: 0;
+    outline: 0;
+    gridline-color: #2e333b;
+}
+QHeaderView::section {
+    background: #22252a;
+    color: #6b7280;
+    border: 0;
+    border-bottom: 1px solid #2e333b;
+    padding: 6px 8px;
+}
+QTreeView::item:selected, QTableView::item:selected {
+    background: rgba(94, 234, 212, 0.16);
+    color: #5eead4;
+}
+
+QSlider::groove:horizontal {
+    height: 4px;
+    background: #3a3f47;
+    border-radius: 2px;
+}
+QSlider::handle:horizontal {
+    width: 12px; height: 12px;
+    margin: -4px 0;
+    background: #5eead4;
+    border-radius: 6px;
+}
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+    margin: 0;
+}
+QScrollBar::handle:vertical {
+    background: #3a3f47;
+    min-height: 24px;
+    border-radius: 5px;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+
+QCheckBox, QRadioButton { color: #9aa0a8; spacing: 6px; }
+QCheckBox::indicator, QRadioButton::indicator {
+    width: 13px; height: 13px;
+    border: 1px solid #3a3f47;
+    background: #14161a;
+    border-radius: 3px;
+}
+QCheckBox::indicator:checked {
+    background: #5eead4;
+    border-color: #5eead4;
+}
+
+QSplitter::handle { background: #3a3f47; width: 1px; height: 1px; }
+
+QProgressBar {
+    background: #14161a;
+    border: 1px solid #3a3f47;
+    border-radius: 4px;
+    text-align: center;
+    color: #9aa0a8;
+}
+QProgressBar::chunk { background: #5eead4; }
+
+QLabel { color: #9aa0a8; }
+
+#cloudview, #sceneWidget, #viewport {
+    background: #121416;
+    border: 0;
+}
+#console {
+    background: #101216;
+    color: #c5d0c8;
+    font-family: "IBM Plex Mono", "Consolas", monospace;
+    border: 1px solid #2e333b;
+    border-radius: 8px;
+}
