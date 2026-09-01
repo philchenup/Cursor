@@ -17,6 +17,7 @@ live_track.py  --  DeepAC 引导式初始化 + 全画面跟踪 (无 ROS)
 
   # 接相机
   python live_track.py --source realsense --obj calib --data-dir data/mydata
+  python live_track.py --source realsense --obj calib --data-dir data/mydata --fast
   python live_track.py --source cam:0     --obj calib --data-dir data/mydata
 
 按键:
@@ -110,6 +111,37 @@ def rot_axis(axis, deg):
 def euler_to_R(rx, ry, rz):
     """XYZ 欧拉角(度) -> R = Rz @ Ry @ Rx"""
     return rot_axis([0, 0, 1], rz) @ rot_axis([0, 1, 0], ry) @ rot_axis([1, 0, 0], rx)
+
+
+def select_wire_segments(uv, ok, pairs, h, w):
+    """Visible line segments as (N, 2, 2) float64, for cv2.polylines."""
+    pairs = np.asarray(pairs)
+    if pairs.size == 0:
+        return np.zeros((0, 2, 2), np.float64)
+    a = pairs[:, 0]
+    b = pairs[:, 1]
+    vis = ok[a] & ok[b]
+    if not np.any(vis):
+        return np.zeros((0, 2, 2), np.float64)
+    pa = uv[a[vis]]
+    pb = uv[b[vis]]
+    keep = ((np.maximum(pa[:, 0], pb[:, 0]) >= -w)
+            & (np.minimum(pa[:, 0], pb[:, 0]) <= 2 * w)
+            & (np.maximum(pa[:, 1], pb[:, 1]) >= -h)
+            & (np.minimum(pa[:, 1], pb[:, 1]) <= 2 * h))
+    if not np.any(keep):
+        return np.zeros((0, 2, 2), np.float64)
+    return np.stack((pa[keep], pb[keep]), axis=1)
+
+
+def apply_runtime_opts(a):
+    """--fast: one forward per frame, cheaper overlay (official demo budget)."""
+    if getattr(a, 'fast', False):
+        a.iters = 1
+        a.feature_wire = True
+        a.wire_alpha = 1.0
+        a.lock_iters = min(int(a.lock_iters), 2)
+    return a
 
 
 class PoseOutput:
@@ -237,15 +269,16 @@ class Wire:
     def _seg(self, img, uv, ok, pairs, color, th):
         import cv2
         h, w = img.shape[:2]
-        for a, b in pairs:
-            if not (ok[a] and ok[b]):
-                continue
-            pa, pb = uv[a], uv[b]
-            if (max(pa[0], pb[0]) < -w or min(pa[0], pb[0]) > 2 * w or
-                    max(pa[1], pb[1]) < -h or min(pa[1], pb[1]) > 2 * h):
-                continue
-            cv2.line(img, (int(pa[0]), int(pa[1])),
-                     (int(pb[0]), int(pb[1])), color, th, cv2.LINE_AA)
+        segs = select_wire_segments(uv, ok, pairs, h, w)
+        if len(segs) == 0:
+            return
+        pts = np.round(segs).astype(np.int32)
+        try:
+            cv2.polylines(img, pts, False, color, th, cv2.LINE_AA)
+        except cv2.error:
+            for p1, p2 in pts:
+                cv2.line(img, (int(p1[0]), int(p1[1])),
+                         (int(p2[0]), int(p2[1])), color, th, cv2.LINE_AA)
 
     def draw_net(self, img, R, t, K, color, thick=1):
         """完整网状线框, 不剔除背面 —— 与作者演示视频一致"""
@@ -345,6 +378,11 @@ class Tracker:
         self.a = a
         train_cfg = OmegaConf.load(a.load_cfg)
         self.dc = train_cfg.data
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if self.device.type == 'cuda':
+            torch.backends.cudnn.benchmark = True
+        print(f'[cuda] {self.device}  iters={a.iters}  '
+              f'(official demo = 1 forward/frame)')
 
         logger = MyLightningLogger('live', a.save_dir)
         model = get_model(train_cfg.models.name)(train_cfg.models)
@@ -353,7 +391,7 @@ class Tracker:
             warnings.warn('old ckpt format, converting')
             ckpt = convert_old_model(ckpt)
         load_model_weight(model, ckpt, logger)
-        self.model = model.cuda().eval()
+        self.model = model.to(self.device).eval()
 
         self.cap = {}
         orig = self.model.boundary_predictor.forward
@@ -368,8 +406,8 @@ class Tracker:
         with open(tpl, 'rb') as f:
             d = pickle.load(f)
         self.n_pts = d['head']['num_sample_contour_point']
-        self.tviews = torch.from_numpy(d['template_view']).float()
-        self.orients = torch.from_numpy(d['orientation_in_body']).float()
+        self.tviews = torch.from_numpy(d['template_view']).float().to(self.device)
+        self.orients = torch.from_numpy(d['orientation_in_body']).float().to(self.device)
         print(f'[tpl ] {tpl}  {len(self.orients)} views, {self.n_pts} pts/view')
 
         self.K = np.loadtxt(os.path.join(a.data_dir, 'K.txt')).reshape(3, 3)
@@ -438,91 +476,146 @@ class Tracker:
         if scales != (1, 1):
             camera = camera.scale(scales)
         img, = zero_pad(self.dc.pad, img)
-        return numpy_image_to_torch(img.astype(np.float32)), camera
+        img_t = numpy_image_to_torch(img.astype(np.float32))
+        if self.device.type == 'cuda':
+            try:
+                img_t = img_t.pin_memory().to(self.device, non_blocking=True)
+            except Exception:
+                img_t = img_t.to(self.device)
+        else:
+            img_t = img_t.to(self.device)
+        return img_t, camera.to(self.device)
+
+    def _pose_to_device(self, pose):
+        return pose if pose.device == self.device else pose.to(self.device)
+
+    def _pose_np(self, pose):
+        p = pose.detach().cpu()
+        return p.R.numpy().astype(np.float64), p.t.numpy().astype(np.float64)
+
+    def _read_conf(self):
+        unc = self.cap.get('unc')
+        if unc is None:
+            return float('nan')
+        return float(unc.detach().mean())
+
+    def _gather_views(self, pose):
+        from src_open.utils.utils import get_closest_k_template_view_index
+        k = self.dc.get_top_k_template_views * self.dc.skip_template_view
+        idx = get_closest_k_template_view_index(pose, self.orients, k)
+        if idx.dim() > 1:
+            idx = idx[0]
+        sel = idx[::self.dc.skip_template_view].reshape(-1).long()
+        starts = sel * self.n_pts
+        offs = torch.arange(self.n_pts, device=self.device)
+        rows = (starts.unsqueeze(-1) + offs).reshape(-1)
+        ctv = self.tviews.index_select(0, rows).view(sel.numel(), self.n_pts, -1)
+        cob = self.orients.index_select(0, sel)
+        return ctv, cob
+
+    def _forward_model(self, img_b, cam, pose, hist, ctv, cob):
+        data = {
+            'image': img_b,
+            'camera': cam[None],
+            'body2view_pose': pose[None],
+            'closest_template_views': ctv[None],
+            'closest_orientations_in_body': cob[None],
+            'fore_hist': hist[0],
+            'back_hist': hist[1],
+        }
+        pred = self.model._forward(data, visualize=False, tracking=True)
+        ps = pred['opt_body2view_pose']
+        out = ps[-1][0]
+        d_scale = pose_delta(ps[-2][0], ps[-1][0])
+        return out, self._read_conf(), d_scale
+
+    def _make_hist(self, img_b, pose, cam, ctv):
+        from src_open.models.deep_ac import calculate_basic_line_data
+        *_, ci, cv_, ni, fd, bd, _ = calculate_basic_line_data(
+            ctv[None][:, 0], pose[None]._data, cam[None]._data, 1, 0)
+        return self.model.histogram.calculate_histogram(
+            img_b, ci, cv_, ni, fd, bd, True)
 
     def _pass(self, img_rgb, pose_in, hist):
-        """单次 DeepAC 精化。返回 (新位姿, 裁剪图, 裁剪相机, conf)"""
-        import torch
+        """Crop once + one GPU forward. pose/hist/img stay on self.device."""
         from src_open.utils.geometry.wrappers import Camera
         from src_open.utils.utils import (project_correspondences_line,
-                                          get_closest_k_template_view_index,
                                           get_bbox_from_p2d)
-        from src_open.models.deep_ac import calculate_basic_line_data
 
+        pose = self._pose_to_device(pose_in)
         h, w = img_rgb.shape[:2]
         ori_cam = Camera(torch.tensor(
             [w, h, self.K[0, 0], self.K[1, 1], self.K[0, 2], self.K[1, 2]],
-            dtype=torch.float32))
+            dtype=torch.float32, device=self.device))
 
-        k = self.dc.get_top_k_template_views * self.dc.skip_template_view
-        idx = get_closest_k_template_view_index(pose_in, self.orients, k)
-        ctv = torch.stack([self.tviews[i * self.n_pts:(i + 1) * self.n_pts, :]
-                           for i in idx[::self.dc.skip_template_view]])
-        cob = self.orients[idx[::self.dc.skip_template_view]]
-
-        lines = project_correspondences_line(ctv[0], pose_in, ori_cam)
+        ctv, cob = self._gather_views(pose)
+        lines = project_correspondences_line(ctv[0], pose, ori_cam)
         bbox = get_bbox_from_p2d(lines['centers_in_image'])
-        img, cam = self._prep(img_rgb, bbox.numpy().copy(), ori_cam)
+        img_b, cam = self._prep(img_rgb, bbox.detach().cpu().numpy().copy(), ori_cam)
+        if img_b.dim() == 3:
+            img_b = img_b[None]
 
         if hist is None:
-            *_, ci, cv_, ni, fd, bd, _ = calculate_basic_line_data(
-                ctv[None][:, 0], pose_in[None]._data, cam[None]._data, 1, 0)
-            hist = self.model.histogram.calculate_histogram(
-                img[None], ci, cv_, ni, fd, bd, True)
+            hist = self._make_hist(img_b, pose, cam, ctv)
+        else:
+            hist = (hist[0].to(self.device), hist[1].to(self.device))
 
-        data = {'image': img[None].cuda(),
-                'camera': cam[None].cuda(),
-                'body2view_pose': pose_in[None].cuda(),
-                'closest_template_views': ctv[None].cuda(),
-                'closest_orientations_in_body': cob[None].cuda(),
-                'fore_hist': hist[0].cuda(),
-                'back_hist': hist[1].cuda()}
-        pred = self.model._forward(data, visualize=False, tracking=True)
+        out, conf, d_scale = self._forward_model(img_b, cam, pose, hist, ctv, cob)
+        return out, img_b, cam, hist, conf, d_scale
 
-        ps = pred['opt_body2view_pose']
-        out = ps[-1][0].cpu()
-        d_scale = pose_delta(ps[-2][0].cpu(), ps[-1][0].cpu())
-        unc = self.cap.get('unc')
-        conf = float(unc.mean()) if unc is not None else float('nan')
-        return out, img, cam, hist, conf, d_scale
+    def _refine(self, img_b, cam, pose, hist):
+        """Extra iters: skip CPU crop, only closest-view + GPU forward."""
+        pose = self._pose_to_device(pose)
+        ctv, cob = self._gather_views(pose)
+        out, conf, d_scale = self._forward_model(img_b, cam, pose, hist, ctv, cob)
+        return out, hist, conf, d_scale
 
     def step(self, img_rgb, pose_in, hist):
-        """多次迭代精化。返回 (位姿, 直方图, 指标, 裁剪相机, 裁剪图)"""
+        """Default iters=1 matches official demo. Extra iters reuse the crop."""
         import torch
-        pose = pose_in
-        h0 = hist
+        pose = self._pose_to_device(pose_in)
         with torch.no_grad():
-            for _ in range(max(1, self.a.iters)):
-                pose, img, cam, h0, conf, d_scale = self._pass(img_rgb, pose, h0)
+            pose, img_b, cam, h0, conf, d_scale = self._pass(img_rgb, pose, hist)
+            for _ in range(max(0, int(self.a.iters) - 1)):
+                pose, h0, conf, d_scale = self._refine(img_b, cam, pose, h0)
         pose = orthonormalize(pose)
-        d_init = pose_delta(pose_in, pose)
+        d_init = pose_delta(self._pose_to_device(pose_in), pose)
         met = {'dt': d_scale[0] * 1000, 'dr': d_scale[1],
                'mt': d_init[0] * 1000, 'mr': d_init[1], 'conf': conf}
-        return pose, h0, met, cam, img
+        return pose, h0, met, cam, img_b
 
-    def refresh_hist(self, img, pose, cam, hist):
+    def refresh_hist(self, img_b, pose, cam, hist):
         from src_open.utils.utils import get_closest_template_view_index
         from src_open.models.deep_ac import calculate_basic_line_data
+        pose = self._pose_to_device(pose)
+        cam = cam.to(self.device) if cam.device != self.device else cam
+        if img_b.dim() == 3:
+            img_b = img_b[None]
+        img_b = img_b.to(self.device, non_blocking=True)
         j = get_closest_template_view_index(pose, self.orients)
-        tv = self.tviews[j * self.n_pts:(j + 1) * self.n_pts, :]
+        if j.dim() > 0:
+            j = j.reshape(-1)[0]
+        j = int(j.detach().cpu())
+        tv = self.tviews[j * self.n_pts:(j + 1) * self.n_pts]
         *_, ci, cv_, ni, fd, bd, _ = calculate_basic_line_data(
             tv[None], pose[None]._data, cam[None]._data, 1, 0)
         f, b = self.model.histogram.calculate_histogram(
-            img[None], ci, cv_, ni, fd, bd, True)
+            img_b, ci, cv_, ni, fd, bd, True)
         lr = self.a.learn_rate
         return ((1 - lr) * hist[0] + lr * f, (1 - lr) * hist[1] + lr * b)
 
     def commit(self, img_rgb, cand, met, tag):
         """锁定前先把位姿彻底收敛, 再据此建立直方图。"""
         import torch
-        pose = cand
+        pose = self._pose_to_device(cand)
         n = max(1, self.a.lock_iters)
         with torch.no_grad():
-            for _ in range(n):
-                pose, _, _, _, conf, _ = self._pass(img_rgb, pose, None)
+            pose, img_b, cam, hist, conf, _ = self._pass(img_rgb, pose, None)
+            for _ in range(n - 1):
+                pose, hist, conf, _ = self._refine(img_b, cam, pose, hist)
         pose = orthonormalize(pose)
         d, e = rot_health(pose)
-        moved = pose_delta(cand, pose)
+        moved = pose_delta(self._pose_to_device(cand), pose)
         print(f'[{tag}] conf={met["conf"]:.3f} cs={met["cs"]:.3f} | '
               f'收敛 {n} 遍后又移动 {moved[0]*1000:.1f}mm/{moved[1]:.1f}deg | '
               f'det(R)={d:.6f} 正交误差={e:.2e}')
@@ -552,6 +645,7 @@ class Tracker:
         import torch
         from src_open.utils.geometry.wrappers import Pose
 
+        torch.set_grad_enabled(False)
         win = 'DeepAC live'
         cv2.namedWindow(win, cv2.WINDOW_NORMAL)
         sized = False
@@ -607,8 +701,9 @@ class Tracker:
                     return m
 
                 if self.state == 'INIT':
-                    pin = Pose.from_Rt(torch.from_numpy(self.R0).float(),
-                                       torch.from_numpy(self.t0).float())
+                    pin = Pose.from_Rt(
+                        torch.as_tensor(self.R0, dtype=torch.float32, device=self.device),
+                        torch.as_tensor(self.t0, dtype=torch.float32, device=self.device))
                     out, _, met, cam, _ = self.step(img_rgb, pin, None)
                     if self.a.recover_last and self.last_good is not None:
                         o2, _, m2, c2, _ = self.step(img_rgb, self.last_good, None)
@@ -638,8 +733,7 @@ class Tracker:
                     if met['cs'] >= self.a.hist_conf:
                         self.hist = self.refresh_hist(
                             crop_img, self.pose, cam, self.hist)
-                    R = self.pose.R.numpy().astype(np.float64)
-                    t = self.pose.t.numpy().astype(np.float64)
+                    R, t = self._pose_np(self.pose)
                     if self.show['wire']:
                         self._wire(vis, R, t, GREEN)
                     if self.show['ax']:
@@ -725,8 +819,7 @@ class Tracker:
                 elif c == ord('c'):
                     self.show['ax'] = not self.show['ax']
                 elif c == ord('g') and self.state == 'TRACK' and self.pose is not None:
-                    R = self.pose.R.numpy().astype(np.float64)
-                    t = self.pose.t.numpy().astype(np.float64)
+                    R, t = self._pose_np(self.pose)
                     M = np.eye(4, dtype=np.float64)
                     M[:3, :3], M[:3, 3] = R, t
                     np.savetxt(self.a.grasp_pose, M, fmt='%.12g')
@@ -976,8 +1069,11 @@ def build_parser():
                    help='初始姿态文件路径; 给了且存在则载入。'
                         'INIT 状态按 s 保存到 <data_dir>/init_pose.txt')
     p.add_argument('--learn-rate', type=float, default=0.2)
-    p.add_argument('--iters', type=int, default=3,
-                   help='每帧精化迭代次数, 等效扩大捕获半径 (1=原版行为)')
+    p.add_argument('--iters', type=int, default=1,
+                   help='每帧精化次数; 1=与官方 demo 相同 (推荐). '
+                        '增大可扩大捕获半径但 FPS 近似成倍下降')
+    p.add_argument('--fast', action='store_true',
+                   help='实时预设: iters=1, 特征边线框, 不透明 overlay')
     p.add_argument('--gate-conf', type=float, default=0.35,
                    help='低于此置信度不接受新位姿(保持上一帧)')
     p.add_argument('--hist-conf', type=float, default=0.45,
@@ -1023,7 +1119,7 @@ def build_parser():
 
 
 def main(argv=None):
-    a = build_parser().parse_args(argv)
+    a = apply_runtime_opts(build_parser().parse_args(argv))
     os.environ.setdefault('CUDA_VISIBLE_DEVICES', '0')
     sys.path.insert(0, os.getcwd())
     frames, K_sdk = frames_from(a.source)

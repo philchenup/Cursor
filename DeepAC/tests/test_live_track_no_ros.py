@@ -156,5 +156,44 @@ class TestParserHelp(unittest.TestCase):
         self.assertNotIn('pyorbbecsdk', text)
 
 
+class TestLiveTrackSpeedOpts(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_live_track()
+
+    def test_default_iters_is_one(self):
+        p = self.mod.build_parser()
+        a = p.parse_args(['--source', 'x', '--obj', 'o', '--data-dir', 'd'])
+        self.assertEqual(a.iters, 1)
+        names = {act.dest for act in p._actions}
+        self.assertIn('fast', names)
+
+    def test_fast_flag_applies_demo_budget(self):
+        p = self.mod.build_parser()
+        a = p.parse_args(['--source', 'x', '--obj', 'o', '--data-dir', 'd',
+                          '--fast', '--iters', '3', '--lock-iters', '8'])
+        a = self.mod.apply_runtime_opts(a)
+        self.assertEqual(a.iters, 1)
+        self.assertTrue(a.feature_wire)
+        self.assertGreaterEqual(a.wire_alpha, 0.99)
+        self.assertEqual(a.lock_iters, 2)
+
+    def test_select_wire_segments_filters_and_keeps(self):
+        uv = np.array([[10.0, 10.0], [20.0, 20.0], [500.0, 500.0], [600.0, 600.0]],
+                      np.float64)
+        ok = np.array([True, True, True, True])
+        pairs = np.array([[0, 1], [2, 3]])
+        segs = self.mod.select_wire_segments(uv, ok, pairs, h=100, w=100)
+        self.assertEqual(segs.shape[1:], (2, 2))
+        self.assertEqual(len(segs), 1)
+        np.testing.assert_allclose(segs[0], [[10.0, 10.0], [20.0, 20.0]])
+
+    def test_select_wire_segments_empty(self):
+        uv = np.zeros((2, 2))
+        ok = np.array([False, False])
+        segs = self.mod.select_wire_segments(uv, ok, np.array([[0, 1]]), 10, 10)
+        self.assertEqual(len(segs), 0)
+
+
 if __name__ == '__main__':
     unittest.main()
