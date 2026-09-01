@@ -144,6 +144,29 @@ def apply_runtime_opts(a):
     return a
 
 
+def move_to_device(x, device, non_blocking=False):
+    """Move a tensor / Pose / Camera / nested tuple-list onto `device`.
+
+    Official demo.py keeps crop, K, pose and histograms on CPU, then `.cuda()`
+    only the `_forward` dict. Mixing those tensors (cuda:0 vs cpu) raises
+    RuntimeError inside JIT `calculate_basic_line_data` / histogram / SVD.
+    """
+    if x is None:
+        return None
+    if isinstance(x, (tuple, list)):
+        return type(x)(move_to_device(v, device, non_blocking) for v in x)
+    to = getattr(x, 'to', None)
+    if not callable(to):
+        return x
+    cur = getattr(x, 'device', None)
+    if cur == device:
+        return x
+    try:
+        return to(device, non_blocking=non_blocking)
+    except TypeError:
+        return to(device)
+
+
 class PoseOutput:
     """把每帧跟踪样本打印到 stdout, 可选写入文本文件。不依赖 ROS。"""
 
@@ -353,13 +376,15 @@ def rot_health(p):
     """返回 (det(R), 正交性最大误差)"""
     import torch
     R = p.R.double()
-    I = torch.eye(3, dtype=torch.float64)
+    I = torch.eye(3, dtype=R.dtype, device=R.device)
     return float(torch.linalg.det(R)), float((R @ R.T - I).abs().max())
 
 
 def pose_delta(p_a, p_b):
     """两个 Pose 之间的平移距离(米)和旋转角(度)"""
     import torch
+    if p_a.device != p_b.device:
+        p_a = p_a.to(p_b.device)
     dt = float((p_b.t - p_a.t).norm())
     Rr = p_b.R @ p_a.R.transpose(-1, -2)
     cos = (torch.diagonal(Rr, dim1=-2, dim2=-1).sum(-1) - 1) / 2
@@ -382,7 +407,7 @@ class Tracker:
         if self.device.type == 'cuda':
             torch.backends.cudnn.benchmark = True
         print(f'[cuda] {self.device}  iters={a.iters}  '
-              f'(official demo = 1 forward/frame)')
+              f'(crop/hist CPU, forward {self.device}; official demo = 1 forward/frame)')
 
         logger = MyLightningLogger('live', a.save_dir)
         model = get_model(train_cfg.models.name)(train_cfg.models)
@@ -406,8 +431,10 @@ class Tracker:
         with open(tpl, 'rb') as f:
             d = pickle.load(f)
         self.n_pts = d['head']['num_sample_contour_point']
-        self.tviews = torch.from_numpy(d['template_view']).float().to(self.device)
-        self.orients = torch.from_numpy(d['orientation_in_body']).float().to(self.device)
+        # Keep templates on CPU like official demo.py. Putting the bank on CUDA
+        # while Camera/hist stay on CPU is what raised cuda:0 vs cpu.
+        self.tviews = torch.from_numpy(d['template_view']).float()
+        self.orients = torch.from_numpy(d['orientation_in_body']).float()
         print(f'[tpl ] {tpl}  {len(self.orients)} views, {self.n_pts} pts/view')
 
         self.K = np.loadtxt(os.path.join(a.data_dir, 'K.txt')).reshape(3, 3)
@@ -479,15 +506,21 @@ class Tracker:
         img_t = numpy_image_to_torch(img.astype(np.float32))
         if self.device.type == 'cuda':
             try:
-                img_t = img_t.pin_memory().to(self.device, non_blocking=True)
+                img_t = img_t.pin_memory()
             except Exception:
-                img_t = img_t.to(self.device)
-        else:
-            img_t = img_t.to(self.device)
-        return img_t, camera.to(self.device)
+                pass
+        return img_t, camera
+
+    def _cpu(self, x):
+        import torch
+        return move_to_device(x, torch.device('cpu'))
+
+    def _gpu(self, x):
+        nb = self.device.type == 'cuda'
+        return move_to_device(x, self.device, non_blocking=nb)
 
     def _pose_to_device(self, pose):
-        return pose if pose.device == self.device else pose.to(self.device)
+        return self._gpu(pose)
 
     def _pose_np(self, pose):
         p = pose.detach().cpu()
@@ -500,20 +533,32 @@ class Tracker:
         return float(unc.detach().mean())
 
     def _gather_views(self, pose):
+        import torch
         from src_open.utils.utils import get_closest_k_template_view_index
+        pose = move_to_device(pose, self.orients.device)
         k = self.dc.get_top_k_template_views * self.dc.skip_template_view
         idx = get_closest_k_template_view_index(pose, self.orients, k)
         if idx.dim() > 1:
             idx = idx[0]
-        sel = idx[::self.dc.skip_template_view].reshape(-1).long()
+        sel = idx[::self.dc.skip_template_view].reshape(-1).long().to(
+            self.tviews.device)
         starts = sel * self.n_pts
-        offs = torch.arange(self.n_pts, device=self.device)
+        offs = torch.arange(self.n_pts, device=self.tviews.device)
         rows = (starts.unsqueeze(-1) + offs).reshape(-1)
         ctv = self.tviews.index_select(0, rows).view(sel.numel(), self.n_pts, -1)
         cob = self.orients.index_select(0, sel)
         return ctv, cob
 
     def _forward_model(self, img_b, cam, pose, hist, ctv, cob):
+        """Move the whole batch onto self.device, run one DeepAC forward, CPU pose out."""
+        img_b = self._gpu(img_b)
+        if img_b.dim() == 3:
+            img_b = img_b[None]
+        cam = self._gpu(cam)
+        pose = self._gpu(pose)
+        ctv = self._gpu(ctv)
+        cob = self._gpu(cob)
+        hist = (self._gpu(hist[0]), self._gpu(hist[1]))
         data = {
             'image': img_b,
             'camera': cam[None],
@@ -527,26 +572,33 @@ class Tracker:
         ps = pred['opt_body2view_pose']
         out = ps[-1][0]
         d_scale = pose_delta(ps[-2][0], ps[-1][0])
-        return out, self._read_conf(), d_scale
+        return self._cpu(out), self._read_conf(), d_scale
 
     def _make_hist(self, img_b, pose, cam, ctv):
         from src_open.models.deep_ac import calculate_basic_line_data
+        img_b = self._cpu(img_b)
+        pose = self._cpu(pose)
+        cam = self._cpu(cam)
+        ctv = self._cpu(ctv)
+        if img_b.dim() == 3:
+            img_b = img_b[None]
         *_, ci, cv_, ni, fd, bd, _ = calculate_basic_line_data(
             ctv[None][:, 0], pose[None]._data, cam[None]._data, 1, 0)
         return self.model.histogram.calculate_histogram(
             img_b, ci, cv_, ni, fd, bd, True)
 
     def _pass(self, img_rgb, pose_in, hist):
-        """Crop once + one GPU forward. pose/hist/img stay on self.device."""
+        """Crop + hist on CPU (demo.py), one GPU forward."""
+        import torch
         from src_open.utils.geometry.wrappers import Camera
         from src_open.utils.utils import (project_correspondences_line,
                                           get_bbox_from_p2d)
 
-        pose = self._pose_to_device(pose_in)
+        pose = self._cpu(pose_in)
         h, w = img_rgb.shape[:2]
         ori_cam = Camera(torch.tensor(
             [w, h, self.K[0, 0], self.K[1, 1], self.K[0, 2], self.K[1, 2]],
-            dtype=torch.float32, device=self.device))
+            dtype=torch.float32))
 
         ctv, cob = self._gather_views(pose)
         lines = project_correspondences_line(ctv[0], pose, ori_cam)
@@ -558,14 +610,14 @@ class Tracker:
         if hist is None:
             hist = self._make_hist(img_b, pose, cam, ctv)
         else:
-            hist = (hist[0].to(self.device), hist[1].to(self.device))
+            hist = (self._cpu(hist[0]), self._cpu(hist[1]))
 
         out, conf, d_scale = self._forward_model(img_b, cam, pose, hist, ctv, cob)
         return out, img_b, cam, hist, conf, d_scale
 
     def _refine(self, img_b, cam, pose, hist):
         """Extra iters: skip CPU crop, only closest-view + GPU forward."""
-        pose = self._pose_to_device(pose)
+        pose = self._cpu(pose)
         ctv, cob = self._gather_views(pose)
         out, conf, d_scale = self._forward_model(img_b, cam, pose, hist, ctv, cob)
         return out, hist, conf, d_scale
@@ -573,13 +625,13 @@ class Tracker:
     def step(self, img_rgb, pose_in, hist):
         """Default iters=1 matches official demo. Extra iters reuse the crop."""
         import torch
-        pose = self._pose_to_device(pose_in)
+        pose = self._cpu(pose_in)
         with torch.no_grad():
             pose, img_b, cam, h0, conf, d_scale = self._pass(img_rgb, pose, hist)
             for _ in range(max(0, int(self.a.iters) - 1)):
                 pose, h0, conf, d_scale = self._refine(img_b, cam, pose, h0)
         pose = orthonormalize(pose)
-        d_init = pose_delta(self._pose_to_device(pose_in), pose)
+        d_init = pose_delta(self._cpu(pose_in), pose)
         met = {'dt': d_scale[0] * 1000, 'dr': d_scale[1],
                'mt': d_init[0] * 1000, 'mr': d_init[1], 'conf': conf}
         return pose, h0, met, cam, img_b
@@ -587,11 +639,12 @@ class Tracker:
     def refresh_hist(self, img_b, pose, cam, hist):
         from src_open.utils.utils import get_closest_template_view_index
         from src_open.models.deep_ac import calculate_basic_line_data
-        pose = self._pose_to_device(pose)
-        cam = cam.to(self.device) if cam.device != self.device else cam
+        pose = self._cpu(pose)
+        cam = self._cpu(cam)
+        img_b = self._cpu(img_b)
         if img_b.dim() == 3:
             img_b = img_b[None]
-        img_b = img_b.to(self.device, non_blocking=True)
+        hist = (self._cpu(hist[0]), self._cpu(hist[1]))
         j = get_closest_template_view_index(pose, self.orients)
         if j.dim() > 0:
             j = j.reshape(-1)[0]
@@ -607,7 +660,7 @@ class Tracker:
     def commit(self, img_rgb, cand, met, tag):
         """锁定前先把位姿彻底收敛, 再据此建立直方图。"""
         import torch
-        pose = self._pose_to_device(cand)
+        pose = self._cpu(cand)
         n = max(1, self.a.lock_iters)
         with torch.no_grad():
             pose, img_b, cam, hist, conf, _ = self._pass(img_rgb, pose, None)
@@ -615,7 +668,7 @@ class Tracker:
                 pose, hist, conf, _ = self._refine(img_b, cam, pose, hist)
         pose = orthonormalize(pose)
         d, e = rot_health(pose)
-        moved = pose_delta(self._pose_to_device(cand), pose)
+        moved = pose_delta(self._cpu(cand), pose)
         print(f'[{tag}] conf={met["conf"]:.3f} cs={met["cs"]:.3f} | '
               f'收敛 {n} 遍后又移动 {moved[0]*1000:.1f}mm/{moved[1]:.1f}deg | '
               f'det(R)={d:.6f} 正交误差={e:.2e}')
@@ -702,8 +755,8 @@ class Tracker:
 
                 if self.state == 'INIT':
                     pin = Pose.from_Rt(
-                        torch.as_tensor(self.R0, dtype=torch.float32, device=self.device),
-                        torch.as_tensor(self.t0, dtype=torch.float32, device=self.device))
+                        torch.as_tensor(self.R0, dtype=torch.float32),
+                        torch.as_tensor(self.t0, dtype=torch.float32))
                     out, _, met, cam, _ = self.step(img_rgb, pin, None)
                     if self.a.recover_last and self.last_good is not None:
                         o2, _, m2, c2, _ = self.step(img_rgb, self.last_good, None)

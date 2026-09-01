@@ -195,5 +195,59 @@ class TestLiveTrackSpeedOpts(unittest.TestCase):
         self.assertEqual(len(segs), 0)
 
 
+class TestDeviceAlign(unittest.TestCase):
+    """cpu/cuda mixing is what raised: tensors on cuda:0 and cpu."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_live_track()
+
+    def test_move_to_device_nested_and_noop(self):
+        class Fake:
+            def __init__(self, device):
+                self.device = device
+                self.moves = 0
+
+            def to(self, device, non_blocking=False):
+                self.moves += 1
+                return Fake(device)
+
+        a = Fake('cpu')
+        same = self.mod.move_to_device(a, 'cpu')
+        self.assertIs(same, a)
+        self.assertEqual(a.moves, 0)
+
+        moved = self.mod.move_to_device(a, 'cuda:0')
+        self.assertEqual(moved.device, 'cuda:0')
+        nested = self.mod.move_to_device((a, [a]), 'cuda:0')
+        self.assertEqual(nested[0].device, 'cuda:0')
+        self.assertEqual(nested[1][0].device, 'cuda:0')
+
+    def test_move_to_device_none_and_plain(self):
+        self.assertIsNone(self.mod.move_to_device(None, 'cpu'))
+        self.assertEqual(self.mod.move_to_device(3, 'cpu'), 3)
+
+    def test_rot_health_matches_R_device(self):
+        try:
+            import torch
+        except ImportError:
+            self.skipTest('torch not installed')
+
+        class P:
+            def __init__(self, R):
+                self.R = R
+
+        R = torch.eye(3, dtype=torch.float32)
+        d, e = self.mod.rot_health(P(R))
+        self.assertAlmostEqual(d, 1.0, places=5)
+        self.assertLess(e, 1e-6)
+
+        if torch.cuda.is_available():
+            Rc = torch.eye(3, dtype=torch.float32, device='cuda')
+            d, e = self.mod.rot_health(P(Rc))
+            self.assertAlmostEqual(d, 1.0, places=5)
+            self.assertLess(e, 1e-6)
+
+
 if __name__ == '__main__':
     unittest.main()
