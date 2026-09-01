@@ -16,8 +16,8 @@ live_track.py  --  DeepAC 引导式初始化 + 全画面跟踪 (无 ROS)
   python live_track.py --source data/mydata/img --obj calib --data-dir data/mydata
 
   # 接相机
-  python live_track.py --source orbbec --obj calib --data-dir data/mydata
-  python live_track.py --source cam:0  --obj calib --data-dir data/mydata
+  python live_track.py --source realsense --obj calib --data-dir data/mydata
+  python live_track.py --source cam:0     --obj calib --data-dir data/mydata
 
 按键:
   INIT   j l  偏航      i k  俯仰      u o  滚转   (大写 = 0.2 度)
@@ -774,35 +774,92 @@ class Tracker:
             cv2.destroyAllWindows()
 
 
-def frames_orbbec():
-    """奥比中光彩色流。返回 (帧生成器, K 或 None)。内参直接从 SDK 读。"""
-    import cv2
-    from pyorbbecsdk import Pipeline, Config, OBSensorType
+def K_from_video_intrinsics(it):
+    """把 SDK 彩色内参转成 3x3 K。RealSense 用 ppx/ppy, 兼容 cx/cy。"""
+    cx = getattr(it, 'ppx', None)
+    if cx is None:
+        cx = it.cx
+    cy = getattr(it, 'ppy', None)
+    if cy is None:
+        cy = it.cy
+    return np.array([[it.fx, 0, cx], [0, it.fy, cy], [0, 0, 1]], np.float64)
 
-    pipe = Pipeline()
-    plist = pipe.get_stream_profile_list(OBSensorType.COLOR_SENSOR)
-    prof = plist.get_default_video_stream_profile()
-    cfg = Config()
-    cfg.enable_stream(prof)
-    pipe.start(cfg)
+
+def _color_format_name(cf):
+    """读取彩色帧格式名 (bgr8 / rgb8 / yuyv / ...), 不强制依赖 SDK 枚举。"""
+    fmt = None
+    if hasattr(cf, 'get_profile'):
+        try:
+            fmt = cf.get_profile().format()
+        except Exception:
+            fmt = None
+    if fmt is None and hasattr(cf, 'get_format'):
+        fmt = cf.get_format()
+    if fmt is None:
+        raise RuntimeError('无法读取彩色帧格式')
+    return str(fmt).rsplit('.', 1)[-1].lower()
+
+
+def _start_realsense_color(rs):
+    """只开彩色流; 默认配置失败时回退 1280x720 / 640x480 BGR8。"""
+    pipe = rs.pipeline()
+    attempts = [
+        dict(width=None, height=None, fmt=None, fps=None),
+        dict(width=1280, height=720, fmt=rs.format.bgr8, fps=30),
+        dict(width=640, height=480, fmt=rs.format.bgr8, fps=30),
+    ]
+    last_err = None
+    for spec in attempts:
+        cfg = rs.config()
+        if spec['width'] is None:
+            cfg.enable_stream(rs.stream.color)
+        else:
+            cfg.enable_stream(
+                rs.stream.color, spec['width'], spec['height'],
+                spec['fmt'], spec['fps'])
+        try:
+            profile = pipe.start(cfg)
+            return pipe, profile
+        except RuntimeError as ex:
+            last_err = ex
+            try:
+                pipe.stop()
+            except Exception:
+                pass
+            pipe = rs.pipeline()
+    raise RuntimeError('无法打开 RealSense 彩色流: {}'.format(last_err))
+
+
+def frames_orbbec():
+    """Intel RealSense 彩色流。返回 (帧生成器, K 或 None)。内参直接从 SDK 读。
+
+    函数名保持不变, 调用约定与原来一致: ``gen, K = frames_orbbec()``。
+    """
+    import pyrealsense2 as rs
+
+    pipe, profile = _start_realsense_color(rs)
 
     K = None
     try:
-        it = prof.as_video_stream_profile().get_intrinsic()
-        K = np.array([[it.fx, 0, it.cx], [0, it.fy, it.cy], [0, 0, 1]], np.float64)
-        print(f'[orbbec] SDK 内参 fx={it.fx:.1f} fy={it.fy:.1f} '
-              f'cx={it.cx:.1f} cy={it.cy:.1f}  {it.width}x{it.height}')
+        vs = profile.get_stream(rs.stream.color).as_video_stream_profile()
+        it = vs.get_intrinsics()
+        K = K_from_video_intrinsics(it)
+        print(f'[realsense] SDK 内参 fx={it.fx:.1f} fy={it.fy:.1f} '
+              f'cx={K[0, 2]:.1f} cy={K[1, 2]:.1f}  {it.width}x{it.height}')
     except Exception as ex:
-        print(f'[orbbec] 读内参失败({ex}), 回退到 K.txt')
+        print(f'[realsense] 读内参失败({ex}), 回退到 K.txt')
 
     def gen():
         try:
             while True:
-                fs = pipe.wait_for_frames(100)
+                try:
+                    fs = pipe.wait_for_frames(1000)
+                except RuntimeError:
+                    continue
                 if fs is None:
                     continue
                 cf = fs.get_color_frame()
-                if cf is None:
+                if not cf:
                     continue
                 yield color_frame_to_bgr(cf)
         finally:
@@ -810,35 +867,64 @@ def frames_orbbec():
     return gen(), K
 
 
+frames_realsense = frames_orbbec
+
+
 def color_frame_to_bgr(cf):
-    """把奥比彩色帧转成 BGR ndarray。"""
-    import cv2
-    from pyorbbecsdk import OBFormat
+    """把 RealSense 彩色帧转成 BGR ndarray。输入为彩色帧, 输出 HxWx3 uint8。"""
     w, h = cf.get_width(), cf.get_height()
-    buf = np.frombuffer(cf.get_data(), dtype=np.uint8)
-    fmt = cf.get_format()
-    if fmt == OBFormat.MJPG:
-        return cv2.imdecode(buf, cv2.IMREAD_COLOR)
-    if fmt == OBFormat.RGB:
-        return cv2.cvtColor(buf.reshape(h, w, 3), cv2.COLOR_RGB2BGR)
-    if fmt == OBFormat.BGR:
-        return buf.reshape(h, w, 3)
-    if fmt == OBFormat.YUYV:
-        return cv2.cvtColor(buf.reshape(h, w, 2), cv2.COLOR_YUV2BGR_YUYV)
-    if fmt == OBFormat.NV12:
-        return cv2.cvtColor(buf.reshape(h * 3 // 2, w), cv2.COLOR_YUV2BGR_NV12)
-    raise RuntimeError(f'未处理的彩色格式 {fmt}, 请在 color_frame_to_bgr 里补上')
+    name = _color_format_name(cf)
+
+    if name in ('mjpeg', 'mjpg'):
+        import cv2
+        buf = np.frombuffer(bytes(cf.get_data()), dtype=np.uint8)
+        img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+        if img is None:
+            raise RuntimeError('RealSense MJPEG 解码失败')
+        return img
+
+    data = np.asanyarray(cf.get_data())
+    if name in ('bgr8', 'bgr'):
+        if data.ndim == 1:
+            data = data.reshape(h, w, 3)
+        return np.ascontiguousarray(data)
+    if name in ('rgb8', 'rgb'):
+        import cv2
+        if data.ndim == 1:
+            data = data.reshape(h, w, 3)
+        return cv2.cvtColor(data, cv2.COLOR_RGB2BGR)
+    if name in ('bgra8', 'bgra'):
+        import cv2
+        if data.ndim == 1:
+            data = data.reshape(h, w, 4)
+        return cv2.cvtColor(data, cv2.COLOR_BGRA2BGR)
+    if name in ('rgba8', 'rgba'):
+        import cv2
+        if data.ndim == 1:
+            data = data.reshape(h, w, 4)
+        return cv2.cvtColor(data, cv2.COLOR_RGBA2BGR)
+    if name in ('yuyv', 'yuy2', 'yuv422'):
+        import cv2
+        if data.ndim == 1:
+            data = data.reshape(h, w, 2)
+        return cv2.cvtColor(data, cv2.COLOR_YUV2BGR_YUYV)
+    if name in ('y8', 'raw8', 'gray'):
+        import cv2
+        if data.ndim == 1:
+            data = data.reshape(h, w)
+        return cv2.cvtColor(data, cv2.COLOR_GRAY2BGR)
+    raise RuntimeError(f'未处理的彩色格式 {name}, 请在 color_frame_to_bgr 里补上')
 
 
 def frames_from(source):
     """返回 (帧序列或生成器, K 或 None)。不支持 ROS2。"""
     if source.startswith('ros2:') or source.startswith('ros:'):
         sys.exit(
-            '已去掉 ROS 依赖。请改用图像目录、cam:0 或 orbbec;\n'
+            '已去掉 ROS 依赖。请改用图像目录、cam:0 或 realsense;\n'
             '位姿每帧打印到 stdout, 也可用 --output / --log-pose 落盘。'
         )
     import cv2
-    if source == 'orbbec':
+    if source in ('orbbec', 'realsense', 'rs'):
         return frames_orbbec()
     if source.startswith('cam:'):
         cap = cv2.VideoCapture(int(source[4:]))
@@ -864,7 +950,7 @@ def build_parser():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--source', required=True,
-                   help='图像目录 | cam:0 | orbbec')
+                   help='图像目录 | cam:0 | realsense')
     p.add_argument('--obj', required=True)
     p.add_argument('--data-dir', required=True)
     p.add_argument('--load-cfg', default='workspace/train_bop_deepac/'

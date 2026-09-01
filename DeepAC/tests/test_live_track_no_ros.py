@@ -150,8 +150,10 @@ class TestParserHelp(unittest.TestCase):
         text = LIVE_TRACK.read_text(encoding='utf-8')
         self.assertIn('--output', text)
         self.assertIn('cam:0', text)
+        self.assertIn('realsense', text)
         self.assertNotIn('--publish-pose', text)
         self.assertNotIn('ros2:/camera', text)
+        self.assertNotIn('pyorbbecsdk', text)
 
 
 if __name__ == '__main__':
