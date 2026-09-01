@@ -1,0 +1,55 @@
+--- a/src_open/utils/utils.py
++++ b/src_open/utils/utils.py
+@@ -19,6 +19,27 @@
+ 
+     return file_list
+ 
++def file_path_to_mod_path(file_path, base_path):
++    """Convert a .py filesystem path to a dotted module path starting at base_path.
++
++    Original DeepAC only replaced POSIX '/' with '.', so on Windows a path like
++    ``E:\\...\\src_open\\models\\deep_ac.py`` never contained ``src_open.models``.
++    ``str.find`` then returned -1 and ``whole_path[-1:]`` became the last
++    character of the filename (``'c'`` in ``deep_ac``), causing
++    ``ModuleNotFoundError: No module named 'c'``.
++    """
++    root, ext = os.path.splitext(file_path)
++    if ext.lower() != '.py':
++        root = file_path[:-3]
++    whole_path = root.replace('\\', '.').replace('/', '.')
++    p = whole_path.find(base_path)
++    if p < 0:
++        raise ModuleNotFoundError(
++            "Cannot map file {!r} onto package {!r} (converted path: {!r})".format(
++                file_path, base_path, whole_path)
++        )
++    return whole_path[p:]
++
+ def get_class(mod_name, base_path, base_dir, BaseClass):
+     """Get the class object which inherits from BaseClass and is defined in
+        the module named mod_name, child of base_path.
+@@ -27,15 +48,17 @@
+     mod_path = None
+     get_file_list(base_dir, file_list, 'py')
+     for file in file_list:
+-        file_name = os.path.basename(file).split('.')[0]
+-        if file_name == mod_name and '__' not in file:
+-            whole_path = file[:-3].replace('/', '.')
+-            p = whole_path.find(base_path)
+-            mod_path = whole_path[p:]
++        file_name = os.path.splitext(os.path.basename(file))[0]
++        # Only skip dunder modules such as __init__.py, not any absolute path
++        # that happens to contain '__' (common in Windows user folders).
++        if file_name == mod_name and not file_name.startswith('__'):
++            mod_path = file_path_to_mod_path(file, base_path)
+             break
+ 
+-    if mod_path == None:
+-        raise NotImplementedError
++    if mod_path is None:
++        raise NotImplementedError(
++            "No module named {!r} found under {}".format(mod_name, base_dir)
++        )
+ 
+     # mod_path = '{}.{}'.format(base_path, mod_name)
+     mod = __import__(mod_path, fromlist=[''])
