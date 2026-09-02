@@ -1,0 +1,3 @@
+_target_: utils.pl_compat.LearningRateMonitor
+
+logging_interval: step
