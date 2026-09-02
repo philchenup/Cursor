@@ -62,18 +62,27 @@ index a72a758..bdf1c68 100644
          self,
          **kwargs,
 diff --git a/scripts/inference_gotrack.py b/scripts/inference_gotrack.py
-index 823e81f..d1ce152 100644
+index 823e81f..ed6709a 100644
 --- a/scripts/inference_gotrack.py
 +++ b/scripts/inference_gotrack.py
-@@ -11,6 +11,7 @@ from hydra.utils import instantiate
+@@ -11,6 +11,8 @@ from hydra.utils import instantiate
  from torch.utils.data import DataLoader
  from utils import data_util, net_util  # noqa: F401
  from utils.logging import get_logger
 +from utils.pl_compat import instantiate_trainer
++from utils.win_compat import dataloader_num_workers, normalize_windows_paths
  import warnings
  
  warnings.filterwarnings("ignore")
-@@ -33,7 +34,7 @@ def run_inference(cfg: DictConfig):
+@@ -22,6 +24,7 @@ logger = get_logger(__name__)
+ )
+ def run_inference(cfg: DictConfig):
+     OmegaConf.set_struct(cfg, False)
++    normalize_windows_paths(cfg)
+     logger.info("Initializing logger, callbacks and trainer")
+     cfg_trainer = cfg.machine.trainer
+ 
+@@ -33,7 +36,7 @@ def run_inference(cfg: DictConfig):
          raise NotImplementedError("Only Tensorboard loggers are supported")
      os.makedirs(cfg.save_dir, exist_ok=True)
  
@@ -82,19 +91,46 @@ index 823e81f..d1ce152 100644
      logger.info("Trainer initialized!")
  
      model = instantiate(cfg.model)
+@@ -56,7 +59,7 @@ def run_inference(cfg: DictConfig):
+         test_dataloader = DataLoader(
+             test_dataset,
+             batch_size=1,
+-            num_workers=cfg.machine.num_workers,
++            num_workers=dataloader_num_workers(cfg.machine.num_workers),
+             collate_fn=data_util.convert_list_scene_observations_to_gotrack_inputs,
+         )
+         result_dir = (
+@@ -74,7 +77,7 @@ def run_inference(cfg: DictConfig):
+         test_dataloader = DataLoader(
+             test_dataset,
+             batch_size=1,
+-            num_workers=cfg.machine.num_workers,
++            num_workers=dataloader_num_workers(cfg.machine.num_workers),
+             collate_fn=data_util.collate_fn,
+         )
+         result_dir = (
 diff --git a/scripts/inference_pose_estimation.py b/scripts/inference_pose_estimation.py
-index dd654b2..922d6ec 100644
+index dd654b2..98cfde1 100644
 --- a/scripts/inference_pose_estimation.py
 +++ b/scripts/inference_pose_estimation.py
-@@ -10,6 +10,7 @@ import hydra
+@@ -10,6 +10,8 @@ import hydra
  from omegaconf import DictConfig, OmegaConf
  from hydra.utils import instantiate
  from utils import data_util, logging, net_util, template_util, gen_repre_util
 +from utils.pl_compat import instantiate_trainer
++from utils.win_compat import dataloader_num_workers, normalize_windows_paths
  import warnings
  from torch.utils.data import DataLoader
  from model import pipeline
-@@ -32,7 +33,7 @@ def run_inference(cfg: DictConfig):
+@@ -23,6 +25,7 @@ logger = logging.get_logger(__name__)
+ )
+ def run_inference(cfg: DictConfig):
+     OmegaConf.set_struct(cfg, False)
++    normalize_windows_paths(cfg)
+     logger.info("Initializing logger, callbacks and trainer")
+     cfg_trainer = cfg.machine.trainer
+ 
+@@ -32,7 +35,7 @@ def run_inference(cfg: DictConfig):
          logger.info(f"Tensorboard logger initialized at {tensorboard_dir}")
      else:
          raise NotImplementedError("Only Tensorboard loggers are supported")
@@ -103,12 +139,40 @@ index dd654b2..922d6ec 100644
      logger.info("Trainer initialized!")
  
      # Set up the dataset.
+@@ -51,7 +54,7 @@ def run_inference(cfg: DictConfig):
+     test_dataloader = DataLoader(
+         test_dataset,
+         batch_size=1,
+-        num_workers=cfg.machine.num_workers,
++        num_workers=dataloader_num_workers(cfg.machine.num_workers),
+         collate_fn=collate_fn,
+     )
+ 
+diff --git a/utils/misc.py b/utils/misc.py
+index b0aa9ad..21ed5c5 100644
+--- a/utils/misc.py
++++ b/utils/misc.py
+@@ -206,7 +206,13 @@ def slugify(string: str) -> str:
+     Returns:
+         A slugified string.
+     """
+-    return string.strip("/").replace("/", "-").replace(" ", "-").replace(".", "-")
++    return (
++        string.replace("\\", "/")
++        .strip("/")
++        .replace("/", "-")
++        .replace(" ", "-")
++        .replace(".", "-")
++    )
+ 
+ 
+ def ensure_three_channels(im: np.ndarray) -> np.ndarray:
 diff --git a/utils/pl_compat.py b/utils/pl_compat.py
 new file mode 100644
-index 0000000..cc8a5e0
+index 0000000..e1bfe87
 --- /dev/null
 +++ b/utils/pl_compat.py
-@@ -0,0 +1,274 @@
+@@ -0,0 +1,283 @@
 +"""PyTorch Lightning import shim for GoTrack Hydra configs.
 +
 +GoTrack's YAML uses ``_target_: pytorch_lightning.Trainer`` under
@@ -139,6 +203,8 @@ index 0000000..cc8a5e0
 +
 +import importlib
 +from typing import Any, Iterable, Optional
++
++from utils.win_compat import hydra_full_error_hint, is_windows
 +
 +_PL_MODULE_CANDIDATES = (
 +    "pytorch_lightning",
@@ -188,8 +254,7 @@ index 0000000..cc8a5e0
 +    "  pip install 'pytorch-lightning==1.8.6'\n"
 +    "Lightning 2.x also works with this shim:\n"
 +    "  pip install lightning\n"
-+    "To see Hydra's chained ImportError, run:\n"
-+    "  export HYDRA_FULL_ERROR=1"
++    + hydra_full_error_hint()
 +)
 +
 +
@@ -270,6 +335,14 @@ index 0000000..cc8a5e0
 +        adapted["accelerator"] = "cpu"
 +        adapted["devices"] = 1
 +        n_devices = 1
++
++    # NCCL DDP is not available on Windows. Keep a single process.
++    if is_windows():
++        devices = adapted.get("devices")
++        if isinstance(devices, (list, tuple)) and len(devices) > 1:
++            adapted["devices"] = [devices[0]]
++            n_devices = 1
++        adapted.pop("strategy", None)
 +
 +    strategy = adapted.get("strategy")
 +    if strategy in (
@@ -383,3 +456,196 @@ index 0000000..cc8a5e0
 +                extra, type(cause).__name__, cause
 +            )
 +        ) from exc
+diff --git a/utils/renderer.py b/utils/renderer.py
+index dee64f2..e6f38ff 100644
+--- a/utils/renderer.py
++++ b/utils/renderer.py
+@@ -11,13 +11,16 @@ import time
+ 
+ import numpy as np
+ import trimesh
++from utils.win_compat import configure_opengl_platform
++
++# EGL is Linux-only. Upstream always set PYOPENGL_PLATFORM=egl, which crashes
++# pyrender on Windows. Configure the backend before importing pyrender.
++configure_opengl_platform()
+ import pyrender
+ from utils import renderer_base, structs, torch_helpers, logging
+ 
+ 
+ logger = logging.get_logger(__name__)
+-os.environ["DISPLAY"] = ":1"
+-os.environ["PYOPENGL_PLATFORM"] = "egl"
+ 
+ 
+ class RenderType(Enum):
+diff --git a/utils/template_util.py b/utils/template_util.py
+index 0d85260..d492004 100644
+--- a/utils/template_util.py
++++ b/utils/template_util.py
+@@ -15,6 +15,7 @@ import numpy as np
+ import torch
+ import multiprocessing
+ from bop_toolkit_lib import inout, dataset_params
++from utils.win_compat import mp_pool_workers
+ from utils import (
+     crop_generation,
+     im_util,
+@@ -725,16 +726,17 @@ def batch_synthesize_templates(
+         list_opts=list_opts,
+     )
+ 
+-    pool = multiprocessing.Pool(processes=num_workers)
+     start_time = time.time()
+-    synthesize_templates_worker = partial(
+-        synthesize_templates_process,
+-        bop_root_dir=bop_root_dir,
+-        list_opts=list_opts,
+-    )
+-    pool.map(synthesize_templates_worker, range(len(list_opts)))
+-    pool.close()
+-    pool.join()
++    workers = mp_pool_workers(num_workers)
++    if workers <= 0:
++        # Windows spawn + Hydra cannot use multiprocessing.Pool safely.
++        for idx in range(len(list_opts)):
++            synthesize_templates_worker(idx)
++    else:
++        pool = multiprocessing.Pool(processes=workers)
++        pool.map(synthesize_templates_worker, range(len(list_opts)))
++        pool.close()
++        pool.join()
+     end_time = time.time()
+     run_time_per_object = (end_time - start_time) / len(list_opts)
+     logger.info(
+diff --git a/utils/win_compat.py b/utils/win_compat.py
+new file mode 100644
+index 0000000..cbd0fe6
+--- /dev/null
++++ b/utils/win_compat.py
+@@ -0,0 +1,125 @@
++"""Windows runtime helpers for GoTrack.
++
++Upstream GoTrack is written for Linux (EGL + NCCL DDP + fork DataLoader).
++On Windows those defaults crash before a pose is produced:
++
++* ``PYOPENGL_PLATFORM=egl`` is Linux-only (pyrender/OpenGL)
++* ``strategy: ddp`` needs NCCL, which PyTorch does not ship on Windows
++* ``DataLoader(num_workers>0)`` and ``multiprocessing.Pool`` use spawn and
++  interact badly with Hydra re-entry
++* YAML ``root_dir: D:\\data\\...`` treats backslashes as escapes
++"""
++
++from __future__ import annotations
++
++import os
++import sys
++from pathlib import Path
++from typing import Any, Optional
++
++
++def is_windows() -> bool:
++    return sys.platform == "win32"
++
++
++def configure_opengl_platform() -> None:
++    """Select a pyrender backend. Call before ``import pyrender``."""
++    if is_windows():
++        platform = os.environ.get("PYOPENGL_PLATFORM", "").lower()
++        if platform in ("egl", "osmesa"):
++            os.environ.pop("PYOPENGL_PLATFORM", None)
++        display = os.environ.get("DISPLAY", "")
++        if display.startswith(":"):
++            os.environ.pop("DISPLAY", None)
++        return
++    if sys.platform.startswith("linux"):
++        os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
++        os.environ.setdefault("DISPLAY", os.environ.get("DISPLAY", ":0"))
++
++
++def dataloader_num_workers(requested: Any) -> int:
++    """Windows: always 0. Spawn workers + Hydra often deadlock or re-run main."""
++    if is_windows():
++        return 0
++    try:
++        return max(0, int(requested))
++    except (TypeError, ValueError):
++        return 0
++
++
++def mp_pool_workers(requested: Any) -> int:
++    """Return 0 to mean run inline (do not spawn a ``multiprocessing.Pool``)."""
++    if is_windows():
++        return 0
++    try:
++        count = int(requested)
++    except (TypeError, ValueError):
++        count = 1
++    if count <= 1:
++        return 0
++    return count
++
++
++def _as_filesystem_path(value: Any) -> Optional[str]:
++    if value is None:
++        return None
++    text = str(value).strip().replace("\\", "/")
++    if not text:
++        return None
++    return str(Path(text))
++
++
++def normalize_windows_paths(cfg: Any) -> Any:
++    """Turn Hydra path strings into real filesystem paths on Windows.
++
++    Unquoted ``\\`` in YAML is an escape. Prefer ``D:/data/gotrack_project``.
++    """
++    if not is_windows() or cfg is None:
++        return cfg
++
++    def _set(node: Any, key: str) -> None:
++        try:
++            current = node.get(key) if hasattr(node, "get") else None
++        except Exception:  # noqa: BLE001
++            return
++        fixed = _as_filesystem_path(current)
++        if fixed is None:
++            return
++        try:
++            node[key] = fixed
++        except Exception:  # noqa: BLE001
++            try:
++                setattr(node, key, fixed)
++            except Exception:  # noqa: BLE001
++                pass
++
++    _set(cfg, "save_dir")
++    user = None
++    machine = None
++    try:
++        user = cfg.get("user")
++    except Exception:  # noqa: BLE001
++        user = getattr(cfg, "user", None)
++    try:
++        machine = cfg.get("machine")
++    except Exception:  # noqa: BLE001
++        machine = getattr(cfg, "machine", None)
++    if user is not None:
++        _set(user, "root_dir")
++    if machine is not None:
++        _set(machine, "root_dir")
++    return cfg
++
++
++def hydra_full_error_hint() -> str:
++    if is_windows():
++        return (
++            "To see Hydra's chained ImportError, run:\n"
++            "  set HYDRA_FULL_ERROR=1\n"
++            "  python -m scripts.inference_gotrack"
++        )
++    return (
++        "To see Hydra's chained ImportError, run:\n"
++        "  export HYDRA_FULL_ERROR=1\n"
++        "  python -m scripts.inference_gotrack"
++    )

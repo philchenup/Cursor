@@ -11,6 +11,7 @@ from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate
 from utils import data_util, logging, net_util, template_util, gen_repre_util
 from utils.pl_compat import instantiate_trainer
+from utils.win_compat import dataloader_num_workers, normalize_windows_paths
 import warnings
 from torch.utils.data import DataLoader
 from model import pipeline
@@ -24,6 +25,7 @@ logger = logging.get_logger(__name__)
 )
 def run_inference(cfg: DictConfig):
     OmegaConf.set_struct(cfg, False)
+    normalize_windows_paths(cfg)
     logger.info("Initializing logger, callbacks and trainer")
     cfg_trainer = cfg.machine.trainer
 
@@ -52,7 +54,7 @@ def run_inference(cfg: DictConfig):
     test_dataloader = DataLoader(
         test_dataset,
         batch_size=1,
-        num_workers=cfg.machine.num_workers,
+        num_workers=dataloader_num_workers(cfg.machine.num_workers),
         collate_fn=collate_fn,
     )
 

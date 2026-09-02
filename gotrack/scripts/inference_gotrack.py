@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader
 from utils import data_util, net_util  # noqa: F401
 from utils.logging import get_logger
 from utils.pl_compat import instantiate_trainer
+from utils.win_compat import dataloader_num_workers, normalize_windows_paths
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -23,6 +24,7 @@ logger = get_logger(__name__)
 )
 def run_inference(cfg: DictConfig):
     OmegaConf.set_struct(cfg, False)
+    normalize_windows_paths(cfg)
     logger.info("Initializing logger, callbacks and trainer")
     cfg_trainer = cfg.machine.trainer
 
@@ -57,7 +59,7 @@ def run_inference(cfg: DictConfig):
         test_dataloader = DataLoader(
             test_dataset,
             batch_size=1,
-            num_workers=cfg.machine.num_workers,
+            num_workers=dataloader_num_workers(cfg.machine.num_workers),
             collate_fn=data_util.convert_list_scene_observations_to_gotrack_inputs,
         )
         result_dir = (
@@ -75,7 +77,7 @@ def run_inference(cfg: DictConfig):
         test_dataloader = DataLoader(
             test_dataset,
             batch_size=1,
-            num_workers=cfg.machine.num_workers,
+            num_workers=dataloader_num_workers(cfg.machine.num_workers),
             collate_fn=data_util.collate_fn,
         )
         result_dir = (

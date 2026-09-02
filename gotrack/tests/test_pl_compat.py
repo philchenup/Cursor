@@ -136,15 +136,30 @@ class TestAdaptTrainerKwargs(unittest.TestCase):
         self.assertNotIn("strategy", adapted)
         self.assertEqual(adapted["max_epochs"], 1000)
 
+    def test_windows_always_drops_ddp_even_with_multi_gpu(self):
+        with mock.patch.object(pl_compat, "_cuda_available", return_value=True):
+            with mock.patch.object(pl_compat, "is_windows", return_value=True):
+                adapted = pl_compat.adapt_trainer_kwargs(
+                    {
+                        "accelerator": "gpu",
+                        "devices": [0, 1],
+                        "strategy": "ddp",
+                    }
+                )
+        self.assertEqual(adapted["accelerator"], "gpu")
+        self.assertEqual(adapted["devices"], [0])
+        self.assertNotIn("strategy", adapted)
+
     def test_multi_gpu_keeps_ddp_when_cuda_exists(self):
         with mock.patch.object(pl_compat, "_cuda_available", return_value=True):
-            adapted = pl_compat.adapt_trainer_kwargs(
-                {
-                    "accelerator": "gpu",
-                    "devices": [0, 1],
-                    "strategy": "ddp",
-                }
-            )
+            with mock.patch.object(pl_compat, "is_windows", return_value=False):
+                adapted = pl_compat.adapt_trainer_kwargs(
+                    {
+                        "accelerator": "gpu",
+                        "devices": [0, 1],
+                        "strategy": "ddp",
+                    }
+                )
         self.assertEqual(adapted["accelerator"], "gpu")
         self.assertEqual(adapted["devices"], [0, 1])
         self.assertEqual(adapted["strategy"], "ddp")

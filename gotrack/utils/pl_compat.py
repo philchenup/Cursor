@@ -29,6 +29,8 @@ from __future__ import annotations
 import importlib
 from typing import Any, Iterable, Optional
 
+from utils.win_compat import hydra_full_error_hint, is_windows
+
 _PL_MODULE_CANDIDATES = (
     "pytorch_lightning",
     "lightning.pytorch",
@@ -77,8 +79,7 @@ _INSTALL_HINT = (
     "  pip install 'pytorch-lightning==1.8.6'\n"
     "Lightning 2.x also works with this shim:\n"
     "  pip install lightning\n"
-    "To see Hydra's chained ImportError, run:\n"
-    "  export HYDRA_FULL_ERROR=1"
+    + hydra_full_error_hint()
 )
 
 
@@ -159,6 +160,14 @@ def adapt_trainer_kwargs(kwargs: dict) -> dict:
         adapted["accelerator"] = "cpu"
         adapted["devices"] = 1
         n_devices = 1
+
+    # NCCL DDP is not available on Windows. Keep a single process.
+    if is_windows():
+        devices = adapted.get("devices")
+        if isinstance(devices, (list, tuple)) and len(devices) > 1:
+            adapted["devices"] = [devices[0]]
+            n_devices = 1
+        adapted.pop("strategy", None)
 
     strategy = adapted.get("strategy")
     if strategy in (

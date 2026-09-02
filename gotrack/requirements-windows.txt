@@ -1,0 +1,42 @@
+# Install PyTorch for Windows first: https://pytorch.org
+# Example CUDA 11.8:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+# Then:
+#   pip install -r requirements-windows.txt
+#
+# Skip Linux-only GoTrack pins: faiss-gpu, cuml-cu11, xformers, submitit.
+
+pytorch-lightning==1.8.6
+hydra-core==1.3.2
+hydra-colorlog==1.2.0
+omegaconf
+torchmetrics==0.10.3
+opencv-python
+numpy==1.26.4
+pillow==10.3.0
+scipy==1.13.0
+matplotlib==3.8.4
+tqdm
+einops
+distinctipy
+trimesh
+kornia==0.7.2
+scikit-learn==1.5.0
+scikit-image==0.22.0
+imageio==2.34.1
+pycocotools
+pyyaml
+pytz==2024.1
+pypng==0.20220715.0
+webdataset==0.2.86
+huggingface-hub
+ultralytics==8.0.135
+pyrender==0.1.45
+pyglet==2.0.15
+pyopengl==3.1.0
+faiss-cpu
+timm
+fvcore
+iopath
+torchinfo
+vispy==0.12.1
