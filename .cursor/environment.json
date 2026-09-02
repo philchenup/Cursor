@@ -1,0 +1,4 @@
+{
+  "name": "ScaleAISShape (OpenCASCADE C++)",
+  "install": "bash .cursor/install.sh"
+}
