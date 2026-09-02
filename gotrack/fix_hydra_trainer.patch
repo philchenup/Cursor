@@ -1,0 +1,651 @@
+diff --git a/configs/callback/checkpoint/base.yaml b/configs/callback/checkpoint/base.yaml
+index 0ed5285..b44a198 100644
+--- a/configs/callback/checkpoint/base.yaml
++++ b/configs/callback/checkpoint/base.yaml
+@@ -1,4 +1,4 @@
+-_target_: pytorch_lightning.callbacks.ModelCheckpoint
++_target_: utils.pl_compat.ModelCheckpoint
+ 
+ dirpath: ${save_dir}/checkpoints
+ save_last: true
+diff --git a/configs/callback/lr/base.yaml b/configs/callback/lr/base.yaml
+index 0be5c7b..d700adc 100644
+--- a/configs/callback/lr/base.yaml
++++ b/configs/callback/lr/base.yaml
+@@ -1,3 +1,3 @@
+-_target_: pytorch_lightning.callbacks.LearningRateMonitor
++_target_: utils.pl_compat.LearningRateMonitor
+ 
+ logging_interval: step
+diff --git a/configs/machine/trainer/local.yaml b/configs/machine/trainer/local.yaml
+index c7a7691..300b0c4 100644
+--- a/configs/machine/trainer/local.yaml
++++ b/configs/machine/trainer/local.yaml
+@@ -1,4 +1,6 @@
+-_target_:  pytorch_lightning.Trainer
++# Use the local shim so Hydra can locate Trainer whether the installed
++# package is pytorch-lightning 1.8 or lightning 2.x.
++_target_: utils.pl_compat.Trainer
+ max_epochs: 1000
+ accelerator: gpu
+ devices: [0]
+diff --git a/configs/machine/trainer/logger/tensorboard.yaml b/configs/machine/trainer/logger/tensorboard.yaml
+index 157f561..2190850 100644
+--- a/configs/machine/trainer/logger/tensorboard.yaml
++++ b/configs/machine/trainer/logger/tensorboard.yaml
+@@ -1,4 +1,4 @@
+-_target_:  pytorch_lightning.loggers.TensorBoardLogger
++_target_: utils.pl_compat.TensorBoardLogger
+ 
+ # Define logger
+ save_dir: ${save_dir}/
+diff --git a/model/base.py b/model/base.py
+index a72a758..bdf1c68 100644
+--- a/model/base.py
++++ b/model/base.py
+@@ -6,15 +6,15 @@
+ 
+ from pathlib import Path
+ import distinctipy
+-import pytorch_lightning as pl
+ from tqdm import tqdm
+ from utils import renderer_builder, repre_util, logging
++from utils.pl_compat import LightningModule
+ from dataloader import base
+ 
+ logger = logging.get_logger(__name__)
+ 
+ 
+-class ModelBase(pl.LightningModule):
++class ModelBase(LightningModule):
+     def __init__(
+         self,
+         **kwargs,
+diff --git a/scripts/inference_gotrack.py b/scripts/inference_gotrack.py
+index 823e81f..ed6709a 100644
+--- a/scripts/inference_gotrack.py
++++ b/scripts/inference_gotrack.py
+@@ -11,6 +11,8 @@ from hydra.utils import instantiate
+ from torch.utils.data import DataLoader
+ from utils import data_util, net_util  # noqa: F401
+ from utils.logging import get_logger
++from utils.pl_compat import instantiate_trainer
++from utils.win_compat import dataloader_num_workers, normalize_windows_paths
+ import warnings
+ 
+ warnings.filterwarnings("ignore")
+@@ -22,6 +24,7 @@ logger = get_logger(__name__)
+ )
+ def run_inference(cfg: DictConfig):
+     OmegaConf.set_struct(cfg, False)
++    normalize_windows_paths(cfg)
+     logger.info("Initializing logger, callbacks and trainer")
+     cfg_trainer = cfg.machine.trainer
+ 
+@@ -33,7 +36,7 @@ def run_inference(cfg: DictConfig):
+         raise NotImplementedError("Only Tensorboard loggers are supported")
+     os.makedirs(cfg.save_dir, exist_ok=True)
+ 
+-    trainer = instantiate(cfg_trainer)
++    trainer = instantiate_trainer(cfg_trainer)
+     logger.info("Trainer initialized!")
+ 
+     model = instantiate(cfg.model)
+@@ -56,7 +59,7 @@ def run_inference(cfg: DictConfig):
+         test_dataloader = DataLoader(
+             test_dataset,
+             batch_size=1,
+-            num_workers=cfg.machine.num_workers,
++            num_workers=dataloader_num_workers(cfg.machine.num_workers),
+             collate_fn=data_util.convert_list_scene_observations_to_gotrack_inputs,
+         )
+         result_dir = (
+@@ -74,7 +77,7 @@ def run_inference(cfg: DictConfig):
+         test_dataloader = DataLoader(
+             test_dataset,
+             batch_size=1,
+-            num_workers=cfg.machine.num_workers,
++            num_workers=dataloader_num_workers(cfg.machine.num_workers),
+             collate_fn=data_util.collate_fn,
+         )
+         result_dir = (
+diff --git a/scripts/inference_pose_estimation.py b/scripts/inference_pose_estimation.py
+index dd654b2..98cfde1 100644
+--- a/scripts/inference_pose_estimation.py
++++ b/scripts/inference_pose_estimation.py
+@@ -10,6 +10,8 @@ import hydra
+ from omegaconf import DictConfig, OmegaConf
+ from hydra.utils import instantiate
+ from utils import data_util, logging, net_util, template_util, gen_repre_util
++from utils.pl_compat import instantiate_trainer
++from utils.win_compat import dataloader_num_workers, normalize_windows_paths
+ import warnings
+ from torch.utils.data import DataLoader
+ from model import pipeline
+@@ -23,6 +25,7 @@ logger = logging.get_logger(__name__)
+ )
+ def run_inference(cfg: DictConfig):
+     OmegaConf.set_struct(cfg, False)
++    normalize_windows_paths(cfg)
+     logger.info("Initializing logger, callbacks and trainer")
+     cfg_trainer = cfg.machine.trainer
+ 
+@@ -32,7 +35,7 @@ def run_inference(cfg: DictConfig):
+         logger.info(f"Tensorboard logger initialized at {tensorboard_dir}")
+     else:
+         raise NotImplementedError("Only Tensorboard loggers are supported")
+-    trainer = instantiate(cfg_trainer)
++    trainer = instantiate_trainer(cfg_trainer)
+     logger.info("Trainer initialized!")
+ 
+     # Set up the dataset.
+@@ -51,7 +54,7 @@ def run_inference(cfg: DictConfig):
+     test_dataloader = DataLoader(
+         test_dataset,
+         batch_size=1,
+-        num_workers=cfg.machine.num_workers,
++        num_workers=dataloader_num_workers(cfg.machine.num_workers),
+         collate_fn=collate_fn,
+     )
+ 
+diff --git a/utils/misc.py b/utils/misc.py
+index b0aa9ad..21ed5c5 100644
+--- a/utils/misc.py
++++ b/utils/misc.py
+@@ -206,7 +206,13 @@ def slugify(string: str) -> str:
+     Returns:
+         A slugified string.
+     """
+-    return string.strip("/").replace("/", "-").replace(" ", "-").replace(".", "-")
++    return (
++        string.replace("\\", "/")
++        .strip("/")
++        .replace("/", "-")
++        .replace(" ", "-")
++        .replace(".", "-")
++    )
+ 
+ 
+ def ensure_three_channels(im: np.ndarray) -> np.ndarray:
+diff --git a/utils/pl_compat.py b/utils/pl_compat.py
+new file mode 100644
+index 0000000..e1bfe87
+--- /dev/null
++++ b/utils/pl_compat.py
+@@ -0,0 +1,283 @@
++"""PyTorch Lightning import shim for GoTrack Hydra configs.
++
++GoTrack's YAML uses ``_target_: pytorch_lightning.Trainer`` under
++``machine.trainer``. Hydra then does the equivalent of
++``from pytorch_lightning import Trainer``. When that import fails, Hydra
++reports only:
++
++    Error locating target 'pytorch_lightning.Trainer'
++    full_key: machine.trainer
++
++and hides the real exception unless ``HYDRA_FULL_ERROR=1``.
++
++That import fails when:
++
++* ``pytorch-lightning`` is not installed
++* only the Lightning 2 metapackage ``lightning`` is installed
++  (``lightning.pytorch.Trainer`` exists, ``pytorch_lightning`` may not)
++* ``pytorch_lightning`` itself crashes on import (version skew with
++  torch / torchmetrics)
++
++This module re-exports Trainer, loggers, and callbacks from whichever
++package is available, and is the Hydra ``_target_`` used by the patched
++configs. Inference scripts also rewrite leftover ``pytorch_lightning.*``
++targets so an unpatched YAML still works.
++"""
++
++from __future__ import annotations
++
++import importlib
++from typing import Any, Iterable, Optional
++
++from utils.win_compat import hydra_full_error_hint, is_windows
++
++_PL_MODULE_CANDIDATES = (
++    "pytorch_lightning",
++    "lightning.pytorch",
++)
++
++_TARGET_MAP = {
++    "pytorch_lightning.Trainer": "utils.pl_compat.Trainer",
++    "pytorch_lightning.trainer.Trainer": "utils.pl_compat.Trainer",
++    "pytorch_lightning.trainer.trainer.Trainer": "utils.pl_compat.Trainer",
++    "lightning.pytorch.Trainer": "utils.pl_compat.Trainer",
++    "lightning.pytorch.trainer.Trainer": "utils.pl_compat.Trainer",
++    "lightning.pytorch.trainer.trainer.Trainer": "utils.pl_compat.Trainer",
++    "pytorch_lightning.loggers.TensorBoardLogger": "utils.pl_compat.TensorBoardLogger",
++    "pytorch_lightning.loggers.tensorboard.TensorBoardLogger": (
++        "utils.pl_compat.TensorBoardLogger"
++    ),
++    "lightning.pytorch.loggers.TensorBoardLogger": "utils.pl_compat.TensorBoardLogger",
++    "lightning.pytorch.loggers.tensorboard.TensorBoardLogger": (
++        "utils.pl_compat.TensorBoardLogger"
++    ),
++    "pytorch_lightning.callbacks.LearningRateMonitor": (
++        "utils.pl_compat.LearningRateMonitor"
++    ),
++    "pytorch_lightning.callbacks.lr_monitor.LearningRateMonitor": (
++        "utils.pl_compat.LearningRateMonitor"
++    ),
++    "lightning.pytorch.callbacks.LearningRateMonitor": (
++        "utils.pl_compat.LearningRateMonitor"
++    ),
++    "lightning.pytorch.callbacks.lr_monitor.LearningRateMonitor": (
++        "utils.pl_compat.LearningRateMonitor"
++    ),
++    "pytorch_lightning.callbacks.ModelCheckpoint": "utils.pl_compat.ModelCheckpoint",
++    "pytorch_lightning.callbacks.model_checkpoint.ModelCheckpoint": (
++        "utils.pl_compat.ModelCheckpoint"
++    ),
++    "lightning.pytorch.callbacks.ModelCheckpoint": "utils.pl_compat.ModelCheckpoint",
++    "lightning.pytorch.callbacks.model_checkpoint.ModelCheckpoint": (
++        "utils.pl_compat.ModelCheckpoint"
++    ),
++}
++
++_INSTALL_HINT = (
++    "GoTrack Hydra configs instantiate pytorch_lightning.Trainer "
++    "(full_key: machine.trainer). Install the package from environment.yml:\n"
++    "  pip install 'pytorch-lightning==1.8.6'\n"
++    "Lightning 2.x also works with this shim:\n"
++    "  pip install lightning\n"
++    + hydra_full_error_hint()
++)
++
++
++def _format_import_errors(errors: Iterable[str]) -> str:
++    body = "\n".join("  - " + item for item in errors) or "  - (no import attempted)"
++    return _INSTALL_HINT + "\nTried:\n" + body
++
++
++def import_lightning_module():
++    """Import ``pytorch_lightning`` or ``lightning.pytorch``."""
++    errors = []
++    for name in _PL_MODULE_CANDIDATES:
++        try:
++            return importlib.import_module(name)
++        except Exception as exc:  # noqa: BLE001 - surface every import failure
++            errors.append("{}: {}: {}".format(name, type(exc).__name__, exc))
++    raise ImportError(_format_import_errors(errors))
++
++
++def resolve_symbol(dotted_suffix: str):
++    """Resolve an attribute path relative to the lightning package.
++
++    ``dotted_suffix`` examples: ``Trainer``, ``loggers.TensorBoardLogger``,
++    ``callbacks.ModelCheckpoint``.
++    """
++    module = import_lightning_module()
++    obj = module
++    for part in dotted_suffix.split("."):
++        try:
++            obj = getattr(obj, part)
++        except AttributeError:
++            # Some symbols live in a submodule that is not re-exported.
++            obj = importlib.import_module(module.__name__ + "." + part)
++    return obj
++
++
++def lightning_import_error_message() -> Optional[str]:
++    """Return the install hint if Lightning cannot be imported, else None."""
++    try:
++        import_lightning_module()
++    except ImportError as exc:
++        return str(exc)
++    return None
++
++
++def _device_count(devices: Any) -> int:
++    if devices is None:
++        return 1
++    if isinstance(devices, int):
++        return devices
++    if isinstance(devices, (list, tuple)):
++        return len(devices)
++    return 1
++
++
++def _cuda_available() -> bool:
++    try:
++        import torch
++
++        return bool(torch.cuda.is_available())
++    except Exception:  # noqa: BLE001
++        return False
++
++
++def adapt_trainer_kwargs(kwargs: dict) -> dict:
++    """Make Trainer kwargs work on CPU and single-process inference.
++
++    Upstream ``configs/machine/trainer/local.yaml`` forces ``accelerator: gpu``
++    and ``strategy: ddp``. That is unnecessary for ``trainer.test()`` on one
++    device and crashes when CUDA is missing.
++    """
++    adapted = dict(kwargs)
++    cuda = _cuda_available()
++    accel = adapted.get("accelerator")
++    n_devices = _device_count(adapted.get("devices"))
++
++    if not cuda and accel in ("gpu", "cuda"):
++        adapted["accelerator"] = "cpu"
++        adapted["devices"] = 1
++        n_devices = 1
++
++    # NCCL DDP is not available on Windows. Keep a single process.
++    if is_windows():
++        devices = adapted.get("devices")
++        if isinstance(devices, (list, tuple)) and len(devices) > 1:
++            adapted["devices"] = [devices[0]]
++            n_devices = 1
++        adapted.pop("strategy", None)
++
++    strategy = adapted.get("strategy")
++    if strategy in (
++        "ddp",
++        "ddp_spawn",
++        "ddp_find_unused_parameters_false",
++        "ddp_find_unused_parameters_true",
++    ):
++        if n_devices <= 1:
++            adapted.pop("strategy", None)
++
++    return adapted
++
++
++def _call_lightning(dotted_suffix: str, *args, **kwargs):
++    cls = resolve_symbol(dotted_suffix)
++    return cls(*args, **kwargs)
++
++
++def Trainer(*args, **kwargs):
++    """Hydra ``_target_`` for ``machine.trainer``."""
++    return _call_lightning("Trainer", *args, **adapt_trainer_kwargs(kwargs))
++
++
++def TensorBoardLogger(*args, **kwargs):
++    return _call_lightning("loggers.TensorBoardLogger", *args, **kwargs)
++
++
++def LearningRateMonitor(*args, **kwargs):
++    return _call_lightning("callbacks.LearningRateMonitor", *args, **kwargs)
++
++
++def ModelCheckpoint(*args, **kwargs):
++    return _call_lightning("callbacks.ModelCheckpoint", *args, **kwargs)
++
++
++def _load_lightning_module_base():
++    try:
++        return resolve_symbol("LightningModule")
++    except ImportError:
++        return object
++
++
++LightningModule = _load_lightning_module_base()
++
++
++def rewrite_lightning_targets(cfg: Any) -> Any:
++    """Rewrite ``pytorch_lightning.*`` Hydra ``_target_`` strings in-place."""
++    try:
++        from omegaconf import DictConfig, ListConfig, OmegaConf, open_dict
++    except ImportError:
++        return _rewrite_plain(cfg)
++
++    if isinstance(cfg, DictConfig):
++        with open_dict(cfg):
++            target = cfg.get("_target_")
++            if isinstance(target, str) and target in _TARGET_MAP:
++                cfg._target_ = _TARGET_MAP[target]
++            for key in list(cfg.keys()):
++                rewrite_lightning_targets(cfg[key])
++        return cfg
++    if isinstance(cfg, ListConfig):
++        for item in cfg:
++            rewrite_lightning_targets(item)
++        return cfg
++    if OmegaConf.is_config(cfg):
++        return cfg
++    return _rewrite_plain(cfg)
++
++
++def _rewrite_plain(cfg: Any) -> Any:
++    if isinstance(cfg, dict):
++        target = cfg.get("_target_")
++        if isinstance(target, str) and target in _TARGET_MAP:
++            cfg["_target_"] = _TARGET_MAP[target]
++        for value in cfg.values():
++            _rewrite_plain(value)
++    elif isinstance(cfg, list):
++        for item in cfg:
++            _rewrite_plain(item)
++    return cfg
++
++
++def instantiate_trainer(cfg_trainer: Any):
++    """Instantiate ``machine.trainer`` with rewritten targets and a clear error."""
++    from hydra.utils import instantiate
++
++    try:
++        from omegaconf import OmegaConf
++    except ImportError:
++        cfg = cfg_trainer
++    else:
++        if OmegaConf.is_config(cfg_trainer):
++            cfg = OmegaConf.create(
++                OmegaConf.to_container(cfg_trainer, resolve=True)
++            )
++        else:
++            cfg = cfg_trainer
++
++    rewrite_lightning_targets(cfg)
++    try:
++        return instantiate(cfg)
++    except Exception as exc:  # noqa: BLE001
++        cause = exc.__cause__ or exc.__context__ or exc
++        hint = lightning_import_error_message()
++        extra = "\n" + hint if hint else ""
++        raise RuntimeError(
++            "Failed to instantiate Hydra target for machine.trainer "
++            "(originally pytorch_lightning.Trainer).{}"
++            "\nUnderlying error: {}: {}".format(
++                extra, type(cause).__name__, cause
++            )
++        ) from exc
+diff --git a/utils/renderer.py b/utils/renderer.py
+index dee64f2..e6f38ff 100644
+--- a/utils/renderer.py
++++ b/utils/renderer.py
+@@ -11,13 +11,16 @@ import time
+ 
+ import numpy as np
+ import trimesh
++from utils.win_compat import configure_opengl_platform
++
++# EGL is Linux-only. Upstream always set PYOPENGL_PLATFORM=egl, which crashes
++# pyrender on Windows. Configure the backend before importing pyrender.
++configure_opengl_platform()
+ import pyrender
+ from utils import renderer_base, structs, torch_helpers, logging
+ 
+ 
+ logger = logging.get_logger(__name__)
+-os.environ["DISPLAY"] = ":1"
+-os.environ["PYOPENGL_PLATFORM"] = "egl"
+ 
+ 
+ class RenderType(Enum):
+diff --git a/utils/template_util.py b/utils/template_util.py
+index 0d85260..d492004 100644
+--- a/utils/template_util.py
++++ b/utils/template_util.py
+@@ -15,6 +15,7 @@ import numpy as np
+ import torch
+ import multiprocessing
+ from bop_toolkit_lib import inout, dataset_params
++from utils.win_compat import mp_pool_workers
+ from utils import (
+     crop_generation,
+     im_util,
+@@ -725,16 +726,17 @@ def batch_synthesize_templates(
+         list_opts=list_opts,
+     )
+ 
+-    pool = multiprocessing.Pool(processes=num_workers)
+     start_time = time.time()
+-    synthesize_templates_worker = partial(
+-        synthesize_templates_process,
+-        bop_root_dir=bop_root_dir,
+-        list_opts=list_opts,
+-    )
+-    pool.map(synthesize_templates_worker, range(len(list_opts)))
+-    pool.close()
+-    pool.join()
++    workers = mp_pool_workers(num_workers)
++    if workers <= 0:
++        # Windows spawn + Hydra cannot use multiprocessing.Pool safely.
++        for idx in range(len(list_opts)):
++            synthesize_templates_worker(idx)
++    else:
++        pool = multiprocessing.Pool(processes=workers)
++        pool.map(synthesize_templates_worker, range(len(list_opts)))
++        pool.close()
++        pool.join()
+     end_time = time.time()
+     run_time_per_object = (end_time - start_time) / len(list_opts)
+     logger.info(
+diff --git a/utils/win_compat.py b/utils/win_compat.py
+new file mode 100644
+index 0000000..cbd0fe6
+--- /dev/null
++++ b/utils/win_compat.py
+@@ -0,0 +1,125 @@
++"""Windows runtime helpers for GoTrack.
++
++Upstream GoTrack is written for Linux (EGL + NCCL DDP + fork DataLoader).
++On Windows those defaults crash before a pose is produced:
++
++* ``PYOPENGL_PLATFORM=egl`` is Linux-only (pyrender/OpenGL)
++* ``strategy: ddp`` needs NCCL, which PyTorch does not ship on Windows
++* ``DataLoader(num_workers>0)`` and ``multiprocessing.Pool`` use spawn and
++  interact badly with Hydra re-entry
++* YAML ``root_dir: D:\\data\\...`` treats backslashes as escapes
++"""
++
++from __future__ import annotations
++
++import os
++import sys
++from pathlib import Path
++from typing import Any, Optional
++
++
++def is_windows() -> bool:
++    return sys.platform == "win32"
++
++
++def configure_opengl_platform() -> None:
++    """Select a pyrender backend. Call before ``import pyrender``."""
++    if is_windows():
++        platform = os.environ.get("PYOPENGL_PLATFORM", "").lower()
++        if platform in ("egl", "osmesa"):
++            os.environ.pop("PYOPENGL_PLATFORM", None)
++        display = os.environ.get("DISPLAY", "")
++        if display.startswith(":"):
++            os.environ.pop("DISPLAY", None)
++        return
++    if sys.platform.startswith("linux"):
++        os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
++        os.environ.setdefault("DISPLAY", os.environ.get("DISPLAY", ":0"))
++
++
++def dataloader_num_workers(requested: Any) -> int:
++    """Windows: always 0. Spawn workers + Hydra often deadlock or re-run main."""
++    if is_windows():
++        return 0
++    try:
++        return max(0, int(requested))
++    except (TypeError, ValueError):
++        return 0
++
++
++def mp_pool_workers(requested: Any) -> int:
++    """Return 0 to mean run inline (do not spawn a ``multiprocessing.Pool``)."""
++    if is_windows():
++        return 0
++    try:
++        count = int(requested)
++    except (TypeError, ValueError):
++        count = 1
++    if count <= 1:
++        return 0
++    return count
++
++
++def _as_filesystem_path(value: Any) -> Optional[str]:
++    if value is None:
++        return None
++    text = str(value).strip().replace("\\", "/")
++    if not text:
++        return None
++    return str(Path(text))
++
++
++def normalize_windows_paths(cfg: Any) -> Any:
++    """Turn Hydra path strings into real filesystem paths on Windows.
++
++    Unquoted ``\\`` in YAML is an escape. Prefer ``D:/data/gotrack_project``.
++    """
++    if not is_windows() or cfg is None:
++        return cfg
++
++    def _set(node: Any, key: str) -> None:
++        try:
++            current = node.get(key) if hasattr(node, "get") else None
++        except Exception:  # noqa: BLE001
++            return
++        fixed = _as_filesystem_path(current)
++        if fixed is None:
++            return
++        try:
++            node[key] = fixed
++        except Exception:  # noqa: BLE001
++            try:
++                setattr(node, key, fixed)
++            except Exception:  # noqa: BLE001
++                pass
++
++    _set(cfg, "save_dir")
++    user = None
++    machine = None
++    try:
++        user = cfg.get("user")
++    except Exception:  # noqa: BLE001
++        user = getattr(cfg, "user", None)
++    try:
++        machine = cfg.get("machine")
++    except Exception:  # noqa: BLE001
++        machine = getattr(cfg, "machine", None)
++    if user is not None:
++        _set(user, "root_dir")
++    if machine is not None:
++        _set(machine, "root_dir")
++    return cfg
++
++
++def hydra_full_error_hint() -> str:
++    if is_windows():
++        return (
++            "To see Hydra's chained ImportError, run:\n"
++            "  set HYDRA_FULL_ERROR=1\n"
++            "  python -m scripts.inference_gotrack"
++        )
++    return (
++        "To see Hydra's chained ImportError, run:\n"
++        "  export HYDRA_FULL_ERROR=1\n"
++        "  python -m scripts.inference_gotrack"
++    )

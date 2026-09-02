@@ -1,0 +1,5 @@
+# Example user config for Windows.
+# Copy over configs/user/default.yaml in the GoTrack clone.
+# Use forward slashes: a raw backslash is a YAML escape.
+project_name: gotrack
+root_dir: D:/gotrack_project
