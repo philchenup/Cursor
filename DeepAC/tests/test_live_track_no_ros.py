@@ -175,6 +175,17 @@ class TestLiveTrackSpeedOpts(unittest.TestCase):
         names = {act.dest for act in p._actions}
         self.assertIn('fast', names)
 
+    def test_init_pose_cli_defaults(self):
+        p = self.mod.build_parser()
+        a = p.parse_args(['--source', 'x', '--obj', 'o', '--data-dir', 'd'])
+        self.assertEqual(a.init_z_mm, 250.0)
+        self.assertEqual(a.init_view, 'auto')
+        self.assertEqual(a.init_rpy, [0.0, 0.0, 0.0])
+        self.assertEqual(a.init_pose, '')
+        names = {act.dest for act in p._actions}
+        for flag in ('init_z_mm', 'init_view', 'init_rpy', 'init_pose'):
+            self.assertIn(flag, names)
+
     def test_fast_flag_applies_demo_budget(self):
         p = self.mod.build_parser()
         a = p.parse_args(['--source', 'x', '--obj', 'o', '--data-dir', 'd',
