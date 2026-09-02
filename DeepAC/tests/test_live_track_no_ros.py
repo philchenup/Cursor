@@ -32,7 +32,7 @@ class TestNoRosDependency(unittest.TestCase):
         self.assertNotIn('import rclpy', text)
         self.assertNotIn('from rclpy', text)
 
-    def test_module_imports_with_numpy_only(self):
+    def test_module_imports_without_torch_or_cv2(self):
         mod = load_live_track()
         self.assertTrue(hasattr(mod, 'PoseOutput'))
         self.assertTrue(hasattr(mod, 'format_pose_line'))
@@ -63,15 +63,15 @@ class TestQuatAndPoseLine(unittest.TestCase):
         cls.mod = load_live_track()
 
     def test_identity_quat(self):
-        x, y, z, w = self.mod.quat_from_R(np.eye(3))
+        w, x, y, z = self.mod.quat_from_R(np.eye(3))
+        self.assertAlmostEqual(w, 1.0, places=6)
         self.assertAlmostEqual(x, 0.0, places=6)
         self.assertAlmostEqual(y, 0.0, places=6)
         self.assertAlmostEqual(z, 0.0, places=6)
-        self.assertAlmostEqual(w, 1.0, places=6)
 
     def test_rotz_90_quat(self):
         R = self.mod.rot_axis([0, 0, 1], 90)
-        x, y, z, w = self.mod.quat_from_R(R)
+        w, x, y, z = self.mod.quat_from_R(R)
         self.assertAlmostEqual(x, 0.0, places=5)
         self.assertAlmostEqual(y, 0.0, places=5)
         self.assertAlmostEqual(abs(z), np.sin(np.pi / 4), places=5)
@@ -91,7 +91,14 @@ class TestQuatAndPoseLine(unittest.TestCase):
         self.assertAlmostEqual(float(parts[8]), 0.01, places=6)
         self.assertAlmostEqual(float(parts[9]), -0.02, places=6)
         self.assertAlmostEqual(float(parts[10]), 0.25, places=6)
-        self.assertAlmostEqual(float(parts[14]), 1.0, places=5)  # qw
+        self.assertAlmostEqual(float(parts[11]), 1.0, places=5)  # qw first
+        self.assertAlmostEqual(float(parts[12]), 0.0, places=5)
+        self.assertAlmostEqual(float(parts[13]), 0.0, places=5)
+        self.assertAlmostEqual(float(parts[14]), 0.0, places=5)
+
+    def test_header_quat_is_wxyz(self):
+        self.assertIn('tx ty tz qw qx qy qz', self.mod.PoseOutput.HEADER)
+        self.assertNotIn('qx qy qz qw', self.mod.PoseOutput.HEADER)
 
     def test_format_init_nans(self):
         line = self.mod.format_pose_line(
