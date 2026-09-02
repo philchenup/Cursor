@@ -40,50 +40,35 @@ import sys
 import warnings
 
 import numpy as np
+from scipy.spatial.transform import Rotation as SciRotation
 
 # ---------------------------------------------------------------------------
-# 纯 numpy 工具: 不依赖 torch / cv2 / ROS, 便于单测
+# 轻量工具: 不依赖 torch / cv2 / ROS, 便于单测
 # ---------------------------------------------------------------------------
 
 STATE_CODE = {'INIT': 0, 'TRACK': 1, 'HOLD': 2, 'LOST': 3}
 
 
 def quat_from_R(R):
-    """旋转矩阵 -> 四元数 (x, y, z, w), Shepperd 分支法。"""
-    m = np.asarray(R, dtype=np.float64)
-    tr = m[0, 0] + m[1, 1] + m[2, 2]
-    if tr > 0:
-        s = np.sqrt(tr + 1.0) * 2
-        w, x = 0.25 * s, (m[2, 1] - m[1, 2]) / s
-        y, z = (m[0, 2] - m[2, 0]) / s, (m[1, 0] - m[0, 1]) / s
-    elif m[0, 0] > m[1, 1] and m[0, 0] > m[2, 2]:
-        s = np.sqrt(1.0 + m[0, 0] - m[1, 1] - m[2, 2]) * 2
-        w, x = (m[2, 1] - m[1, 2]) / s, 0.25 * s
-        y, z = (m[0, 1] + m[1, 0]) / s, (m[0, 2] + m[2, 0]) / s
-    elif m[1, 1] > m[2, 2]:
-        s = np.sqrt(1.0 + m[1, 1] - m[0, 0] - m[2, 2]) * 2
-        w, x = (m[0, 2] - m[2, 0]) / s, (m[0, 1] + m[1, 0]) / s
-        y, z = 0.25 * s, (m[1, 2] + m[2, 1]) / s
-    else:
-        s = np.sqrt(1.0 + m[2, 2] - m[0, 0] - m[1, 1]) * 2
-        w, x = (m[1, 0] - m[0, 1]) / s, (m[0, 2] + m[2, 0]) / s
-        y, z = (m[1, 2] + m[2, 1]) / s, 0.25 * s
-    return float(x), float(y), float(z), float(w)
+    """旋转矩阵 -> 四元数 (w, x, y, z)。"""
+    # SciPy as_quat() 默认 (x, y, z, w), 这里改成 w 在前
+    x, y, z, w = SciRotation.from_matrix(np.asarray(R, dtype=np.float64)).as_quat()
+    return float(w), float(x), float(y), float(z)
 
 
 def format_pose_line(frame_index, state, valid, R, t, met, stamp_sec=None):
     """一行位姿样本, 空格分隔, 方便重定向/解析。
 
-    stamp_sec frame state valid conf cs dt_mm dr_deg tx ty tz qx qy qz qw
+    stamp_sec frame state valid conf cs dt_mm dr_deg tx ty tz qw qx qy qz
     state 为 INIT/TRACK/HOLD/LOST; valid 为 0/1。
     """
     if stamp_sec is None:
         stamp_sec = time.time()
     if R is None or t is None:
-        qx = qy = qz = qw = float('nan')
+        qw = qx = qy = qz = float('nan')
         xyz = [float('nan')] * 3
     else:
-        qx, qy, qz, qw = quat_from_R(R)
+        qw, qx, qy, qz = quat_from_R(R)
         xyz = [float(v) for v in t]
     conf = met.get('conf', float('nan'))
     cs = met.get('cs', float('nan'))
@@ -92,11 +77,11 @@ def format_pose_line(frame_index, state, valid, R, t, met, stamp_sec=None):
     return (
         '{stamp:.6f} {frame:d} {state} {valid:d} '
         '{conf:.6g} {cs:.6g} {dt:.6g} {dr:.6g} '
-        '{tx:.8f} {ty:.8f} {tz:.8f} {qx:.8f} {qy:.8f} {qz:.8f} {qw:.8f}'
+        '{tx:.8f} {ty:.8f} {tz:.8f} {qw:.8f} {qx:.8f} {qy:.8f} {qz:.8f}'
     ).format(
         stamp=stamp_sec, frame=int(frame_index), state=state,
         valid=int(bool(valid)), conf=conf, cs=cs, dt=dt, dr=dr,
-        tx=xyz[0], ty=xyz[1], tz=xyz[2], qx=qx, qy=qy, qz=qz, qw=qw,
+        tx=xyz[0], ty=xyz[1], tz=xyz[2], qw=qw, qx=qx, qy=qy, qz=qz,
     )
 
 
@@ -171,7 +156,7 @@ class PoseOutput:
     """把每帧跟踪样本打印到 stdout, 可选写入文本文件。不依赖 ROS。"""
 
     HEADER = ('# stamp_sec frame state valid conf cs dt_mm dr_deg '
-              'tx ty tz qx qy qz qw')
+              'tx ty tz qw qx qy qz')
 
     def __init__(self, a):
         self.print_stdout = not getattr(a, 'no_print', False)
