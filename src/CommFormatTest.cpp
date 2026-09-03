@@ -49,7 +49,7 @@ int main()
         CommConfig cfg;
         cfg.group_inner = " ";
         cfg.group_inter = "|";
-        cfg.end_sign = "\n";
+        cfg.end_sign = "#";
         cfg.valid_num = 4;
         const std::vector<std::vector<float>> data = {
             {1.23456f, -5.6789f},
@@ -57,7 +57,7 @@ int main()
         };
         ExpectEq("custom separators and 4 digits",
                  FormatCommData(data, cfg),
-                 QStringLiteral("1.235 -5.679|100\n"));
+                 QStringLiteral("1.235 -5.679|100#"));
     }
 
     {
