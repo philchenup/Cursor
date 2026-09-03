@@ -1,0 +1,16 @@
+# Requires Python >= 3.8
+# Install: pip install -r requirements.txt
+#
+# System / compiler packages below are NOT on PyPI and must be installed
+# with apt/yum/conda, not pip:
+#   compilers, mesa-libgl-devel, mesa-dri-drivers, libxcb, glew, eigen
+#   (plus the native librealsense / glfw / OpenGL headers if you build C++ code)
+
+cmake
+scikit-build
+PyYAML
+opencv-python==4.3.0.38
+glfw
+pyrealsense2
+numpy
+numpy-quaternion
