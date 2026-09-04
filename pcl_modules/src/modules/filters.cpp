@@ -374,6 +374,7 @@ namespace ct
 
         pcl::CropHull<PointXYZRGBN> ch;
         ch.setInputCloud(cloud_);
+        ch.setHullCloud(cloud_);
         ch.setHullIndices(polygons);
         ch.setDim(dim);
         ch.setCropOutside(crop_outside);

@@ -136,6 +136,23 @@ if(CT_BUILD_EXAMPLES)
     set_target_properties(ct_pcl_example PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
     )
+
+    set(CT_DEMOS
+        demo_cloud
+        demo_common
+        demo_filters
+        demo_features
+        demo_segmentation
+        demo_surface
+    )
+    foreach(demo_name IN LISTS CT_DEMOS)
+        add_executable(${demo_name} examples/${demo_name}.cpp)
+        target_include_directories(${demo_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/examples)
+        target_link_libraries(${demo_name} PRIVATE ct_pcl_modules)
+        set_target_properties(${demo_name} PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+        )
+    endforeach()
 endif()
 
 # ---------------------------------------------------------------------------

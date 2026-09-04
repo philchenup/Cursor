@@ -61,7 +61,18 @@ cmake -S .. -B . -G "Visual Studio 17 2022" -A x64 ^
 - 静态库：`ct_pcl_modules.lib`（默认）
 - 示例程序：`bin/Release/ct_pcl_example.exe`
 
-运行示例：
+每个头文件对应一份按函数拆开的 demo（`examples/demo_*.cpp`）：
+
+```bat
+.\bin\Release\demo_cloud.exe
+.\bin\Release\demo_common.exe
+.\bin\Release\demo_filters.exe
+.\bin\Release\demo_features.exe
+.\bin\Release\demo_segmentation.exe
+.\bin\Release\demo_surface.exe
+```
+
+综合示例：
 
 ```bat
 .\bin\Release\ct_pcl_example.exe
@@ -72,6 +83,17 @@ cmake -S .. -B . -G "Visual Studio 17 2022" -A x64 ^
 ```bat
 set PATH=C:\Program Files\PCL 1.14.1\bin;%PATH%
 ```
+
+每个头文件一份 demo，头文件里的每个公开函数对应一个示例函数：
+
+| 头文件 | 可执行文件 |
+| --- | --- |
+| `cloud.h` | `demo_cloud` |
+| `common.h` | `demo_common` |
+| `filters.h` | `demo_filters` |
+| `features.h` | `demo_features` |
+| `segmentation.h` | `demo_segmentation` |
+| `surface.h` | `demo_surface` |
 
 CMake 只查找计算模块（`common` / `io` / `filters` / `features` / `segmentation` / `surface` 等），不链接 PCL 可视化或 Qt。
 
