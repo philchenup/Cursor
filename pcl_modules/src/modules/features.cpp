@@ -7,6 +7,7 @@
 #include "modules/features.h"
 #include "base/common.h"
 
+#include <pcl/common/angles.h>
 #include <pcl/common/centroid.h>
 #include <pcl/common/common.h>
 #include <pcl/common/transforms.h>

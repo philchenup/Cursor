@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.14)
 
-project(ct_pcl_modules VERSION 3.0 LANGUAGES CXX)
+project(ct_pcl_modules VERSION 3.0 LANGUAGES C CXX)
 
 if(POLICY CMP0074)
     cmake_policy(SET CMP0074 NEW)
@@ -48,7 +48,20 @@ endif()
 #   cmake -DPCL_ROOT="C:/Program Files/PCL 1.14.1" ..
 #   cmake -DCMAKE_PREFIX_PATH="C:/Program Files/PCL 1.14.1" ..
 # ---------------------------------------------------------------------------
-find_package(PCL 1.11 REQUIRED)
+# 只链接算法模块，不依赖 PCL 可视化 / Qt / VTK GUI
+find_package(PCL 1.11 REQUIRED COMPONENTS
+    common
+    io
+    kdtree
+    octree
+    search
+    sample_consensus
+    filters
+    features
+    ml
+    segmentation
+    surface
+)
 
 if(NOT PCL_FOUND)
     message(FATAL_ERROR

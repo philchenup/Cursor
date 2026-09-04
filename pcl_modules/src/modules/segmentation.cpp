@@ -9,6 +9,7 @@
 #include "base/common.h"
 #include "modules/filters.h"
 
+#include <pcl/common/angles.h>
 #include <pcl/console/time.h>
 #include <pcl/filters/conditional_removal.h>
 #include <pcl/filters/extract_indices.h>

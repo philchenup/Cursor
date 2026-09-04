@@ -7,6 +7,7 @@
 #include "modules/surface.h"
 #include "base/common.h"
 
+#include <pcl/common/angles.h>
 #include <pcl/console/time.h>
 #include <pcl/surface/concave_hull.h>
 #include <pcl/surface/convex_hull.h>

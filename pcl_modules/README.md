@@ -73,6 +73,8 @@ cmake -S .. -B . -G "Visual Studio 17 2022" -A x64 ^
 set PATH=C:\Program Files\PCL 1.14.1\bin;%PATH%
 ```
 
+CMake 只查找计算模块（`common` / `io` / `filters` / `features` / `segmentation` / `surface` 等），不链接 PCL 可视化或 Qt。
+
 ## 可选 CMake 选项
 
 | 选项 | 默认 | 说明 |
