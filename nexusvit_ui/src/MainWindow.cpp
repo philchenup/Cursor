@@ -267,7 +267,10 @@ QWidget* MainWindow::buildLeftPanel()
     m_dataTree->setHeaderHidden(true);
     m_dataTree->setRootIsDecorated(true);
     m_dataTree->setIndentation(16);
-    m_dataTree->setColumnWidth(0, 150);
+    m_dataTree->header()->setStretchLastSection(false);
+    m_dataTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    m_dataTree->header()->setSectionResizeMode(1, QHeaderView::Fixed);
+    m_dataTree->setColumnWidth(1, 22);
     auto* root = new QTreeWidgetItem(m_dataTree, QStringList{QStringLiteral("PointCloud")});
     root->setIcon(1, QIcon(NexusIcons::eyeOpen(14)));
     auto* wp = new QTreeWidgetItem(root, QStringList{QStringLiteral("Workpiece")});

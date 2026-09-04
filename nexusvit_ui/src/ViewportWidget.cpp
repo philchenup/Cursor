@@ -210,23 +210,23 @@ void ViewportWidget::paintCamera(QPainter& p)
 
 void ViewportWidget::paintViewCube(QPainter& p)
 {
-    const int s = 64;
-    const QRect cube(width() - s - 18, 16, s, s);
+    const int s = 72;
+    const QRect cube(width() - s - 16, 14, s, s);
     p.setPen(QPen(QColor(80, 90, 98), 1));
-    p.setBrush(QColor(24, 28, 32, 210));
+    p.setBrush(QColor(24, 28, 32, 220));
     p.drawRoundedRect(cube, 6, 6);
 
     auto face = [&](const QRect& r, const QString& t, const QColor& c) {
         p.setBrush(c);
         p.setPen(QPen(QColor(20, 24, 28), 1));
-        p.drawRect(r);
+        p.drawRoundedRect(r, 2, 2);
         p.setPen(QColor(230, 235, 240));
         p.setFont(QFont(QStringLiteral("Noto Sans"), 8, QFont::DemiBold));
         p.drawText(r, Qt::AlignCenter, t);
     };
-    face(QRect(cube.left() + 18, cube.top() + 8, 28, 20), QStringLiteral("TOP"), QColor(70, 90, 110));
-    face(QRect(cube.left() + 8, cube.top() + 28, 28, 22), QStringLiteral("FRONT"), QColor(60, 80, 70));
-    face(QRect(cube.left() + 36, cube.top() + 28, 20, 22), QStringLiteral("R"), QColor(90, 70, 70));
+    face(QRect(cube.left() + 20, cube.top() + 8, 32, 18), QStringLiteral("TOP"), QColor(70, 90, 110));
+    face(QRect(cube.left() + 8, cube.top() + 28, 32, 24), QStringLiteral("FRONT"), QColor(60, 80, 70));
+    face(QRect(cube.left() + 40, cube.top() + 28, 24, 24), QStringLiteral("R"), QColor(90, 70, 70));
 }
 
 void ViewportWidget::paintAxes(QPainter& p)
