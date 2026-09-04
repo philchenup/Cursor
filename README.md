@@ -1,5 +1,7 @@
 # Cursor
 
+NexusVIT 无序抓取工作台的 **Web UI 重设计** 见 [`README_UI.md`](README_UI.md)，交互预览在 `web/index.html`。
+
 ## ScaleAISShapeBy1000
 
 将 OpenCASCADE 的 `AIS_Shape*` 缩小 1000 倍，并返回一个新的 `AIS_Shape*`。

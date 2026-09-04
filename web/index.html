@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NexusVIT · Unordered Grasp</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/studio.css" />
+</head>
+<body>
+<div class="app" id="app">
+  <header class="titlebar">
+    <div class="brand">
+      <div class="mark" aria-hidden="true"></div>
+      <div class="brand-copy">
+        <div class="brand-name">NexusVIT</div>
+        <div class="brand-sub">Unordered Grasp</div>
+      </div>
+    </div>
+    <nav class="menus" id="menus">
+      <div class="menu">文件
+        <div class="dropdown">
+          <button data-action="打开">打开<span class="k">Ctrl+O</span></button>
+          <button data-action="保存">保存<span class="k">Ctrl+S</span></button>
+          <div class="sep"></div>
+          <button data-action="退出">退出</button>
+        </div>
+      </div>
+      <div class="menu">编辑
+        <div class="dropdown">
+          <button data-action="删除">删除</button>
+          <button data-action="全删">全部删除</button>
+        </div>
+      </div>
+      <div class="menu">工具
+        <div class="dropdown">
+          <button data-action="着色">着色</button>
+          <button data-action="坐标系">坐标系</button>
+          <button data-action="变换">变换</button>
+          <button data-action="降采样">降采样</button>
+          <button data-action="合并">合并</button>
+          <button data-action="裁剪">裁剪</button>
+        </div>
+      </div>
+      <div class="menu">控制
+        <div class="dropdown">
+          <button data-action="单步">单步</button>
+          <button data-action="连续">连续</button>
+          <button data-action="暂停">暂停</button>
+          <button data-action="重置">重置</button>
+        </div>
+      </div>
+      <div class="menu">视图
+        <div class="dropdown">
+          <button data-action="截图">截图</button>
+          <button id="toggleDeckMenu">折叠控制台</button>
+          <button id="toggleLeft">折叠数据栏</button>
+          <button id="toggleRight">折叠控制栏</button>
+        </div>
+      </div>
+      <div class="menu">选项
+        <div class="dropdown">
+          <button data-action="TCP标定" data-dialog="tcp">TCP 标定</button>
+          <button data-action="手眼标定" data-dialog="handeye">手眼标定</button>
+          <button data-action="工件库" data-dialog="library">工件库</button>
+          <button data-action="视觉配置" data-dialog="vision">视觉配置</button>
+          <button data-action="摆放设置" data-dialog="place">摆放设置</button>
+        </div>
+      </div>
+      <div class="menu">帮助
+        <div class="dropdown">
+          <button data-action="关于" data-dialog="about">关于 NexusVIT</button>
+        </div>
+      </div>
+    </nav>
+    <div class="status-pills">
+      <div class="pill" id="pillRobot"><span class="led"></span>机器人 待机</div>
+      <div class="pill" id="pillVision"><span class="led"></span>视觉 待机</div>
+      <div class="pill" id="pillComm"><span class="led"></span>通信 待机</div>
+      <div class="pill" id="pillScrew"><span class="led"></span>工具 待机</div>
+    </div>
+    <div class="clock" id="clock">--:--:--</div>
+  </header>
+
+  <div class="ribbon" id="commands">
+    <div class="group">
+      <button class="cmd" data-action="打开" title="打开">
+        <svg viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v10H3z"/></svg><span>打开</span>
+      </button>
+      <button class="cmd" data-action="保存">
+        <svg viewBox="0 0 24 24"><path d="M5 4h11l4 4v12H5z"/><path d="M8 4v6h8"/></svg><span>保存</span>
+      </button>
+      <button class="cmd" data-action="删除">
+        <svg viewBox="0 0 24 24"><path d="M5 7h14M9 7V5h6v2m-8 0l1 12h8l1-12"/></svg><span>删除</span>
+      </button>
+      <button class="cmd" data-action="全删">
+        <svg viewBox="0 0 24 24"><path d="M4 7h16M8 7l1 13h6l1-13"/><path d="M9 4h6"/></svg><span>全删</span>
+      </button>
+      <div class="group-label">文件</div>
+    </div>
+    <div class="group">
+      <button class="cmd" data-action="着色">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 5v14"/></svg><span>着色</span>
+      </button>
+      <button class="cmd" data-action="坐标系">
+        <svg viewBox="0 0 24 24"><path d="M4 20V4m0 16h16M4 20l6-6"/></svg><span>坐标</span>
+      </button>
+      <button class="cmd" data-action="变换">
+        <svg viewBox="0 0 24 24"><path d="M4 12h16M12 4v16M7 8l-3 4 3 4M17 8l3 4-3 4"/></svg><span>变换</span>
+      </button>
+      <button class="cmd" data-action="降采样">
+        <svg viewBox="0 0 24 24"><circle cx="7" cy="8" r="1.4"/><circle cx="16" cy="7" r="1.4"/><circle cx="12" cy="15" r="1.4"/><circle cx="6" cy="17" r="1.4"/></svg><span>降采样</span>
+      </button>
+      <button class="cmd" data-action="合并">
+        <svg viewBox="0 0 24 24"><path d="M8 6h8v5H8zM6 13h12v5H6z"/></svg><span>合并</span>
+      </button>
+      <button class="cmd" data-action="裁剪">
+        <svg viewBox="0 0 24 24"><path d="M6 6h8v8H6zM10 10h8v8h-8"/></svg><span>裁剪</span>
+      </button>
+      <div class="group-label">点云</div>
+    </div>
+    <div class="group">
+      <button class="cmd" data-action="TCP标定" data-dialog="tcp">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 4v4M12 16v4M4 12h4M16 12h4"/></svg><span>TCP</span>
+      </button>
+      <button class="cmd" data-action="手眼标定" data-dialog="handeye">
+        <svg viewBox="0 0 24 24"><circle cx="9" cy="12" r="3"/><circle cx="16" cy="12" r="3"/></svg><span>手眼</span>
+      </button>
+      <button class="cmd" data-action="工件库" data-dialog="library">
+        <svg viewBox="0 0 24 24"><path d="M4 8l8-4 8 4-8 4-8-4z"/><path d="M4 8v8l8 4 8-4V8"/></svg><span>工件库</span>
+      </button>
+      <button class="cmd" data-action="视觉配置" data-dialog="vision">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M5 12a7 7 0 0 1 14 0"/></svg><span>视觉</span>
+      </button>
+      <button class="cmd" data-action="摆放设置" data-dialog="place">
+        <svg viewBox="0 0 24 24"><rect x="5" y="8" width="14" height="10" rx="1"/><path d="M9 8V6h6v2"/></svg><span>摆放</span>
+      </button>
+      <button class="cmd" data-action="截图">
+        <svg viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="2"/><circle cx="12" cy="13" r="3"/></svg><span>截图</span>
+      </button>
+      <div class="group-label">标定</div>
+    </div>
+    <div class="group run-cluster">
+      <button class="cmd run" data-action="单步" id="btnStep">
+        <svg viewBox="0 0 24 24"><path d="M7 6l10 6-10 6z" fill="currentColor" stroke="none"/></svg><span>单步</span>
+      </button>
+      <button class="cmd run" data-action="连续" id="btnRun">
+        <svg viewBox="0 0 24 24"><path d="M5 6l8 6-8 6zM14 6l8 6-8 6z" fill="currentColor" stroke="none"/></svg><span>连续</span>
+      </button>
+      <button class="cmd pause" data-action="暂停" id="btnPause">
+        <svg viewBox="0 0 24 24"><path d="M7 6h3v12H7zM14 6h3v12h-3z" fill="currentColor" stroke="none"/></svg><span>暂停</span>
+      </button>
+      <button class="cmd reset" data-action="重置" id="btnReset">
+        <svg viewBox="0 0 24 24"><path d="M5 12a7 7 0 1 0 2-5"/><path d="M5 5v5h5"/></svg><span>重置</span>
+      </button>
+      <div class="group-label">运行</div>
+    </div>
+  </div>
+
+  <div class="workspace" id="workspace">
+    <aside class="pane left" id="leftPane">
+      <div class="pane-block grow">
+        <div class="pane-h">数据 <span class="hint">Scene</span></div>
+        <div class="tree" id="tree">
+          <div class="node sel" data-id="PointCloud">
+            <span class="swatch" style="background:#7dd3fc"></span>PointCloud
+            <svg class="eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z" fill="none" stroke="currentColor"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor"/></svg>
+          </div>
+          <div class="node child" data-id="SceneBody">
+            <span class="swatch" style="background:#fca5a5"></span>Workpiece
+            <svg class="eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z" fill="none" stroke="currentColor"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor"/></svg>
+          </div>
+          <div class="node" data-id="Robot">
+            <span class="swatch" style="background:#86efac"></span>Robot
+            <svg class="eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z" fill="none" stroke="currentColor"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor"/></svg>
+          </div>
+          <div class="node" data-id="Bin">
+            <span class="swatch" style="background:#fbbf24"></span>PartsBin
+            <svg class="eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z" fill="none" stroke="currentColor"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor"/></svg>
+          </div>
+        </div>
+      </div>
+      <div class="pane-block">
+        <div class="pane-h">属性</div>
+        <table class="props" id="props">
+          <tr><th>ID</th><td>PointCloud</td></tr>
+          <tr><th>类别</th><td>—</td></tr>
+          <tr><th>长度</th><td>—</td></tr>
+          <tr><th>分辨率</th><td>—</td></tr>
+          <tr><th>体积</th><td>—</td></tr>
+        </table>
+      </div>
+    </aside>
+
+    <section class="viewport" id="viewport">
+      <canvas id="sceneCanvas"></canvas>
+      <div class="view-tabs">
+        <button class="on" id="tabScene">Scene</button>
+        <button id="tabCamera">Camera</button>
+      </div>
+      <div class="grasp-badge">
+        <div class="kicker">无序抓取</div>
+        <div class="val" id="graspCount">3 件待抓</div>
+        <div class="sub">料框 · 随机堆叠</div>
+      </div>
+      <svg class="viewcube" viewBox="0 0 64 64" aria-hidden="true">
+        <g fill="none" stroke="#9aa7b5" stroke-width="1.2">
+          <path d="M12 24 L32 14 L52 24 L32 34 Z" fill="#2a3542"/>
+          <path d="M12 24 L12 42 L32 52 L32 34 Z" fill="#1b232c"/>
+          <path d="M52 24 L52 42 L32 52 L32 34 Z" fill="#3a4654"/>
+        </g>
+        <text x="27" y="26" fill="#c9d4de" font-size="8">TOP</text>
+      </svg>
+      <svg class="gizmo" width="72" height="72" viewBox="0 0 72 72">
+        <line x1="12" y1="60" x2="60" y2="60" stroke="#ff5a4f" stroke-width="2"/>
+        <line x1="12" y1="60" x2="12" y2="12" stroke="#3ddc84" stroke-width="2"/>
+        <line x1="12" y1="60" x2="40" y2="32" stroke="#5b9dff" stroke-width="2"/>
+        <text x="62" y="64" fill="#ff5a4f" font-size="10">X</text>
+        <text x="4" y="12" fill="#3ddc84" font-size="10">Y</text>
+        <text x="42" y="30" fill="#5b9dff" font-size="10">Z</text>
+      </svg>
+      <div class="hud">
+        <div class="chip">透视 · mm</div>
+        <div class="chip">网格 <strong>开</strong></div>
+        <div class="chip" id="fpsChip">60 fps</div>
+      </div>
+      <div class="cam-feed" id="camFeed">
+        <div class="cam-cross"></div>
+        <div class="cam-badge">● REC  LIVE</div>
+        <div class="cam-meta">CAMERA · 1920×1200 · 曝光 8.2ms · 料框俯视</div>
+      </div>
+    </section>
+
+    <aside class="pane right" id="rightPane">
+      <div class="card">
+        <h3>视觉</h3>
+        <div class="preview-slot"><span>CAMERA PREVIEW</span></div>
+        <div class="row">
+          <label class="check"><input type="checkbox" id="InitializeCamera"> Initialize</label>
+          <label class="check"><input type="checkbox" id="SaveVision"> Save</label>
+        </div>
+        <div class="row">
+          <input class="search" id="cam_btn_search" type="text" placeholder="Search">
+          <button class="btn btn-connect" data-action="ConnectCamera" id="cam_btn_connect">Connect</button>
+        </div>
+        <div class="row">
+          <button class="btn" data-action="Cap" id="cam_btn_capture">Cap</button>
+          <button class="btn" data-action="AddVision" id="cam_btn_add">Add</button>
+          <button class="btn btn-set" data-action="ResetVision" id="cam_btn_reset">Reset</button>
+        </div>
+        <div class="row">
+          <span class="lbl" style="min-width:72px">Work Path</span>
+          <select id="workPath" style="flex:1"><option>选择工作路径</option><option>/work/bin_pick</option></select>
+        </div>
+        <div class="row">
+          <span class="lbl" style="min-width:88px">Vision Config</span>
+          <select id="visionConfigEdit" style="flex:1"><option>选择视觉配置</option><option>unordered_grasp.json</option></select>
+          <button class="btn" data-action="LoadVisionConfig" id="loadVisionConfigBtn">…</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>机器人</h3>
+        <div class="row">
+          <div class="field"><label>IP</label><input class="ip" id="robotIp" type="text" value="192.168.5.1"></div>
+          <div class="field"><label>Port</label><input class="port" id="robotPort" type="text" value="29999"></div>
+        </div>
+        <div class="row">
+          <button class="btn" data-action="InitializeRobot" id="InitializeRobot">Initialize</button>
+          <button class="btn btn-connect" data-action="ConnectRobot" id="robotConnectBtn">Connect</button>
+          <button class="btn btn-connect" data-action="EnableRobot" id="robotEnableBtn">Enable</button>
+        </div>
+        <div class="row">
+          <span class="lbl">Speed</span>
+          <div class="speed">
+            <input type="range" id="robotSpeed" min="1" max="100" value="5">
+            <span class="speed-val" id="speedVal">5</span>
+          </div>
+        </div>
+        <div class="row" style="margin-top:4px"><span class="lbl" style="letter-spacing:.12em;font-size:10px;text-transform:uppercase">关节 J0–J5</span></div>
+        <div class="axes" id="joints"></div>
+        <div class="row" style="margin-top:10px"><span class="lbl" style="letter-spacing:.12em;font-size:10px;text-transform:uppercase">笛卡尔 X Y Z Rx Ry Rz</span></div>
+        <div class="axes" id="cart"></div>
+        <div class="row" style="margin-top:10px">
+          <button class="btn btn-go" data-action="GoCap" id="GoCapBtn">GoCap</button>
+          <button class="btn btn-set" data-action="setCap" id="setCapBtn">setCap</button>
+          <button class="btn btn-go" data-action="GoHom" id="GoHomBtn">GoHom</button>
+          <button class="btn btn-set" data-action="setHom" id="setHomBtn">setHom</button>
+        </div>
+        <div class="row">
+          <div class="field"><label style="min-width:78px">Down Speed</label>
+            <input class="num" id="downSpeed" value="10">
+            <button class="btn" data-action="SetDownSpeed">Set</button>
+          </div>
+        </div>
+        <div class="row">
+          <button class="btn" data-action="PlaceConfig" id="PlaceConfigBtn" data-dialog="place">PlaceConfig</button>
+          <button class="btn" data-action="AutoCalib" id="AutoCalibBtn">AutoCalib</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="deck" id="deck">
+    <div class="deck-tabs">
+      <button class="deck-tab" data-panel="tool">工具</button>
+      <button class="deck-tab" data-panel="comm">通信</button>
+      <button class="deck-tab on" data-panel="console">控制台</button>
+      <div class="deck-spacer"></div>
+      <button class="btn btn-ghost" id="clearConsole" data-action="清除控制台">清除</button>
+      <button class="collapse-btn" id="toggleDeck">▾ 折叠</button>
+    </div>
+    <div class="deck-body">
+      <div class="panel" id="panel-tool">
+        <div class="row">
+          <select id="screwType"><option>Screw</option><option>Gripper</option><option>Vacuum</option></select>
+        </div>
+        <div class="row">
+          <div class="field"><label>IP</label><input class="ip" id="screwIp" value="192.168.5.50"></div>
+          <div class="field"><label>Port</label><input class="port" id="screwPort" value="5000"></div>
+          <button class="btn" data-action="InitializeScrew" id="InitializeLaser">Initialize</button>
+          <button class="btn btn-connect" data-action="ConnectScrew" id="connectLaserBtn">Connect</button>
+          <button class="btn btn-go" data-action="StartScrew">Start</button>
+          <button class="btn" data-action="BackScrew">Back</button>
+          <button class="btn btn-set" data-action="ResetScrew">Reset</button>
+        </div>
+      </div>
+
+      <div class="panel" id="panel-comm">
+        <div class="row">
+          <select id="scoketComb"><option>TCP Server</option><option>TCP Client</option><option>UDP</option></select>
+          <div class="field"><label>IP</label><input class="ip" id="commIp" value="127.0.0.1"></div>
+          <div class="field"><label>Port</label><input class="port" id="commPort" value="3000"></div>
+          <button class="btn" data-action="InitializeComm">Initialize</button>
+          <button class="btn btn-connect" data-action="ConnectComm" id="connectCommBtn">Connect</button>
+          <button class="btn btn-set" data-action="SendComm" id="sendCommBtn">Send</button>
+        </div>
+        <div class="two-col">
+          <div class="stack"><label class="field">Recv</label><textarea id="recvBox" readonly></textarea></div>
+          <div class="stack"><label class="field">Send</label><textarea id="sendBox">NexusVIT ping</textarea></div>
+        </div>
+      </div>
+
+      <div class="panel on" id="panel-console">
+        <div class="console" id="console"></div>
+      </div>
+    </div>
+  </footer>
+</div>
+
+<div class="modal" id="modal">
+  <div class="dialog" id="dialog">
+    <h2 id="dialogTitle">对话框</h2>
+    <div id="dialogBody"></div>
+    <div class="actions">
+      <button class="btn" id="dialogCancel">取消</button>
+      <button class="btn btn-connect" id="dialogOk">确定</button>
+    </div>
+  </div>
+</div>
+
+<script src="vendor/three.min.js"></script>
+<script src="js/scene.js"></script>
+<script src="js/studio.js"></script>
+</body>
+</html>
