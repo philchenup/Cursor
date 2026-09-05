@@ -1,0 +1,11 @@
+// Prepend this to src/mainwindow.h (and pch.h / stdafx.h if you use PCH).
+// It must appear BEFORE <QMainWindow>, GlobalDefs.h, OpenCASCADE, Qt Network,
+// JAKA, Robotics Library, PCL, and Boost.Asio.
+
+#ifndef MAINWINDOW_H
+#define MAINWINDOW_H
+
+#include "WinSockCompat.h"
+
+#include <QMainWindow>
+// ... existing includes ...
