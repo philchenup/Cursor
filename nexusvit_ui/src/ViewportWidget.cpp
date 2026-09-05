@@ -201,9 +201,9 @@ void ViewportWidget::paintCamera(QPainter& p)
     p.drawRect(rect().adjusted(18, 18, -18, -18));
 
     p.setPen(QColor(90, 200, 190));
-    p.setFont(QFont(QStringLiteral("Noto Sans CJK SC"), 11));
+    p.setFont(QFont(QString::fromUtf8(u8"Noto Sans CJK SC"), 11));
     p.drawText(rect().adjusted(28, 28, -28, -28), Qt::AlignTop | Qt::AlignLeft,
-               QStringLiteral("CAM-01  ·  1920x1080  ·  30 FPS"));
+               QString::fromUtf8(u8"CAM-01  ·  1920x1080  ·  30 FPS"));
     p.setPen(QColor(140, 150, 160));
     p.drawText(rect(), Qt::AlignCenter, QStringLiteral("No camera signal"));
 }

@@ -12,7 +12,7 @@ int main(int argc, char* argv[])
     app.setApplicationName(QStringLiteral("NexusVIT"));
     app.setOrganizationName(QStringLiteral("NexusVIT"));
 
-    QFont font(QStringLiteral("Noto Sans CJK SC"));
+    QFont font(QString::fromUtf8(u8"Noto Sans CJK SC"));
     font.setPixelSize(12);
     app.setFont(font);
 

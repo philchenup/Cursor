@@ -25,5 +25,8 @@ target_link_libraries(nexusvit_ui PRIVATE Qt6::Widgets)
 if(WIN32)
     set_target_properties(nexusvit_ui PROPERTIES WIN32_EXECUTABLE TRUE)
 endif()
+if(MSVC)
+    target_compile_options(nexusvit_ui PRIVATE /utf-8)
+endif()
 
 install(TARGETS nexusvit_ui RUNTIME DESTINATION bin)

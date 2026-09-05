@@ -95,14 +95,14 @@ void MainWindow::buildHeader()
         QStringLiteral("Control"), QStringLiteral("View"), QStringLiteral("Option"),
         QStringLiteral("Help")};
     const QStringList menusZh = {
-        QStringLiteral("文件"), QStringLiteral("编辑"), QStringLiteral("工具"),
-        QStringLiteral("控制"), QStringLiteral("视图"), QStringLiteral("选项"),
-        QStringLiteral("帮助")};
+        QString::fromUtf8(u8"文件"), QString::fromUtf8(u8"编辑"), QString::fromUtf8(u8"工具"),
+        QString::fromUtf8(u8"控制"), QString::fromUtf8(u8"视图"), QString::fromUtf8(u8"选项"),
+        QString::fromUtf8(u8"帮助")};
     for (int i = 0; i < menus.size(); ++i) {
         auto* menu = bar->addMenu(menus[i]);
         menu->addAction(menusZh[i]);
         menu->addSeparator();
-        menu->addAction(QStringLiteral("…"));
+        menu->addAction(QString::fromUtf8(u8"…"));
     }
 
     auto* pills = new QWidget;
@@ -195,29 +195,29 @@ void MainWindow::buildRibbon()
     lay->setContentsMargins(8, 2, 12, 2);
     lay->setSpacing(4);
 
-    lay->addWidget(ribbonGroup(QStringLiteral("文件"), {
-        ribbonButton(QStringLiteral("open"), QStringLiteral("打开")),
-        ribbonButton(QStringLiteral("save"), QStringLiteral("保存")),
-        ribbonButton(QStringLiteral("delete"), QStringLiteral("删除")),
-        ribbonButton(QStringLiteral("delete_all"), QStringLiteral("全部删除")),
+    lay->addWidget(ribbonGroup(QString::fromUtf8(u8"文件"), {
+        ribbonButton(QStringLiteral("open"), QString::fromUtf8(u8"打开")),
+        ribbonButton(QStringLiteral("save"), QString::fromUtf8(u8"保存")),
+        ribbonButton(QStringLiteral("delete"), QString::fromUtf8(u8"删除")),
+        ribbonButton(QStringLiteral("delete_all"), QString::fromUtf8(u8"全部删除")),
     }));
     lay->addWidget(hLine());
-    lay->addWidget(ribbonGroup(QStringLiteral("点云"), {
-        ribbonButton(QStringLiteral("color"), QStringLiteral("着色")),
-        ribbonButton(QStringLiteral("coordinate"), QStringLiteral("坐标系")),
-        ribbonButton(QStringLiteral("transform"), QStringLiteral("变换")),
-        ribbonButton(QStringLiteral("sample"), QStringLiteral("降采样")),
-        ribbonButton(QStringLiteral("merge"), QStringLiteral("合并")),
-        ribbonButton(QStringLiteral("clip"), QStringLiteral("裁剪")),
+    lay->addWidget(ribbonGroup(QString::fromUtf8(u8"点云"), {
+        ribbonButton(QStringLiteral("color"), QString::fromUtf8(u8"着色")),
+        ribbonButton(QStringLiteral("coordinate"), QString::fromUtf8(u8"坐标系")),
+        ribbonButton(QStringLiteral("transform"), QString::fromUtf8(u8"变换")),
+        ribbonButton(QStringLiteral("sample"), QString::fromUtf8(u8"降采样")),
+        ribbonButton(QStringLiteral("merge"), QString::fromUtf8(u8"合并")),
+        ribbonButton(QStringLiteral("clip"), QString::fromUtf8(u8"裁剪")),
     }));
     lay->addWidget(hLine());
-    lay->addWidget(ribbonGroup(QStringLiteral("标定"), {
-        ribbonButton(QStringLiteral("tcp"), QStringLiteral("TCP标定")),
-        ribbonButton(QStringLiteral("handeye"), QStringLiteral("手眼标定")),
-        ribbonButton(QStringLiteral("library"), QStringLiteral("工件库")),
-        ribbonButton(QStringLiteral("vision"), QStringLiteral("视觉配置")),
-        ribbonButton(QStringLiteral("place"), QStringLiteral("摆放配置")),
-        ribbonButton(QStringLiteral("screenshot"), QStringLiteral("截图")),
+    lay->addWidget(ribbonGroup(QString::fromUtf8(u8"标定"), {
+        ribbonButton(QStringLiteral("tcp"), QString::fromUtf8(u8"TCP标定")),
+        ribbonButton(QStringLiteral("handeye"), QString::fromUtf8(u8"手眼标定")),
+        ribbonButton(QStringLiteral("library"), QString::fromUtf8(u8"工件库")),
+        ribbonButton(QStringLiteral("vision"), QString::fromUtf8(u8"视觉配置")),
+        ribbonButton(QStringLiteral("place"), QString::fromUtf8(u8"摆放配置")),
+        ribbonButton(QStringLiteral("screenshot"), QString::fromUtf8(u8"截图")),
     }));
     lay->addStretch(1);
 
@@ -226,10 +226,10 @@ void MainWindow::buildRibbon()
     cLay->setContentsMargins(8, 10, 4, 10);
     cLay->setSpacing(8);
 
-    auto* step = accentButton(QStringLiteral("  单步  "), QStringLiteral("outline-green"), QStringLiteral("btnStep"));
-    auto* cont = accentButton(QStringLiteral("  连续  "), QStringLiteral("solid-green"), QStringLiteral("btnContinuous"));
-    auto* pause = accentButton(QStringLiteral("  暂停  "), QStringLiteral("solid-orange"), QStringLiteral("btnPause"));
-    auto* reset = accentButton(QStringLiteral("  复位  "), QStringLiteral("outline-blue"), QStringLiteral("btnReset"));
+    auto* step = accentButton(QString::fromUtf8(u8"  单步  "), QStringLiteral("outline-green"), QStringLiteral("btnStep"));
+    auto* cont = accentButton(QString::fromUtf8(u8"  连续  "), QStringLiteral("solid-green"), QStringLiteral("btnContinuous"));
+    auto* pause = accentButton(QString::fromUtf8(u8"  暂停  "), QStringLiteral("solid-orange"), QStringLiteral("btnPause"));
+    auto* reset = accentButton(QString::fromUtf8(u8"  复位  "), QStringLiteral("outline-blue"), QStringLiteral("btnReset"));
     step->setIcon(NexusIcons::toolbar(QStringLiteral("step"), QColor(80, 200, 120)));
     cont->setIcon(NexusIcons::toolbar(QStringLiteral("continuous"), QColor(20, 40, 28)));
     pause->setIcon(NexusIcons::toolbar(QStringLiteral("pause"), QColor(40, 24, 8)));
@@ -299,7 +299,7 @@ QWidget* MainWindow::buildLeftPanel()
     m_props->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_props->verticalHeader()->setDefaultSectionSize(26);
     const char* keys[] = {"ID", "Category", "Length", "Resolution", "Volume"};
-    const char* vals[] = {"0", "Workpiece", "300.00 mm", "1.00 mm", "1250.68 cm³"};
+    const char* vals[] = {u8"0", u8"Workpiece", u8"300.00 mm", u8"1.00 mm", u8"1250.68 cm³"};
     for (int i = 0; i < 5; ++i) {
         m_props->setItem(i, 0, new QTableWidgetItem(QString::fromUtf8(keys[i])));
         m_props->setItem(i, 1, new QTableWidgetItem(QString::fromUtf8(vals[i])));
@@ -441,10 +441,10 @@ QWidget* MainWindow::buildRightPanel()
     auto* cl = new QHBoxLayout(coords);
     cl->setContentsMargins(0, 0, 0, 0);
     cl->setSpacing(6);
-    cl->addWidget(coordColumn(QStringLiteral("Joints (°)"),
+    cl->addWidget(coordColumn(QString::fromUtf8(u8"Joints (°)"),
                               {QStringLiteral("J0"), QStringLiteral("J1"), QStringLiteral("J2"),
                                QStringLiteral("J3"), QStringLiteral("J4"), QStringLiteral("J5")}));
-    cl->addWidget(coordColumn(QStringLiteral("Cartesian (mm/°)"),
+    cl->addWidget(coordColumn(QString::fromUtf8(u8"Cartesian (mm/°)"),
                               {QStringLiteral("X"), QStringLiteral("Y"), QStringLiteral("Z"),
                                QStringLiteral("Rx"), QStringLiteral("Ry"), QStringLiteral("Rz")}));
 
@@ -572,7 +572,7 @@ QWidget* MainWindow::buildBottom()
     auto* barLay = new QHBoxLayout(consoleBar);
     barLay->setContentsMargins(8, 4, 8, 0);
     barLay->addStretch(1);
-    auto* clear = accentButton(QStringLiteral("清除"), QStringLiteral("ghost"), QStringLiteral("btnClear"));
+    auto* clear = accentButton(QString::fromUtf8(u8"清除"), QStringLiteral("ghost"), QStringLiteral("btnClear"));
     barLay->addWidget(clear);
     m_console = new QPlainTextEdit;
     m_console->setObjectName(QStringLiteral("console"));
