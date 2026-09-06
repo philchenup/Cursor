@@ -1,6 +1,7 @@
 #ifndef COMPUTE_TWO_POINT_POSES_H
 #define COMPUTE_TWO_POINT_POSES_H
 
+#include <pcl/common/io.h>
 #include <pcl/features/normal_3d.h>
 #include <pcl/kdtree/kdtree_flann.h>
 
@@ -40,9 +41,12 @@ inline bool computeTwoPointPoses(const ct::Cloud::Ptr& start_end,
     };
 
     if (!hasNormals(scene)) {
+        // 使用库中已实例化的 NormalEstimation<PointXYZ, Normal>，避免 LNK2001
+        pcl::PointCloud<pcl::PointXYZ>::Ptr xyz(new pcl::PointCloud<pcl::PointXYZ>);
+        pcl::copyPointCloud(*scene, *xyz);
         pcl::PointCloud<pcl::Normal> nrm;
-        pcl::NormalEstimation<ct::PointXYZRGBN, pcl::Normal> ne;
-        ne.setInputCloud(scene);
+        pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne;
+        ne.setInputCloud(xyz);
         ne.setRadiusSearch(radius);
         ne.setViewPoint(0.f, 0.f, 0.f);
         ne.compute(nrm);
