@@ -5,6 +5,7 @@
 #include <pcl/kdtree/kdtree_flann.h>
 
 #include <Eigen/Geometry>
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
