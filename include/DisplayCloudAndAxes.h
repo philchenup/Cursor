@@ -8,6 +8,8 @@
 #include <Geom_Axis2Placement.hxx>
 #include <Graphic3d_ArrayFlags.hxx>
 #include <Graphic3d_ArrayOfPoints.hxx>
+#include <Prs3d_DatumAspect.hxx>
+#include <Prs3d_LineAspect.hxx>
 #include <Prs3d_PointAspect.hxx>
 #include <Quantity_Color.hxx>
 #include <gp_Ax2.hxx>
@@ -27,19 +29,21 @@
  * @param poseStart   起点位姿，列向量为 X/Y/Z 轴
  * @param poseEnd     终点位姿
  * @param axisLength  坐标轴长度
+ * @param axisWidth   坐标轴线宽（默认 1，建议 4～6）
  */
 template <class CloudPtr>
 void DisplayCloudAndAxes(const Handle(AIS_InteractiveContext)& ctx,
                          const CloudPtr& cloud,
                          const Eigen::Affine3f& poseStart,
                          const Eigen::Affine3f& poseEnd,
-                         Standard_Real axisLength = 20.0)
+                         Standard_Real axisLength = 20.0,
+                         Standard_Real axisWidth = 4.0)
 {
     if (ctx.IsNull()) {
         return;
     }
 
-    auto makeAxes = [axisLength](const Eigen::Affine3f& pose) -> Handle(AIS_Trihedron) {
+    auto makeAxes = [axisLength, axisWidth](const Eigen::Affine3f& pose) -> Handle(AIS_Trihedron) {
         const Eigen::Vector3f t = pose.translation();
         const Eigen::Matrix3f R = pose.linear();
         const gp_Ax2 ax(gp_Pnt(t.x(), t.y(), t.z()),
@@ -48,6 +52,10 @@ void DisplayCloudAndAxes(const Handle(AIS_InteractiveContext)& ctx,
         Handle(AIS_Trihedron) tri = new AIS_Trihedron(new Geom_Axis2Placement(ax));
         tri->SetSize(axisLength);
         tri->SetDrawArrows(Standard_True);
+        Handle(Prs3d_DatumAspect) asp = tri->Attributes()->DatumAspect();
+        asp->LineAspect(Prs3d_DP_XAxis)->SetWidth(axisWidth);
+        asp->LineAspect(Prs3d_DP_YAxis)->SetWidth(axisWidth);
+        asp->LineAspect(Prs3d_DP_ZAxis)->SetWidth(axisWidth);
         return tri;
     };
 
