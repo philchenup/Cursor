@@ -14,15 +14,20 @@ AIS_Shape* scaled = ScaleAISShapeBy1000(ais);
 Handle(AIS_Shape) scaledHandle = ScaleAISShapeBy1000(ais);
 ```
 
-## V-groove weld planning (3D)
+## V-groove weld planning (Open3D)
 
-`vgroove_weld_planning.py` converts the original MATLAB 2D V-groove weld planner to Python and extrudes the plan along the weld length for 3D display.
+`vgroove_weld_planning.py` converts the original MATLAB 2D V-groove weld planner to Python and displays the plan with **Open3D** in a right-handed frame:
+
+- **Y** (green): weld / seam direction
+- **Z** (blue): height / plate thickness
+- **X** (red): groove width, from the right-hand rule `X = Y × Z`
 
 ```bash
 pip install -r requirements.txt
 python3 vgroove_weld_planning.py
 python3 vgroove_weld_planning.py --show
-python3 vgroove_weld_planning.py --h 16 --beta 30 --g 1 --weld-length 40
+python3 vgroove_weld_planning.py --gui
+python3 vgroove_weld_planning.py --h 16 --beta 30 --g 1 --weld-length 40 --view end --show
 ```
 
-Figures are written to `figures/vgroove_weld_3d_overview.png` and `figures/vgroove_weld_3d_detail.png`.
+Screenshots: `figures/vgroove_open3d_perspective.png`, `figures/vgroove_open3d_endview.png`.

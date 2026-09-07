@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""V-shape groove weld path planning with 3D visualization.
+"""V-shape groove weld path planning with Open3D visualization.
 
-Converted from the original MATLAB 2D planner. The groove cross-section
-lives in the X–Z plane (X = width, Z = height). The weld is extruded along
-Y (groove length) so layers, bead segments, sequence numbers and torch
-poses can be shown in 3D.
+Converted from the original MATLAB 2D planner. Geometry is shown in a
+right-handed frame:
 
-Coordinate mapping from MATLAB:
-    MATLAB x  ->  Python x   (groove width)
-    MATLAB y  ->  Python z   (groove height / plate thickness)
-    (new)     ->  Python y   (weld / extrusion length)
+    Y  weld / seam direction  (extrusion of the 2D profile)
+    Z  height / plate thickness (MATLAB y)
+    X  width, from the right-hand rule  X = Y × Z  (MATLAB x)
+
+Open3D coordinate-frame colors: X red, Y green, Z blue.
 """
 
 from __future__ import annotations
@@ -19,9 +18,37 @@ import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
-from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
+import open3d as o3d
+from open3d.visualization import rendering
+
+
+# ---------------------------------------------------------------------------
+# Right-handed world frame
+# ---------------------------------------------------------------------------
+# Y: weld direction. Z: height. X: Y × Z so that X × Y = Z.
+Y_AXIS = np.array([0.0, 1.0, 0.0])
+Z_AXIS = np.array([0.0, 0.0, 1.0])
+X_AXIS = np.cross(Y_AXIS, Z_AXIS)  # [1, 0, 0]
+
+AXIS_COLOR = {
+    "X": np.array([0.90, 0.12, 0.12]),  # red
+    "Y": np.array([0.12, 0.72, 0.18]),  # green (weld)
+    "Z": np.array([0.12, 0.32, 0.92]),  # blue
+}
+
+BEAD_COLOR = {
+    "left": np.array([0.957, 0.635, 0.380]),
+    "right": np.array([0.165, 0.616, 0.561]),
+    "center": np.array([0.906, 0.435, 0.318]),
+}
+PLATE_COLOR = np.array([0.62, 0.68, 0.74])
+LAYER_COLOR = np.array([0.30, 0.47, 0.66])
+POINT_COLOR = np.array([0.10, 0.35, 0.95])
+TORCH_COLOR = np.array([0.90, 0.12, 0.12])
+PATH_COLOR = np.array([0.95, 0.75, 0.15])
+GRID_COLOR = np.array([0.78, 0.78, 0.78])
+EDGE_COLOR = np.array([0.12, 0.12, 0.12])
 
 
 # ---------------------------------------------------------------------------
@@ -30,18 +57,16 @@ from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
 
 @dataclass
 class GrooveParams:
-    h: float = 16.0          # plate thickness / groove height, mm
-    beta: float = 30.0       # bevel angle, deg; total included angle is 2*beta
-    g: float = 1.0           # root opening (assembly clearance), mm
-    weld_length: float = 40.0  # extrusion length along Y, mm (3D only)
-    plate_extra: float = 8.0   # extra plate width outside the groove, mm
-
-    # welding parameter information (kept for compatibility with MATLAB)
-    aH: float = 1.0          # deposition coefficient
-    v1: float = 1.0          # wire feed rate
-    d: float = 1.0           # wire diameter
-    v2: float = 1.0          # welding speed
-    n_layers_simple: int = 7  # MATLAB overrides t = h/7 for simplicity
+    h: float = 16.0
+    beta: float = 30.0
+    g: float = 1.0
+    weld_length: float = 40.0
+    plate_extra: float = 8.0
+    aH: float = 1.0
+    v1: float = 1.0
+    d: float = 1.0
+    v2: float = 1.0
+    n_layers_simple: int = 7
 
     @property
     def beta_rad(self) -> float:
@@ -54,25 +79,35 @@ class GrooveParams:
 
 @dataclass
 class Bead:
-    """One weld bead (parallelogram or center trapezoid) in a layer."""
-
     layer: int
     local_index: int
-    kind: str  # 'left', 'right', 'center'
-    quad_xz: np.ndarray          # (4, 2) cyclic cross-section vertices
-    weld_xz: np.ndarray          # (2,) MATLAB weld-point (x, z)
-    direction_xz: np.ndarray     # (2,) torch direction in the X–Z plane
+    kind: str
+    quad_xz: np.ndarray
+    weld_xz: np.ndarray
+    direction_xz: np.ndarray
     sequence: int = 0
+
+    def position_3d(self, y: float) -> np.ndarray:
+        """World point (x, y, z) on the weld path."""
+        return np.array([self.weld_xz[0], y, self.weld_xz[1]], dtype=float)
+
+    def torch_dir_3d(self) -> np.ndarray:
+        """Torch orientation in XZ; no Y component (perpendicular to the seam)."""
+        vec = np.array([self.direction_xz[0], 0.0, self.direction_xz[1]], dtype=float)
+        n = np.linalg.norm(vec)
+        if n < 1e-12:
+            return Z_AXIS.copy()
+        return vec / n
 
 
 @dataclass
 class PlanResult:
     params: GrooveParams
-    t: float                     # layer thickness, mm
-    S: float                     # bead cross-section area, mm^2
-    l: float                     # parallelogram bead width, mm
-    K: int                       # number of layers
-    LN: int                      # max beads in any layer
+    t: float
+    S: float
+    l: float
+    K: int
+    LN: int
     beads: list[Bead] = field(default_factory=list)
     welding_points: np.ndarray = field(default_factory=lambda: np.zeros((4, 0)))
     welding_points_3d: np.ndarray = field(default_factory=lambda: np.zeros((0, 6)))
@@ -87,24 +122,20 @@ class PlanResult:
 # ---------------------------------------------------------------------------
 
 def layer_length(m: float, t: float, tan_beta: float, g: float) -> float:
-    """Width of the groove at the top of layer m (MATLAB L(m)). m may be 0."""
     return 2.0 * tan_beta * t * m + g
 
 
 def half_width(z: float, tan_beta: float, g: float) -> float:
-    """Groove half-width at height z (MATLAB right_x)."""
     return tan_beta * z + g / 2.0
 
 
 def matlab_round(value: float) -> int:
-    """Round half away from zero, matching MATLAB round() for real scalars."""
     if value >= 0:
         return int(math.floor(value + 0.5))
     return int(math.ceil(value - 0.5))
 
 
 def beads_in_layer(i: int, t: float, tan_beta: float, g: float) -> int:
-    """MATLAB: N = round((L(i)+L(i-1))/(L(1)+g)), 1-based layer index i."""
     top = layer_length(i, t, tan_beta, g)
     bot = layer_length(i - 1, t, tan_beta, g)
     first = layer_length(1, t, tan_beta, g)
@@ -113,6 +144,11 @@ def beads_in_layer(i: int, t: float, tan_beta: float, g: float) -> int:
 
 def _quad(p1, p2, p3, p4) -> np.ndarray:
     return np.array([p1, p2, p3, p4], dtype=float)
+
+
+def xz_to_xyz(x: float, z: float, y: float) -> np.ndarray:
+    """Map MATLAB (x, y_height) plus weld station y into the right-handed frame."""
+    return np.array([x, y, z], dtype=float)
 
 
 # ---------------------------------------------------------------------------
@@ -124,23 +160,20 @@ def plan_weld(params: GrooveParams | None = None) -> PlanResult:
     tan_b = p.tan_beta
     g = p.g
 
-    # derived param for layer planning (MATLAB, including the t = h/7 override)
     S = p.aH * math.pi * p.v1 * (p.d ** 2) / (4.0 * p.v2)
     t = math.sqrt(S - g / tan_b) if S > g / tan_b else p.h / p.n_layers_simple
-    t = p.h / p.n_layers_simple  # for simplicity, same as MATLAB
+    t = p.h / p.n_layers_simple
     S = (tan_b * t + g) * t
     K = int(math.floor(p.h / t))
-    l = S / t  # length of the weld bead in parallelograms
+    l = S / t
 
     LN = int(math.ceil(
         (layer_length(K, t, tan_b, g) + layer_length(K - 1, t, tan_b, g))
         / (layer_length(1, t, tan_b, g) + g)
     ))
 
-    # projection vectors used for weld-point placement (MATLAB section 5)
     vl = np.array([tan_b * t - l, -t])
     vr = np.array([-tan_b * t + l, -t])
-
     arrow = l / 2.0
     dl = arrow * np.array([
         math.sin(math.radians(45.0 - p.beta / 2.0)),
@@ -155,8 +188,8 @@ def plan_weld(params: GrooveParams | None = None) -> PlanResult:
     beads: list[Bead] = []
     seq = 1
     y_mid = p.weld_length / 2.0
-    pts_2d: list[list[float]] = []  # [x, z, dx, dz]
-    pts_3d: list[list[float]] = []  # [x, y, z, dx, dy, dz]
+    pts_2d: list[list[float]] = []
+    pts_3d: list[list[float]] = []
 
     def emit(layer: int, local: int, kind: str, quad, weld_xz, direction_xz) -> None:
         nonlocal seq
@@ -188,14 +221,11 @@ def plan_weld(params: GrooveParams | None = None) -> PlanResult:
         N = beads_in_layer(i, t, tan_b, g)
 
         if N == 1:
-            quad = _quad(
-                (xl, z_top), (xr, z_top), (xr_b, z_bot), (xl_b, z_bot),
-            )
+            quad = _quad((xl, z_top), (xr, z_top), (xr_b, z_bot), (xl_b, z_bot))
             emit(i, 1, "center", quad, (0.0, 0.0), up)
             continue
 
         lp = N // 2
-        # left parallelograms j = 1 .. lp  (MATLAB)
         left_welds: list[np.ndarray] = []
         left_quads: list[np.ndarray] = []
         for j in range(1, lp + 1):
@@ -210,15 +240,12 @@ def plan_weld(params: GrooveParams | None = None) -> PlanResult:
             left_welds.append(weld)
             left_quads.append(quad)
 
-        # right parallelograms, MATLAB pose loop uses k starting at N-1
         right_welds: list[np.ndarray] = []
         right_quads: list[np.ndarray] = []
         k = N - 1
         for j in range(lp + 1, N):
             x = xr - (N - k) * l
             weld = np.array([x + vr[0], z_top + vr[1]])
-            # divider at this x is the inner side of a right bead measured
-            # from the right wall: (N-k) steps of l
             n_from_right = N - k
             quad = _quad(
                 (xr - n_from_right * l, z_top),
@@ -231,120 +258,232 @@ def plan_weld(params: GrooveParams | None = None) -> PlanResult:
             k -= 1
 
         if N == 2:
-            # MATLAB special case: one left bead, then a center-ish point
             emit(i, 1, "left", left_quads[0], left_welds[0], dl)
             weld2 = np.array([l / 2.0, left_welds[0][1]])
-            # remaining trapezoid to the right of the left parallelogram
             quad_c = _quad(
-                (xl + l, z_top),
-                (xr, z_top),
-                (xr_b, z_bot),
-                (xl_b + l, z_bot),
+                (xl + l, z_top), (xr, z_top), (xr_b, z_bot), (xl_b + l, z_bot),
             )
             emit(i, 2, "center", quad_c, weld2, up)
             continue
 
-        # N > 2: left beads, right beads, then center trapezoid
         for j, (weld, quad) in enumerate(zip(left_welds, left_quads), start=1):
             emit(i, j, "left", quad, weld, dl)
-
         for j, (weld, quad) in enumerate(zip(right_welds, right_quads), start=lp + 1):
             emit(i, j, "right", quad, weld, dv)
 
-        # center trapezoid between the innermost left and innermost right
         inner_left_top = xl + lp * l
         inner_left_bot = xl_b + lp * l
         if right_quads:
             inner_right_top = xr - (N - 1 - lp) * l
             inner_right_bot = xr_b - (N - 1 - lp) * l
         else:
-            inner_right_top = xr
-            inner_right_bot = xr_b
+            inner_right_top, inner_right_bot = xr, xr_b
         quad_c = _quad(
             (inner_left_top, z_top),
             (inner_right_top, z_top),
             (inner_right_bot, z_bot),
             (inner_left_bot, z_bot),
         )
-        center_weld = 0.5 * (left_welds[-1] + right_welds[-1])
-        emit(i, N, "center", quad_c, center_weld, up)
+        emit(i, N, "center", quad_c, 0.5 * (left_welds[-1] + right_welds[-1]), up)
 
     welding_points = np.array(pts_2d, dtype=float).T if pts_2d else np.zeros((4, 0))
     welding_points_3d = np.array(pts_3d, dtype=float) if pts_3d else np.zeros((0, 6))
     return PlanResult(
-        params=p,
-        t=t,
-        S=S,
-        l=l,
-        K=K,
-        LN=LN,
-        beads=beads,
-        welding_points=welding_points,
-        welding_points_3d=welding_points_3d,
+        params=p, t=t, S=S, l=l, K=K, LN=LN, beads=beads,
+        welding_points=welding_points, welding_points_3d=welding_points_3d,
     )
 
 
 # ---------------------------------------------------------------------------
-# 3D drawing
+# Open3D mesh / line helpers
 # ---------------------------------------------------------------------------
 
-BEAD_FACE = {
-    "left": "#f4a261",
-    "right": "#2a9d8f",
-    "center": "#e76f51",
-}
-PLATE_COLOR = "#9aa7b2"
-LAYER_COLOR = "#4c78a8"
-EDGE_COLOR = "#222222"
+def _paint(mesh: o3d.geometry.TriangleMesh, color: np.ndarray) -> o3d.geometry.TriangleMesh:
+    mesh.compute_vertex_normals()
+    mesh.paint_uniform_color(color.tolist())
+    return mesh
 
 
-def _extrude_quad_xz(quad_xz: np.ndarray, y0: float, y1: float) -> list[np.ndarray]:
-    """Extrude a 4-vertex XZ polygon along Y into 6 faces."""
+def _mesh_from_vertices_triangles(vertices, triangles, color) -> o3d.geometry.TriangleMesh:
+    mesh = o3d.geometry.TriangleMesh()
+    mesh.vertices = o3d.utility.Vector3dVector(np.asarray(vertices, dtype=float))
+    mesh.triangles = o3d.utility.Vector3iVector(np.asarray(triangles, dtype=np.int32))
+    mesh.remove_duplicated_triangles()
+    mesh.remove_degenerate_triangles()
+    return _paint(mesh, color)
+
+
+def _lineset(points, lines, color, extra_colors=None) -> o3d.geometry.LineSet:
+    ls = o3d.geometry.LineSet()
+    ls.points = o3d.utility.Vector3dVector(np.asarray(points, dtype=float))
+    ls.lines = o3d.utility.Vector2iVector(np.asarray(lines, dtype=np.int32))
+    if extra_colors is not None:
+        ls.colors = o3d.utility.Vector3dVector(np.asarray(extra_colors, dtype=float))
+    else:
+        ls.paint_uniform_color(np.asarray(color, dtype=float).tolist())
+    return ls
+
+
+def _rotation_from_z(direction: np.ndarray) -> np.ndarray:
+    """Rotation that maps +Z (Open3D arrow default) onto `direction`."""
+    z = np.array([0.0, 0.0, 1.0])
+    v = np.asarray(direction, dtype=float)
+    n = np.linalg.norm(v)
+    if n < 1e-12:
+        return np.eye(3)
+    v = v / n
+    axis = np.cross(z, v)
+    axis_n = np.linalg.norm(axis)
+    if axis_n < 1e-12:
+        if np.dot(z, v) > 0:
+            return np.eye(3)
+        return o3d.geometry.get_rotation_matrix_from_axis_angle(np.array([math.pi, 0.0, 0.0]))
+    angle = math.acos(float(np.clip(np.dot(z, v), -1.0, 1.0)))
+    return o3d.geometry.get_rotation_matrix_from_axis_angle(axis / axis_n * angle)
+
+
+def make_arrow(origin, direction, color, cylinder_r=0.18, cone_r=0.38) -> o3d.geometry.TriangleMesh:
+    vec = np.asarray(direction, dtype=float)
+    length = float(np.linalg.norm(vec))
+    if length < 1e-9:
+        return o3d.geometry.TriangleMesh()
+    cone_h = min(0.32 * length, 2.2)
+    cyl_h = max(length - cone_h, 0.05 * length)
+    arrow = o3d.geometry.TriangleMesh.create_arrow(
+        cylinder_radius=cylinder_r,
+        cone_radius=cone_r,
+        cylinder_height=cyl_h,
+        cone_height=cone_h,
+        resolution=16,
+        cylinder_split=1,
+        cone_split=1,
+    )
+    arrow.rotate(_rotation_from_z(vec), center=(0.0, 0.0, 0.0))
+    arrow.translate(np.asarray(origin, dtype=float))
+    return _paint(arrow, color)
+
+
+def make_sphere(center, radius, color) -> o3d.geometry.TriangleMesh:
+    sph = o3d.geometry.TriangleMesh.create_sphere(radius=radius, resolution=12)
+    sph.translate(np.asarray(center, dtype=float))
+    return _paint(sph, color)
+
+
+def _extrude_quad_mesh(quad_xz: np.ndarray, y0: float, y1: float, color) -> o3d.geometry.TriangleMesh:
     q = np.asarray(quad_xz, dtype=float)
     front = np.column_stack([q[:, 0], np.full(4, y0), q[:, 1]])
     back = np.column_stack([q[:, 0], np.full(4, y1), q[:, 1]])
-    faces = [front, back]
-    for i in range(4):
-        j = (i + 1) % 4
-        faces.append(np.array([front[i], front[j], back[j], back[i]]))
-    return faces
+    v = np.vstack([front, back])
+    tris = [
+        [0, 1, 2], [0, 2, 3],
+        [4, 6, 5], [4, 7, 6],
+        [0, 4, 5], [0, 5, 1],
+        [1, 5, 6], [1, 6, 2],
+        [2, 6, 7], [2, 7, 3],
+        [3, 7, 4], [3, 4, 0],
+    ]
+    return _mesh_from_vertices_triangles(v, tris, color)
 
 
-def _add_faces(ax, faces, facecolor, edgecolor=EDGE_COLOR, alpha=0.35, lw=0.45) -> None:
-    coll = Poly3DCollection(
-        faces,
-        facecolors=facecolor,
-        edgecolors=edgecolor,
-        linewidths=lw,
-        alpha=alpha,
-    )
-    ax.add_collection3d(coll)
+# ---------------------------------------------------------------------------
+# Coordinate frame (Open3D, right-handed, Y = weld)
+# ---------------------------------------------------------------------------
+
+def _letter_lines(letter: str, origin: np.ndarray, axis: str, scale: float):
+    """Simple 3D stroke letters sitting at an axis tip."""
+    s = scale
+    pts2 = {
+        "X": [(-s, -s), (s, s), (-s, s), (s, -s)],
+        "Y": [(0, -s), (0, 0), (-s, s), (s, s), (0, 0)],
+        "Z": [(-s, s), (s, s), (-s, -s), (s, -s)],
+    }[letter]
+    segs = {
+        "X": [(0, 1), (2, 3)],
+        "Y": [(0, 1), (1, 2), (1, 3)],
+        "Z": [(0, 1), (1, 2), (2, 3)],
+    }[letter]
+    points = []
+    for a, b in pts2:
+        if axis == "X":
+            points.append(origin + np.array([0.0, a, b]))
+        elif axis == "Y":
+            points.append(origin + np.array([a, 0.0, b]))
+        else:
+            points.append(origin + np.array([a, b, 0.0]))
+    return np.array(points), segs
 
 
-def groove_corners(p: GrooveParams) -> dict[str, np.ndarray]:
-    """MATLAB points A,B,C,D lifted to 3D endpoints y=0 and y=L."""
-    tan_b = p.tan_beta
-    A = np.array([-p.g / 2.0, 0.0, 0.0])
-    B = np.array([p.g / 2.0, 0.0, 0.0])
-    C = np.array([p.h * tan_b + p.g / 2.0, 0.0, p.h])
-    D = np.array([-p.h * tan_b - p.g / 2.0, 0.0, p.h])
-    offset = np.array([0.0, p.weld_length, 0.0])
-    return {
-        "A": A, "B": B, "C": C, "D": D,
-        "A2": A + offset, "B2": B + offset, "C2": C + offset, "D2": D + offset,
-    }
+def make_coordinate_frame(size: float = 12.0, origin=None) -> list:
+    """Visible world frame: X red, Y green (weld), Z blue.
+
+    Placed slightly in -Y so the triad sits in front of the groove and all
+    three axes stay readable. Open3D convention: X red, Y green, Z blue.
+    """
+    origin = np.array([0.0, -6.0, 0.0]) if origin is None else np.asarray(origin, dtype=float)
+    geoms: list = []
+    frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=size, origin=origin)
+    geoms.append(frame)
+
+    letter_scale = size * 0.14
+    letter_pts: list[np.ndarray] = []
+    letter_lines: list[tuple[int, int]] = []
+    letter_colors: list[np.ndarray] = []
+    placements = [
+        ("X", origin + X_AXIS * (size + 2.4), "X"),
+        ("Y", origin + Y_AXIS * (size + 2.4), "Y"),
+        ("Z", origin + Z_AXIS * (size + 2.4), "Z"),
+    ]
+    for letter, tip, axis_name in placements:
+        pts, segs = _letter_lines(letter, tip, axis_name, letter_scale)
+        base = len(letter_pts)
+        letter_pts.extend(pts)
+        for a, b in segs:
+            letter_lines.append((base + a, base + b))
+            letter_colors.append(AXIS_COLOR[letter])
+    geoms.append(_lineset(letter_pts, letter_lines, AXIS_COLOR["X"], extra_colors=letter_colors))
+    return geoms
 
 
-def draw_plates(ax, p: GrooveParams, alpha: float = 0.28) -> None:
-    """Two workpieces with a V-groove between them, extruded along Y."""
+def make_weld_axis_arrow(p: GrooveParams) -> o3d.geometry.TriangleMesh:
+    """Long green arrow beside the plates, parallel to +Y (weld direction)."""
+    x_left = -(p.h * p.tan_beta + p.g / 2.0 + p.plate_extra + 5.0)
+    start = np.array([x_left, 0.0, 0.0])
+    return make_arrow(start, Y_AXIS * p.weld_length, AXIS_COLOR["Y"],
+                      cylinder_r=0.35, cone_r=0.75)
+
+
+def make_xy_grid(p: GrooveParams, step: float = 5.0) -> o3d.geometry.LineSet:
+    """Ground grid on Z = 0 (XY plane) so X and weld-Y are readable."""
+    x_span = p.h * p.tan_beta + p.g / 2.0 + p.plate_extra + 8.0
+    y0, y1 = -8.0, p.weld_length
+    xs = np.arange(-math.floor(x_span / step) * step, x_span + 0.5 * step, step)
+    ys = np.arange(y0, y1 + 0.5 * step, step)
+    points, lines = [], []
+    for y in ys:
+        i0 = len(points)
+        points.append([-x_span, y, 0.0])
+        points.append([x_span, y, 0.0])
+        lines.append([i0, i0 + 1])
+    for x in xs:
+        i0 = len(points)
+        points.append([x, y0, 0.0])
+        points.append([x, y1, 0.0])
+        lines.append([i0, i0 + 1])
+    return _lineset(points, lines, GRID_COLOR)
+
+
+# ---------------------------------------------------------------------------
+# Scene contents
+# ---------------------------------------------------------------------------
+
+def make_plate_meshes(p: GrooveParams) -> list[o3d.geometry.TriangleMesh]:
     tan_b = p.tan_beta
     y0, y1 = 0.0, p.weld_length
     x_in_top = p.h * tan_b + p.g / 2.0
     x_out = x_in_top + p.plate_extra
-
-    def plate(sign: float) -> list[np.ndarray]:
-        # sign = -1 left, +1 right. Inner face follows the bevel.
-        verts = np.array([
+    meshes = []
+    for sign in (-1.0, 1.0):
+        v = np.array([
             [sign * x_out, y0, 0.0],
             [sign * p.g / 2.0, y0, 0.0],
             [sign * x_in_top, y0, p.h],
@@ -354,49 +493,64 @@ def draw_plates(ax, p: GrooveParams, alpha: float = 0.28) -> None:
             [sign * x_in_top, y1, p.h],
             [sign * x_out, y1, p.h],
         ])
-        faces_idx = [
-            (0, 1, 2, 3), (4, 7, 6, 5),
-            (0, 3, 7, 4), (1, 5, 6, 2),
-            (3, 2, 6, 7), (0, 4, 5, 1),
+        tris = [
+            [1, 0, 3], [1, 3, 2],
+            [4, 5, 6], [4, 6, 7],
+            [0, 4, 7], [0, 7, 3],
+            [1, 2, 6], [1, 6, 5],
+            [3, 7, 6], [3, 6, 2],
+            [0, 1, 5], [0, 5, 4],
         ]
-        return [verts[list(idx)] for idx in faces_idx]
-
-    _add_faces(ax, plate(-1.0), PLATE_COLOR, alpha=alpha, lw=0.5)
-    _add_faces(ax, plate(+1.0), PLATE_COLOR, alpha=alpha, lw=0.5)
-
-    c = groove_corners(p)
-    # groove outline
-    lines = [
-        [c["A"], c["B"]], [c["A"], c["D"]], [c["B"], c["C"]],
-        [c["A2"], c["B2"]], [c["A2"], c["D2"]], [c["B2"], c["C2"]],
-        [c["A"], c["A2"]], [c["B"], c["B2"]], [c["C"], c["C2"]], [c["D"], c["D2"]],
-        [c["D"], c["C"]], [c["D2"], c["C2"]],
-    ]
-    ax.add_collection3d(Line3DCollection(lines, colors="k", linewidths=1.1))
+        if sign < 0:
+            tris = [[a, c, b] for a, b, c in tris]
+        meshes.append(_mesh_from_vertices_triangles(v, tris, PLATE_COLOR))
+    return meshes
 
 
-def draw_layers(ax, plan: PlanResult, alpha: float = 0.18) -> None:
-    p = plan.params
+def make_groove_edges(p: GrooveParams) -> o3d.geometry.LineSet:
     tan_b = p.tan_beta
-    y0, y1 = 0.0, p.weld_length
+    A = xz_to_xyz(-p.g / 2.0, 0.0, 0.0)
+    B = xz_to_xyz(p.g / 2.0, 0.0, 0.0)
+    C = xz_to_xyz(p.h * tan_b + p.g / 2.0, p.h, 0.0)
+    D = xz_to_xyz(-p.h * tan_b - p.g / 2.0, p.h, 0.0)
+    off = np.array([0.0, p.weld_length, 0.0])
+    A2, B2, C2, D2 = A + off, B + off, C + off, D + off
+    pts = [A, B, C, D, A2, B2, C2, D2]
+    lines = [
+        [0, 1], [0, 3], [1, 2],
+        [4, 5], [4, 7], [5, 6],
+        [0, 4], [1, 5], [2, 6], [3, 7],
+        [3, 2], [7, 6],
+    ]
+    return _lineset(pts, lines, EDGE_COLOR)
+
+
+def make_layer_planes(plan: PlanResult) -> list[o3d.geometry.TriangleMesh]:
+    p = plan.params
+    meshes = []
     for i in range(1, plan.K + 1):
         z = i * plan.t
-        x = half_width(z, tan_b, p.g)
-        quad = np.array([
-            [-x, y0, z], [x, y0, z], [x, y1, z], [-x, y1, z],
+        x = half_width(z, p.tan_beta, p.g)
+        v = np.array([
+            [-x, 0.0, z], [x, 0.0, z], [x, p.weld_length, z], [-x, p.weld_length, z],
         ])
-        _add_faces(ax, [quad], LAYER_COLOR, edgecolor="#2c3e50", alpha=alpha, lw=0.6)
+        tris = [[0, 1, 2], [0, 2, 3]]
+        meshes.append(_mesh_from_vertices_triangles(v, tris, LAYER_COLOR))
+    return meshes
 
 
-def draw_segment_dividers(ax, plan: PlanResult) -> None:
-    """MATLAB section 3: dividing lines of left/right parallelograms, extruded."""
+def make_segment_dividers(plan: PlanResult) -> o3d.geometry.LineSet:
     p = plan.params
-    tan_b = p.tan_beta
-    t, l, g = plan.t, plan.l, p.g
+    tan_b, t, l, g = p.tan_beta, plan.t, plan.l, p.g
     vl = np.array([tan_b * t, -t])
     vr = np.array([-tan_b * t, -t])
-    y0, y1 = 0.0, p.weld_length
-    lines = []
+    points, lines = [], []
+
+    def add_seg(a, b):
+        i0 = len(points)
+        points.extend([a, b])
+        lines.append([i0, i0 + 1])
+
     for i in range(1, plan.K + 1):
         z = i * t
         xr = half_width(z, tan_b, g)
@@ -407,207 +561,227 @@ def draw_segment_dividers(ax, plan: PlanResult) -> None:
         lp = N // 2
         for j in range(1, lp + 1):
             x = xl + j * l
-            a = np.array([x, y0, z])
-            b = np.array([x + vl[0], y0, z + vl[1]])
-            a2 = np.array([x, y1, z])
-            b2 = np.array([x + vl[0], y1, z + vl[1]])
-            lines.extend([[a, b], [a2, b2], [a, a2], [b, b2]])
+            a = xz_to_xyz(x, z, 0.0)
+            b = xz_to_xyz(x + vl[0], z + vl[1], 0.0)
+            a2 = xz_to_xyz(x, z, p.weld_length)
+            b2 = xz_to_xyz(x + vl[0], z + vl[1], p.weld_length)
+            add_seg(a, b)
+            add_seg(a2, b2)
+            add_seg(a, a2)
+            add_seg(b, b2)
         for j in range(lp + 1, N):
             x = xr - (N - j) * l
-            a = np.array([x, y0, z])
-            b = np.array([x + vr[0], y0, z + vr[1]])
-            a2 = np.array([x, y1, z])
-            b2 = np.array([x + vr[0], y1, z + vr[1]])
-            lines.extend([[a, b], [a2, b2], [a, a2], [b, b2]])
-    if lines:
-        ax.add_collection3d(Line3DCollection(lines, colors="#333333", linewidths=0.9))
+            a = xz_to_xyz(x, z, 0.0)
+            b = xz_to_xyz(x + vr[0], z + vr[1], 0.0)
+            a2 = xz_to_xyz(x, z, p.weld_length)
+            b2 = xz_to_xyz(x + vr[0], z + vr[1], p.weld_length)
+            add_seg(a, b)
+            add_seg(a2, b2)
+            add_seg(a, a2)
+            add_seg(b, b2)
+    if not points:
+        return o3d.geometry.LineSet()
+    return _lineset(points, lines, EDGE_COLOR)
 
 
-def draw_bead_volumes(ax, plan: PlanResult, alpha: float = 0.32) -> None:
-    p = plan.params
-    for bead in plan.beads:
-        faces = _extrude_quad_xz(bead.quad_xz, 0.0, p.weld_length)
-        _add_faces(ax, faces, BEAD_FACE[bead.kind], alpha=alpha, lw=0.35)
-
-
-def draw_weld_paths(ax, plan: PlanResult) -> None:
-    """Straight weld paths along Y through each planned point."""
+def make_bead_meshes(plan: PlanResult) -> list[o3d.geometry.TriangleMesh]:
     L = plan.params.weld_length
-    segs = []
-    colors = []
+    return [
+        _extrude_quad_mesh(bead.quad_xz, 0.0, L, BEAD_COLOR[bead.kind])
+        for bead in plan.beads
+    ]
+
+
+def make_weld_paths(plan: PlanResult) -> o3d.geometry.LineSet:
+    L = plan.params.weld_length
+    points, lines, colors = [], [], []
     for bead in plan.beads:
-        x, z = bead.weld_xz
-        segs.append([(x, 0.0, z), (x, L, z)])
-        colors.append(BEAD_FACE[bead.kind])
-    if segs:
-        ax.add_collection3d(Line3DCollection(segs, colors=colors, linewidths=1.6))
+        i0 = len(points)
+        points.append(bead.position_3d(0.0))
+        points.append(bead.position_3d(L))
+        lines.append([i0, i0 + 1])
+        colors.append(BEAD_COLOR[bead.kind])
+    return _lineset(points, lines, PATH_COLOR, extra_colors=colors)
 
 
-def draw_sequence_labels(ax, plan: PlanResult, fontsize: int = 8) -> None:
-    """Put sequence numbers on the near Y face so they stay readable in 3D."""
-    y = plan.params.weld_length * 0.92
-    dz = 0.18 * plan.t
-    xs, ys, zs = [], [], []
-    for bead in plan.beads:
-        x, z = bead.weld_xz
-        xs.append(x)
-        ys.append(y)
-        zs.append(z + dz)
-        ax.text(
-            x, y, z + dz, str(bead.sequence),
-            fontsize=fontsize, color="#111111", weight="bold",
-            ha="center", va="center",
-        )
-    if xs:
-        ax.scatter(xs, ys, zs, c="white", s=70, edgecolors="k", linewidths=0.5, depthshade=False)
-
-
-def _display_direction(direction_xz: np.ndarray, length: float) -> np.ndarray:
-    """Scale a 2D XZ torch vector to a visible 3D arrow; keep MATLAB direction."""
-    vec = np.array([direction_xz[0], 0.0, direction_xz[1]], dtype=float)
-    norm = np.linalg.norm(vec)
-    if norm < 1e-12:
-        return np.array([0.0, 0.0, length])
-    return vec / norm * length
-
-
-def draw_poses(ax, plan: PlanResult) -> None:
+def make_weld_poses(plan: PlanResult) -> list[o3d.geometry.TriangleMesh]:
     y = plan.params.weld_length / 2.0
-    display_len = max(plan.t * 1.35, 3.0)
-    xs, ys, zs, dxs, dys, dzs = [], [], [], [], [], []
+    arrow_len = max(plan.t * 1.6, 3.5)
+    geoms: list[o3d.geometry.TriangleMesh] = []
     for bead in plan.beads:
-        x, z = bead.weld_xz
-        d3 = _display_direction(bead.direction_xz, display_len)
-        xs.append(x)
-        ys.append(y)
-        zs.append(z)
-        dxs.append(d3[0])
-        dys.append(d3[1])
-        dzs.append(d3[2])
-        ax.scatter(x, y, z, c="b", s=28, depthshade=False, zorder=5)
-    if xs:
-        ax.quiver(
-            xs, ys, zs, dxs, dys, dzs,
-            color="r", linewidth=1.6, arrow_length_ratio=0.28, normalize=False,
-        )
+        origin = bead.position_3d(y)
+        geoms.append(make_sphere(origin, radius=0.45, color=POINT_COLOR))
+        geoms.append(make_arrow(origin, bead.torch_dir_3d() * arrow_len, TORCH_COLOR,
+                                cylinder_r=0.12, cone_r=0.28))
+    return geoms
 
 
-def set_axes_equal(ax) -> None:
-    xlim = np.array(ax.get_xlim3d())
-    ylim = np.array(ax.get_ylim3d())
-    zlim = np.array(ax.get_zlim3d())
-    ranges = np.array([xlim[1] - xlim[0], ylim[1] - ylim[0], zlim[1] - zlim[0]])
-    centers = np.array([xlim.mean(), ylim.mean(), zlim.mean()])
-    radius = 0.5 * float(ranges.max())
-    ax.set_xlim3d(centers[0] - radius, centers[0] + radius)
-    ax.set_ylim3d(centers[1] - radius, centers[1] + radius)
-    ax.set_zlim3d(max(0.0, centers[2] - radius), centers[2] + radius)
+def sequence_labels(plan: PlanResult) -> list[tuple[np.ndarray, str]]:
+    y = plan.params.weld_length * 0.92
+    dz = 0.25 * plan.t
+    return [(bead.position_3d(y) + np.array([0.0, 0.0, dz]), str(bead.sequence))
+            for bead in plan.beads]
+
+
+def build_scene(plan: PlanResult) -> list:
+    """Full Open3D scene: frame, plates, beads, paths, torch poses."""
+    p = plan.params
+    geoms: list = []
+    geoms.append(make_xy_grid(p))
+    geoms.extend(make_coordinate_frame(size=max(12.0, p.h * 0.85)))
+    geoms.append(make_weld_axis_arrow(p))
+    geoms.extend(make_plate_meshes(p))
+    geoms.append(make_groove_edges(p))
+    geoms.extend(make_layer_planes(plan))
+    geoms.extend(make_bead_meshes(plan))
+    geoms.append(make_segment_dividers(plan))
+    geoms.append(make_weld_paths(plan))
+    geoms.extend(make_weld_poses(plan))
+    return [g for g in geoms if g is not None]
+
+
+# ---------------------------------------------------------------------------
+# Camera: Z-up, look along +Y (weld), X to the right (right-hand)
+# ---------------------------------------------------------------------------
+
+def _camera_eye_lookat_up(plan: PlanResult, view: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    p = plan.params
+    lookat = np.array([0.0, p.weld_length * 0.35, p.h * 0.40])
+    up = Z_AXIS
+    span = max(p.weld_length, p.h * 2.0, 30.0)
+    if view == "end":
+        # Camera on -Y, looking toward +Y: X right, Z up (right-hand).
+        eye = lookat + np.array([0.0, -1.85 * span, 0.05 * span])
+    else:
+        # 3/4 view from -Y / +X so the green weld axis recedes into the scene.
+        eye = lookat + np.array([0.85 * span, -1.45 * span, 0.50 * span])
+    return eye, lookat, up
+
+
+def _vertex_color_material(alpha: float = 1.0) -> rendering.MaterialRecord:
+    """Keep TriangleMesh vertex colors (Open3D RGB triad, painted beads)."""
+    mat = rendering.MaterialRecord()
+    mat.shader = "defaultLit" if alpha >= 0.999 else "defaultLitTransparency"
+    mat.base_color = [1.0, 1.0, 1.0, alpha]
+    mat.base_roughness = 0.45
+    mat.base_metallic = 0.0
+    return mat
+
+
+def _line_material(width: float = 2.0) -> rendering.MaterialRecord:
+    mat = rendering.MaterialRecord()
+    mat.shader = "unlitLine"
+    mat.line_width = width
+    mat.base_color = [1.0, 1.0, 1.0, 1.0]
+    return mat
+
+
+def render_screenshot(plan: PlanResult, path: Path, view: str = "perspective",
+                      width: int = 1600, height: int = 1000) -> None:
+    """Offscreen Filament render, Z-up right-handed camera."""
+    renderer = rendering.OffscreenRenderer(width, height)
+    scene = renderer.scene
+    scene.set_background([1.0, 1.0, 1.0, 1.0])
+    scene.scene.set_sun_light([0.35, -0.55, -0.85], [1.0, 1.0, 1.0], 90_000)
+    scene.scene.enable_sun_light(True)
+
+    p = plan.params
+    scene.add_geometry("grid", make_xy_grid(p), _line_material(1.0))
+    scene.add_geometry("edges", make_groove_edges(p), _line_material(2.8))
+    scene.add_geometry("dividers", make_segment_dividers(plan), _line_material(1.6))
+    scene.add_geometry("paths", make_weld_paths(plan), _line_material(3.2))
+
+    axis_size = max(12.0, p.h * 0.85)
+    for i, geom in enumerate(make_coordinate_frame(size=axis_size)):
+        if isinstance(geom, o3d.geometry.LineSet):
+            scene.add_geometry(f"axis_letter_{i}", geom, _line_material(6.0))
+        else:
+            scene.add_geometry(f"axis_{i}", geom, _vertex_color_material())
+    scene.add_geometry("weld_y_arrow", make_weld_axis_arrow(p), _vertex_color_material())
+
+    for i, mesh in enumerate(make_plate_meshes(p)):
+        scene.add_geometry(f"plate_{i}", mesh, _vertex_color_material(alpha=0.32))
+    for i, mesh in enumerate(make_layer_planes(plan)):
+        scene.add_geometry(f"layer_{i}", mesh, _vertex_color_material(alpha=0.16))
+    for i, mesh in enumerate(make_bead_meshes(plan)):
+        scene.add_geometry(f"bead_{i}", mesh, _vertex_color_material(alpha=0.72))
+    for i, mesh in enumerate(make_weld_poses(plan)):
+        scene.add_geometry(f"pose_{i}", mesh, _vertex_color_material())
+
+    eye, lookat, up = _camera_eye_lookat_up(plan, view)
+    scene.camera.look_at(lookat, eye, up)
+    img = renderer.render_to_image()
+    o3d.io.write_image(str(path), img)
+
+
+def show_open3d(plan: PlanResult, view: str = "perspective") -> None:
+    """Interactive Open3D window with 3D axis labels and sequence numbers."""
+    geoms = build_scene(plan)
+    vis = o3d.visualization.Visualizer()
+    vis.create_window(window_name="V-groove weld (Open3D)  Y=weld  X=Y×Z", width=1600, height=1000)
+    for g in geoms:
+        vis.add_geometry(g)
+    opt = vis.get_render_option()
+    opt.background_color = np.array([0.97, 0.97, 0.97])
+    opt.mesh_show_back_face = True
+    opt.line_width = 3.0
+    opt.show_coordinate_frame = True
+
+    eye, lookat, up = _camera_eye_lookat_up(plan, view)
+    ctr = vis.get_view_control()
+    ctr.set_lookat(lookat)
+    ctr.set_up(up)
+    ctr.set_front(eye - lookat)
+    ctr.set_zoom(0.55)
+
+    vis.run()
+    vis.destroy_window()
+
+
+def show_open3d_with_labels(plan: PlanResult) -> None:
+    """GUI visualizer: coordinate-frame colors + sequence labels at weld points."""
+    app = o3d.visualization.gui.Application.instance
+    app.initialize()
+    vis = o3d.visualization.O3DVisualizer("V-groove weld  |  Y weld  |  X = Y × Z", 1600, 1000)
+    vis.show_skybox(False)
+    vis.show_axes = True  # Open3D RGB triad: X red, Y green, Z blue
     try:
-        ax.set_box_aspect((1, 1, 1))
+        vis.show_ground = True
+        vis.ground_plane = o3d.visualization.O3DVisualizer.GroundPlane.XY
     except Exception:
         pass
+    vis.point_size = 6
+    vis.line_width = 3
 
+    for i, g in enumerate(build_scene(plan)):
+        vis.add_geometry(f"g_{i}", g)
 
-def style_ax(ax, title: str, plan: PlanResult) -> None:
-    p = plan.params
-    ax.set_title(title, fontsize=12, pad=8)
-    ax.set_xlabel("X width (mm)")
-    ax.set_ylabel("Y weld length (mm)")
-    ax.set_zlabel("Z height (mm)")
-    x_span = p.h * p.tan_beta + p.g / 2.0 + p.plate_extra
-    ax.set_xlim(-x_span, x_span)
-    ax.set_ylim(0.0, p.weld_length)
-    ax.set_zlim(0.0, p.h * 1.15)
-    ax.view_init(elev=22, azim=-58)
-    set_axes_equal(ax)
-    ax.tick_params(labelsize=7)
+    frame_origin = np.array([0.0, -6.0, 0.0])
+    vis.add_3d_label((frame_origin + X_AXIS * 14.0).tolist(), "X  (Y×Z)")
+    vis.add_3d_label((frame_origin + Y_AXIS * 16.0).tolist(), "Y  weld")
+    vis.add_3d_label((frame_origin + Z_AXIS * 14.0).tolist(), "Z  height")
+    for pos, text in sequence_labels(plan):
+        vis.add_3d_label(pos.tolist(), text)
+
+    eye, lookat, up = _camera_eye_lookat_up(plan, "perspective")
+    vis.setup_camera(60.0, lookat, eye, up)
+    app.add_window(vis)
+    app.run()
 
 
 def parameter_text(plan: PlanResult) -> str:
     p = plan.params
     return (
-        "V-shape groove parameter\n\n"
-        f"Thickness: {p.h:g} mm\n"
-        f"Angle: {p.beta:g} degree\n"
-        f"Assembly clearance: {p.g:g} mm\n"
-        f"Bead thickness: {plan.t:.4g} mm\n"
-        f"Number of layer: {plan.K}\n"
-        f"Number of weld points: {plan.point_number}\n"
-        f"Weld length (Y): {p.weld_length:g} mm"
+        "V-shape groove parameter\n"
+        f"  Thickness: {p.h:g} mm\n"
+        f"  Angle: {p.beta:g} deg  (included  {2 * p.beta:g})\n"
+        f"  Assembly clearance: {p.g:g} mm\n"
+        f"  Bead thickness: {plan.t:.4g} mm\n"
+        f"  Number of layer: {plan.K}\n"
+        f"  Number of weld points: {plan.point_number}\n"
+        f"  Weld length Y: {p.weld_length:g} mm\n"
+        "Frame (right-hand):  X = Y × Z,  Y = weld,  Z = height"
     )
-
-
-def build_overview_figure(plan: PlanResult) -> plt.Figure:
-    """Five 3D panels matching the original MATLAB layout, plus a parameter box."""
-    fig = plt.figure(figsize=(16.5, 10.5), facecolor="white")
-    fig.suptitle("V-groove weld planning (3D)", fontsize=16, y=0.98)
-
-    specs = [
-        (231, "1. V-shape groove", ["plates"]),
-        (232, "2. Plan the layers", ["plates", "layers"]),
-        (234, "3. Segmentation", ["plates", "layers", "segments", "beads"]),
-        (235, "4. Sequence planning", ["plates", "layers", "segments", "beads", "seq"]),
-        (236, "5. Weld points pose", ["plates", "layers", "segments", "beads", "paths", "poses"]),
-    ]
-    for slot, title, parts in specs:
-        ax = fig.add_subplot(slot, projection="3d")
-        if "plates" in parts:
-            draw_plates(ax, plan.params)
-        if "layers" in parts:
-            draw_layers(ax, plan)
-        if "beads" in parts:
-            draw_bead_volumes(ax, plan, alpha=0.22)
-        if "segments" in parts:
-            draw_segment_dividers(ax, plan)
-        if "paths" in parts:
-            draw_weld_paths(ax, plan)
-        if "seq" in parts:
-            draw_sequence_labels(ax, plan, fontsize=6)
-        if "poses" in parts:
-            draw_poses(ax, plan)
-        style_ax(ax, title, plan)
-
-    fig.text(
-        0.70, 0.73, parameter_text(plan),
-        fontsize=11, va="center", ha="left", family="DejaVu Sans",
-        bbox=dict(boxstyle="round", facecolor="white", edgecolor="#888", alpha=0.95),
-    )
-    fig.tight_layout(rect=(0, 0, 1, 0.96))
-    return fig
-
-
-def _draw_full_scene(ax, plan: PlanResult, with_sequence: bool = True) -> None:
-    draw_plates(ax, plan.params, alpha=0.16)
-    draw_layers(ax, plan, alpha=0.08)
-    draw_bead_volumes(ax, plan, alpha=0.40)
-    draw_segment_dividers(ax, plan)
-    draw_weld_paths(ax, plan)
-    if with_sequence:
-        draw_sequence_labels(ax, plan, fontsize=8)
-    draw_poses(ax, plan)
-
-
-def build_detail_figure(plan: PlanResult) -> plt.Figure:
-    """Large 3D scene: perspective view + end view (closest to the original 2D)."""
-    fig = plt.figure(figsize=(14.5, 7.2), facecolor="white")
-    fig.suptitle("V-groove weld points pose (3D)", fontsize=15)
-
-    ax1 = fig.add_subplot(121, projection="3d")
-    _draw_full_scene(ax1, plan)
-    style_ax(ax1, "Perspective view", plan)
-
-    ax2 = fig.add_subplot(122, projection="3d")
-    _draw_full_scene(ax2, plan, with_sequence=True)
-    style_ax(ax2, "End view (along weld length Y)", plan)
-    ax2.view_init(elev=0, azim=-90)
-
-    fig.text(
-        0.01, 0.02, parameter_text(plan),
-        fontsize=9, va="bottom",
-        bbox=dict(boxstyle="round", facecolor="white", edgecolor="#888", alpha=0.92),
-    )
-    fig.tight_layout(rect=(0, 0.08, 1, 0.96))
-    return fig
 
 
 # ---------------------------------------------------------------------------
@@ -616,13 +790,15 @@ def build_detail_figure(plan: PlanResult) -> plt.Figure:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--h", dest="h", type=float, default=16.0, help="groove height, mm")
-    parser.add_argument("--beta", type=float, default=30.0, help="bevel angle, deg")
-    parser.add_argument("--g", dest="g", type=float, default=1.0, help="root opening, mm")
-    parser.add_argument("--weld-length", type=float, default=40.0, help="extrusion length along Y, mm")
-    parser.add_argument("--outdir", type=Path, default=Path("figures"), help="directory for PNG output")
-    parser.add_argument("--show", action="store_true", help="open interactive windows")
-    parser.add_argument("--no-save", action="store_true", help="do not write PNG files")
+    parser.add_argument("--h", dest="h", type=float, default=16.0)
+    parser.add_argument("--beta", type=float, default=30.0)
+    parser.add_argument("--g", dest="g", type=float, default=1.0)
+    parser.add_argument("--weld-length", type=float, default=40.0)
+    parser.add_argument("--outdir", type=Path, default=Path("figures"))
+    parser.add_argument("--show", action="store_true", help="open interactive Open3D window")
+    parser.add_argument("--gui", action="store_true", help="Open3D GUI with 3D text labels")
+    parser.add_argument("--view", choices=["perspective", "end"], default="perspective")
+    parser.add_argument("--no-save", action="store_true")
     return parser.parse_args()
 
 
@@ -631,32 +807,29 @@ def main() -> None:
     params = GrooveParams(h=args.h, beta=args.beta, g=args.g, weld_length=args.weld_length)
     plan = plan_weld(params)
 
-    print("V-shape groove weld planning")
-    print(f"  layers K = {plan.K}, bead thickness t = {plan.t:.4f} mm")
+    print("V-shape groove weld planning  (Open3D, right-handed)")
+    print("  X = Y × Z  |  Y = weld direction  |  Z = height")
+    print(f"  X_AXIS = {X_AXIS}, Y_AXIS = {Y_AXIS}, Z_AXIS = {Z_AXIS}")
+    print(f"  X·(Y×Z) = {np.dot(X_AXIS, np.cross(Y_AXIS, Z_AXIS)):.1f}  (should be 1)")
+    print(parameter_text(plan))
     print(f"  parallelogram width l = {plan.l:.4f} mm, max beads LN = {plan.LN}")
-    print(f"  weld points = {plan.point_number}")
-    print("  welding_points (4 x N) [x; z; dx; dz]:")
     np.set_printoptions(precision=4, suppress=True)
-    print(plan.welding_points)
     print("  welding_points_3d (N x 6) [x, y, z, dx, dy, dz]:")
     print(plan.welding_points_3d)
 
-    overview = build_overview_figure(plan)
-    detail = build_detail_figure(plan)
-
     if not args.no_save:
         args.outdir.mkdir(parents=True, exist_ok=True)
-        overview_path = args.outdir / "vgroove_weld_3d_overview.png"
-        detail_path = args.outdir / "vgroove_weld_3d_detail.png"
-        overview.savefig(overview_path, dpi=140)
-        detail.savefig(detail_path, dpi=150)
-        print(f"  saved {overview_path}")
-        print(f"  saved {detail_path}")
+        persp = args.outdir / "vgroove_open3d_perspective.png"
+        endv = args.outdir / "vgroove_open3d_endview.png"
+        render_screenshot(plan, persp, view="perspective")
+        render_screenshot(plan, endv, view="end")
+        print(f"  saved {persp}")
+        print(f"  saved {endv}")
 
-    if args.show:
-        plt.show()
-    else:
-        plt.close("all")
+    if args.gui:
+        show_open3d_with_labels(plan)
+    elif args.show:
+        show_open3d(plan, view=args.view)
 
 
 if __name__ == "__main__":
