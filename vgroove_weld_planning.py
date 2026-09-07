@@ -67,6 +67,11 @@ class GrooveParams:
     d: float = 1.0
     v2: float = 1.0
     n_layers_simple: int = 7
+    plate_alpha: float = 0.0    # workpiece fill; 0 = wireframe only (arrows stay visible)
+    bead_alpha: float = 0.45    # weld-bead slice opacity
+    layer_alpha: float = 0.05   # layer-plane opacity
+    arrow_scale: float = 1.8    # torch-arrow length/thickness scale
+    bead_depth: float = 2.5     # bead slice thickness along Y, mm; 0 = full weld length
 
     @property
     def beta_rad(self) -> float:
@@ -586,8 +591,15 @@ def make_segment_dividers(plan: PlanResult) -> o3d.geometry.LineSet:
 
 def make_bead_meshes(plan: PlanResult) -> list[o3d.geometry.TriangleMesh]:
     L = plan.params.weld_length
+    depth = plan.params.bead_depth
+    if depth <= 0:
+        y0, y1 = 0.0, L
+    else:
+        y_mid = L / 2.0
+        half = 0.5 * depth
+        y0, y1 = y_mid - half, y_mid + half
     return [
-        _extrude_quad_mesh(bead.quad_xz, 0.0, L, BEAD_COLOR[bead.kind])
+        _extrude_quad_mesh(bead.quad_xz, y0, y1, BEAD_COLOR[bead.kind])
         for bead in plan.beads
     ]
 
@@ -606,13 +618,16 @@ def make_weld_paths(plan: PlanResult) -> o3d.geometry.LineSet:
 
 def make_weld_poses(plan: PlanResult) -> list[o3d.geometry.TriangleMesh]:
     y = plan.params.weld_length / 2.0
-    arrow_len = max(plan.t * 1.6, 3.5)
+    scale = max(plan.params.arrow_scale, 0.5)
+    arrow_len = max(plan.t * 2.6, 5.5) * scale
     geoms: list[o3d.geometry.TriangleMesh] = []
     for bead in plan.beads:
         origin = bead.position_3d(y)
-        geoms.append(make_sphere(origin, radius=0.45, color=POINT_COLOR))
-        geoms.append(make_arrow(origin, bead.torch_dir_3d() * arrow_len, TORCH_COLOR,
-                                cylinder_r=0.12, cone_r=0.28))
+        geoms.append(make_sphere(origin, radius=0.22, color=POINT_COLOR))
+        geoms.append(make_arrow(
+            origin, bead.torch_dir_3d() * arrow_len, TORCH_COLOR,
+            cylinder_r=0.16 * scale, cone_r=0.38 * scale,
+        ))
     return geoms
 
 
@@ -659,12 +674,21 @@ def _camera_eye_lookat_up(plan: PlanResult, view: str) -> tuple[np.ndarray, np.n
 
 
 def _vertex_color_material(alpha: float = 1.0) -> rendering.MaterialRecord:
-    """Keep TriangleMesh vertex colors (Open3D RGB triad, painted beads)."""
+    """Keep TriangleMesh vertex colors. alpha < 1 uses transparent shader."""
     mat = rendering.MaterialRecord()
-    mat.shader = "defaultLit" if alpha >= 0.999 else "defaultLitTransparency"
-    mat.base_color = [1.0, 1.0, 1.0, alpha]
+    a = float(np.clip(alpha, 0.0, 1.0))
+    mat.shader = "defaultLit" if a >= 0.999 else "defaultLitTransparency"
+    mat.base_color = [1.0, 1.0, 1.0, a]
     mat.base_roughness = 0.45
     mat.base_metallic = 0.0
+    return mat
+
+
+def _unlit_material() -> rendering.MaterialRecord:
+    """Opaque unlit material so pose/axis arrows stay bright."""
+    mat = rendering.MaterialRecord()
+    mat.shader = "defaultUnlit"
+    mat.base_color = [1.0, 1.0, 1.0, 1.0]
     return mat
 
 
@@ -676,6 +700,42 @@ def _line_material(width: float = 2.0) -> rendering.MaterialRecord:
     return mat
 
 
+def scene_items(plan: PlanResult) -> list[tuple[str, object, rendering.MaterialRecord]]:
+    """Named geometries with materials. Opaque arrows are last so they stay visible."""
+    p = plan.params
+    items: list[tuple[str, object, rendering.MaterialRecord]] = [
+        ("grid", make_xy_grid(p), _line_material(1.0)),
+        ("edges", make_groove_edges(p), _line_material(2.8)),
+        ("dividers", make_segment_dividers(plan), _line_material(1.6)),
+        ("paths", make_weld_paths(plan), _line_material(3.2)),
+    ]
+    plate_mat = _vertex_color_material(p.plate_alpha)
+    layer_mat = _vertex_color_material(p.layer_alpha)
+    bead_mat = _vertex_color_material(p.bead_alpha)
+    arrow_mat = _unlit_material()
+
+    if p.plate_alpha > 0.01:
+        for i, mesh in enumerate(make_plate_meshes(p)):
+            items.append((f"plate_{i}", mesh, plate_mat))
+    if p.layer_alpha > 0.01:
+        for i, mesh in enumerate(make_layer_planes(plan)):
+            items.append((f"layer_{i}", mesh, layer_mat))
+    if p.bead_alpha > 0.01:
+        for i, mesh in enumerate(make_bead_meshes(plan)):
+            items.append((f"bead_{i}", mesh, bead_mat))
+
+    axis_size = max(12.0, p.h * 0.85)
+    for i, geom in enumerate(make_coordinate_frame(size=axis_size)):
+        if isinstance(geom, o3d.geometry.LineSet):
+            items.append((f"axis_letter_{i}", geom, _line_material(6.0)))
+        else:
+            items.append((f"axis_{i}", geom, arrow_mat))
+    items.append(("weld_y_arrow", make_weld_axis_arrow(p), arrow_mat))
+    for i, mesh in enumerate(make_weld_poses(plan)):
+        items.append((f"pose_{i}", mesh, arrow_mat))
+    return items
+
+
 def render_screenshot(plan: PlanResult, path: Path, view: str = "perspective",
                       width: int = 1600, height: int = 1000) -> None:
     """Offscreen Filament render, Z-up right-handed camera."""
@@ -685,28 +745,8 @@ def render_screenshot(plan: PlanResult, path: Path, view: str = "perspective",
     scene.scene.set_sun_light([0.35, -0.55, -0.85], [1.0, 1.0, 1.0], 90_000)
     scene.scene.enable_sun_light(True)
 
-    p = plan.params
-    scene.add_geometry("grid", make_xy_grid(p), _line_material(1.0))
-    scene.add_geometry("edges", make_groove_edges(p), _line_material(2.8))
-    scene.add_geometry("dividers", make_segment_dividers(plan), _line_material(1.6))
-    scene.add_geometry("paths", make_weld_paths(plan), _line_material(3.2))
-
-    axis_size = max(12.0, p.h * 0.85)
-    for i, geom in enumerate(make_coordinate_frame(size=axis_size)):
-        if isinstance(geom, o3d.geometry.LineSet):
-            scene.add_geometry(f"axis_letter_{i}", geom, _line_material(6.0))
-        else:
-            scene.add_geometry(f"axis_{i}", geom, _vertex_color_material())
-    scene.add_geometry("weld_y_arrow", make_weld_axis_arrow(p), _vertex_color_material())
-
-    for i, mesh in enumerate(make_plate_meshes(p)):
-        scene.add_geometry(f"plate_{i}", mesh, _vertex_color_material(alpha=0.32))
-    for i, mesh in enumerate(make_layer_planes(plan)):
-        scene.add_geometry(f"layer_{i}", mesh, _vertex_color_material(alpha=0.16))
-    for i, mesh in enumerate(make_bead_meshes(plan)):
-        scene.add_geometry(f"bead_{i}", mesh, _vertex_color_material(alpha=0.72))
-    for i, mesh in enumerate(make_weld_poses(plan)):
-        scene.add_geometry(f"pose_{i}", mesh, _vertex_color_material())
+    for name, geom, mat in scene_items(plan):
+        scene.add_geometry(name, geom, mat)
 
     eye, lookat, up = _camera_eye_lookat_up(plan, view)
     scene.camera.look_at(lookat, eye, up)
@@ -715,27 +755,20 @@ def render_screenshot(plan: PlanResult, path: Path, view: str = "perspective",
 
 
 def show_open3d(plan: PlanResult, view: str = "perspective") -> None:
-    """Interactive Open3D window with 3D axis labels and sequence numbers."""
-    geoms = build_scene(plan)
-    vis = o3d.visualization.Visualizer()
-    vis.create_window(window_name="V-groove weld (Open3D)  Y=weld  X=Y×Z", width=1600, height=1000)
-    for g in geoms:
-        vis.add_geometry(g)
-    opt = vis.get_render_option()
-    opt.background_color = np.array([0.97, 0.97, 0.97])
-    opt.mesh_show_back_face = True
-    opt.line_width = 3.0
-    opt.show_coordinate_frame = True
-
+    """Interactive Open3D window; uses Filament materials so alpha is applied."""
+    app = o3d.visualization.gui.Application.instance
+    app.initialize()
+    vis = o3d.visualization.O3DVisualizer("V-groove weld  |  Y weld  |  X = Y × Z", 1600, 1000)
+    vis.show_skybox(False)
+    vis.show_axes = True
+    vis.point_size = 6
+    vis.line_width = 3
+    for name, geom, mat in scene_items(plan):
+        vis.add_geometry(name, geom, mat)
     eye, lookat, up = _camera_eye_lookat_up(plan, view)
-    ctr = vis.get_view_control()
-    ctr.set_lookat(lookat)
-    ctr.set_up(up)
-    ctr.set_front(eye - lookat)
-    ctr.set_zoom(0.55)
-
-    vis.run()
-    vis.destroy_window()
+    vis.setup_camera(60.0, lookat, eye, up)
+    app.add_window(vis)
+    app.run()
 
 
 def show_open3d_with_labels(plan: PlanResult) -> None:
@@ -753,8 +786,8 @@ def show_open3d_with_labels(plan: PlanResult) -> None:
     vis.point_size = 6
     vis.line_width = 3
 
-    for i, g in enumerate(build_scene(plan)):
-        vis.add_geometry(f"g_{i}", g)
+    for name, geom, mat in scene_items(plan):
+        vis.add_geometry(name, geom, mat)
 
     frame_origin = np.array([0.0, -6.0, 0.0])
     vis.add_3d_label((frame_origin + X_AXIS * 14.0).tolist(), "X  (Y×Z)")
@@ -780,6 +813,8 @@ def parameter_text(plan: PlanResult) -> str:
         f"  Number of layer: {plan.K}\n"
         f"  Number of weld points: {plan.point_number}\n"
         f"  Weld length Y: {p.weld_length:g} mm\n"
+        f"  Alpha  plate/bead/layer: {p.plate_alpha:g}/{p.bead_alpha:g}/{p.layer_alpha:g}\n"
+        f"  Bead depth (Y slice): {p.bead_depth:g} mm\n"
         "Frame (right-hand):  X = Y × Z,  Y = weld,  Z = height"
     )
 
@@ -794,6 +829,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--beta", type=float, default=30.0)
     parser.add_argument("--g", dest="g", type=float, default=1.0)
     parser.add_argument("--weld-length", type=float, default=40.0)
+    parser.add_argument(
+        "--plate-alpha", type=float, default=0.0,
+        help="workpiece fill opacity in [0, 1]; 0 = wireframe only so arrows stay visible",
+    )
+    parser.add_argument(
+        "--bead-alpha", type=float, default=0.45,
+        help="weld-bead opacity in [0, 1]; lower makes torch arrows easier to see",
+    )
+    parser.add_argument(
+        "--layer-alpha", type=float, default=0.05,
+        help="layer-plane opacity in [0, 1]",
+    )
+    parser.add_argument(
+        "--bead-depth", type=float, default=2.5,
+        help="bead slice thickness along Y in mm; 0 extrudes the full weld length",
+    )
+    parser.add_argument(
+        "--arrow-scale", type=float, default=1.8,
+        help="scale of torch pose arrows (length and thickness)",
+    )
     parser.add_argument("--outdir", type=Path, default=Path("figures"))
     parser.add_argument("--show", action="store_true", help="open interactive Open3D window")
     parser.add_argument("--gui", action="store_true", help="Open3D GUI with 3D text labels")
@@ -804,7 +859,14 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    params = GrooveParams(h=args.h, beta=args.beta, g=args.g, weld_length=args.weld_length)
+    params = GrooveParams(
+        h=args.h, beta=args.beta, g=args.g, weld_length=args.weld_length,
+        plate_alpha=float(np.clip(args.plate_alpha, 0.0, 1.0)),
+        bead_alpha=float(np.clip(args.bead_alpha, 0.0, 1.0)),
+        layer_alpha=float(np.clip(args.layer_alpha, 0.0, 1.0)),
+        arrow_scale=max(args.arrow_scale, 0.1),
+        bead_depth=max(args.bead_depth, 0.0),
+    )
     plan = plan_weld(params)
 
     print("V-shape groove weld planning  (Open3D, right-handed)")
