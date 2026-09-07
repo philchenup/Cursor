@@ -13,3 +13,16 @@ AIS_Shape* scaled = ScaleAISShapeBy1000(ais);
 // 推荐用 Handle 接管返回值，避免泄漏
 Handle(AIS_Shape) scaledHandle = ScaleAISShapeBy1000(ais);
 ```
+
+## V-groove weld planning (3D)
+
+`vgroove_weld_planning.py` converts the original MATLAB 2D V-groove weld planner to Python and extrudes the plan along the weld length for 3D display.
+
+```bash
+pip install -r requirements.txt
+python3 vgroove_weld_planning.py
+python3 vgroove_weld_planning.py --show
+python3 vgroove_weld_planning.py --h 16 --beta 30 --g 1 --weld-length 40
+```
+
+Figures are written to `figures/vgroove_weld_3d_overview.png` and `figures/vgroove_weld_3d_detail.png`.
