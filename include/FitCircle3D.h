@@ -6,15 +6,16 @@
 #include <pcl/point_types.h>
 
 /**
- * @brief 对三维点云 RANSAC 拟合空间圆。
+ * @brief 最小二乘拟合三维空间圆，输出圆心与半径。
  *
- * 每次随机取 3 个点求外接圆（圆心在三点平面上），再用 PCL KdTree
- * 统计半径壳层内且贴近该平面的内点；保留内点最多的模型。
+ * 对应 Python scipy.optimize.leastsq + spherrors：
+ * 先用 PCL PCA 求点云平面并投影，再对平面内圆做非线性最小二乘，
+ * 残差为 (x-a)^2 + (y-b)^2 - r^2。
  *
  * @param cloud  输入点云（至少 3 个有效点）
- * @param center 输出圆心（世界坐标系）
+ * @param center 输出圆心
  * @param radius 输出半径
- * @return 拟合成功返回 true，点云无效或拟合失败返回 false
+ * @return 拟合成功返回 true
  */
 bool fitCircle3D(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud,
                  cv::Point3f& center,

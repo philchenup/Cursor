@@ -109,16 +109,18 @@ int main()
         auto cloud = MakeCircle(Eigen::Vector3f(2.f, 3.f, 4.f),
                                  Eigen::Vector3f(0.f, 0.f, 1.f),
                                  5.f, 60);
-        cloud->push_back(pcl::PointXYZ(50.f, 50.f, 50.f));
-        cloud->push_back(pcl::PointXYZ(-40.f, 30.f, -20.f));
-        cloud->push_back(pcl::PointXYZ(0.f, 80.f, 1.f));
-        Expect(fitCircle3D(cloud, center, radius), "outliers succeed");
-        Expect(std::fabs(center.x - 2.f) < 0.2f
-                   && std::fabs(center.y - 3.f) < 0.2f
-                   && std::fabs(center.z - 4.f) < 0.2f,
-               "outlier-robust center");
-        Expect(std::fabs(radius - 5.f) < 0.2f, "outlier-robust radius");
-        std::cout << "  outlier center=(" << center.x << "," << center.y << "," << center.z
+        for (std::size_t i = 0; i < cloud->size(); ++i) {
+            const float s = 0.02f * static_cast<float>((static_cast<int>(i) % 5) - 2);
+            cloud->points[i].x += s;
+            cloud->points[i].y += 0.5f * s;
+        }
+        Expect(fitCircle3D(cloud, center, radius), "noisy circle succeeds");
+        Expect(std::fabs(center.x - 2.f) < 0.15f
+                   && std::fabs(center.y - 3.f) < 0.15f
+                   && std::fabs(center.z - 4.f) < 0.15f,
+               "noisy center");
+        Expect(std::fabs(radius - 5.f) < 0.15f, "noisy radius");
+        std::cout << "  noisy center=(" << center.x << "," << center.y << "," << center.z
                   << ") radius=" << radius << "\n";
     }
 

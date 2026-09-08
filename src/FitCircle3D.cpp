@@ -1,30 +1,20 @@
 #include "FitCircle3D.h"
 
+#include <pcl/common/centroid.h>
 #include <pcl/filters/filter.h>
-#include <pcl/kdtree/kdtree_flann.h>
 
 #include <Eigen/Dense>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
-#include <random>
 #include <vector>
 
 namespace {
 
-constexpr int kSampleNum = 3;       // 空间圆最少 3 个点
-constexpr int kMaxIters = 500;
-constexpr float kDistTh = 0.02f;    // 距离阈值
-constexpr float kConfidence = 0.999f;
-
 bool IsFinitePoint(const pcl::PointXYZ& p)
 {
     return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z);
-}
-
-Eigen::Vector3d ToVec(const pcl::PointXYZ& p)
-{
-    return Eigen::Vector3d(p.x, p.y, p.z);
 }
 
 pcl::PointCloud<pcl::PointXYZ>::Ptr RemoveInvalidPoints(
@@ -44,101 +34,115 @@ pcl::PointCloud<pcl::PointXYZ>::Ptr RemoveInvalidPoints(
     return valid;
 }
 
-void SampleDistinctIndices(int nums, int sample[3], std::mt19937& rng)
+// 对应 Python spherrors：平面圆代数残差 (x-a)^2 + (y-b)^2 - r^2
+Eigen::VectorXd CircleErrors(const Eigen::Vector3d& para,
+                             const std::vector<Eigen::Vector2d>& pts)
 {
-    std::uniform_int_distribution<int> dist(0, nums - 1);
-    sample[0] = dist(rng);
-    do {
-        sample[1] = dist(rng);
-    } while (sample[1] == sample[0]);
-    do {
-        sample[2] = dist(rng);
-    } while (sample[2] == sample[0] || sample[2] == sample[1]);
+    const double a = para(0);
+    const double b = para(1);
+    const double r = para(2);
+    Eigen::VectorXd f(static_cast<Eigen::Index>(pts.size()));
+    for (std::size_t i = 0; i < pts.size(); ++i) {
+        const double dx = pts[i].x() - a;
+        const double dy = pts[i].y() - b;
+        f(static_cast<Eigen::Index>(i)) = dx * dx + dy * dy - r * r;
+    }
+    return f;
 }
 
-// 三点确定唯一空间圆：圆心在平面上且到三点等距。
-// 线性方程与球体 RANSAC 相同，第三行改为平面约束 n·c = n·p0。
-bool FitCircleFromThreePoints(const Eigen::Vector3d& p0,
-                              const Eigen::Vector3d& p1,
-                              const Eigen::Vector3d& p2,
-                              Eigen::Vector3d& center,
-                              Eigen::Vector3d& normal,
-                              double& radius)
+Eigen::MatrixXd CircleJacobian(const Eigen::Vector3d& para,
+                              const std::vector<Eigen::Vector2d>& pts)
 {
-    normal = (p1 - p0).cross(p2 - p0);
-    const double n_norm = normal.norm();
-    if (n_norm < 1e-8) {
-        return false;
+    const double a = para(0);
+    const double b = para(1);
+    const double r = para(2);
+    Eigen::MatrixXd J(static_cast<Eigen::Index>(pts.size()), 3);
+    for (std::size_t i = 0; i < pts.size(); ++i) {
+        J(static_cast<Eigen::Index>(i), 0) = -2.0 * (pts[i].x() - a);
+        J(static_cast<Eigen::Index>(i), 1) = -2.0 * (pts[i].y() - b);
+        J(static_cast<Eigen::Index>(i), 2) = -2.0 * r;
     }
-    normal /= n_norm;
+    return J;
+}
 
-    Eigen::Matrix3d A = Eigen::Matrix3d::Zero();
-    Eigen::Vector3d b = Eigen::Vector3d::Zero();
-
-    A(0, 0) = p0.x() - p1.x();
-    A(0, 1) = p0.y() - p1.y();
-    A(0, 2) = p0.z() - p1.z();
-    A(1, 0) = p0.x() - p2.x();
-    A(1, 1) = p0.y() - p2.y();
-    A(1, 2) = p0.z() - p2.z();
-    A(2, 0) = normal.x();
-    A(2, 1) = normal.y();
-    A(2, 2) = normal.z();
-
-    b(0) = ((p0.x() * p0.x() - p1.x() * p1.x()) +
-            (p0.y() * p0.y() - p1.y() * p1.y()) +
-            (p0.z() * p0.z() - p1.z() * p1.z())) / 2.0;
-    b(1) = ((p0.x() * p0.x() - p2.x() * p2.x()) +
-            (p0.y() * p0.y() - p2.y() * p2.y()) +
-            (p0.z() * p0.z() - p2.z() * p2.z())) / 2.0;
-    b(2) = normal.dot(p0);
-
-    const double d = std::abs(A.determinant());
-    if (d < 1e-5) {
+// 对应 Python opt.leastsq：Levenberg-Marquardt 最小化残差平方和
+bool LeastsqCircle(const std::vector<Eigen::Vector2d>& pts, Eigen::Vector3d& para)
+{
+    if (pts.size() < 3) {
         return false;
     }
 
-    center = A.inverse() * b;
-    radius = (center - p0).norm();
-    return std::isfinite(radius) && radius > 1e-5;
+    double lambda = 1e-3;
+    for (int iter = 0; iter < 50; ++iter) {
+        const Eigen::VectorXd f = CircleErrors(para, pts);
+        const double cost = f.squaredNorm();
+        if (!std::isfinite(cost)) {
+            return false;
+        }
+
+        const Eigen::MatrixXd J = CircleJacobian(para, pts);
+        Eigen::Matrix3d A = J.transpose() * J;
+        const Eigen::Vector3d g = J.transpose() * f;
+        A.diagonal().array() += lambda;
+
+        const Eigen::Vector3d delta = A.ldlt().solve(-g);
+        if (!delta.allFinite()) {
+            return false;
+        }
+
+        Eigen::Vector3d trial = para + delta;
+        const double trial_cost = CircleErrors(trial, pts).squaredNorm();
+        if (std::isfinite(trial_cost) && trial_cost < cost) {
+            para = trial;
+            lambda = std::max(lambda * 0.1, 1e-12);
+            if (delta.norm() < 1e-10) {
+                break;
+            }
+        } else {
+            lambda = std::min(lambda * 10.0, 1e12);
+        }
+    }
+
+    para(2) = std::abs(para(2));
+    return para.allFinite() && para(2) > 1e-8;
 }
 
-int CountCircleInliers(const pcl::KdTreeFLANN<pcl::PointXYZ>& kdtree,
-                        const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud,
-                        const Eigen::Vector3d& center,
-                        const Eigen::Vector3d& normal,
-                        double radius,
-                        float dist_th)
+bool InitCirclePara(const std::vector<Eigen::Vector2d>& pts, Eigen::Vector3d& para)
 {
-    pcl::PointXYZ query;
-    query.x = static_cast<float>(center.x());
-    query.y = static_cast<float>(center.y());
-    query.z = static_cast<float>(center.z());
-
-    std::vector<int> indice_outer;
-    std::vector<float> sqr_dist;
-    const int found = kdtree.radiusSearch(
-        query, radius + static_cast<double>(dist_th), indice_outer, sqr_dist);
-    if (found <= 0) {
-        return 0;
+    const Eigen::Index n = static_cast<Eigen::Index>(pts.size());
+    Eigen::MatrixXd A(n, 3);
+    Eigen::VectorXd b(n);
+    for (Eigen::Index i = 0; i < n; ++i) {
+        const double x = pts[static_cast<std::size_t>(i)].x();
+        const double y = pts[static_cast<std::size_t>(i)].y();
+        A(i, 0) = x;
+        A(i, 1) = y;
+        A(i, 2) = 1.0;
+        b(i) = -(x * x + y * y);
     }
 
-    const double r_min = radius - static_cast<double>(dist_th);
-    const double r_max = radius + static_cast<double>(dist_th);
-    int total = 0;
-    for (int idx : indice_outer) {
-        const Eigen::Vector3d p = ToVec(cloud->points[static_cast<std::size_t>(idx)]);
-        const Eigen::Vector3d delta = p - center;
-        // 须贴近圆所在平面，否则会把同心球壳上的点算作内点
-        if (std::abs(delta.dot(normal)) > static_cast<double>(dist_th)) {
-            continue;
-        }
-        const double radial = delta.norm();
-        if (radial >= r_min && radial <= r_max) {
-            ++total;
-        }
+    const Eigen::Vector3d def = A.colPivHouseholderQr().solve(b);
+    const double cx = -def(0) * 0.5;
+    const double cy = -def(1) * 0.5;
+    const double r2 = cx * cx + cy * cy - def(2);
+    if (r2 > 0.0 && std::isfinite(r2)) {
+        para = Eigen::Vector3d(cx, cy, std::sqrt(r2));
+        return true;
     }
-    return total;
+
+    // 对应 Python 初值 [1, 1, 1, 1]：平面内用质心 + 平均半径
+    Eigen::Vector2d mean = Eigen::Vector2d::Zero();
+    for (const auto& p : pts) {
+        mean += p;
+    }
+    mean /= static_cast<double>(pts.size());
+    double r_mean = 0.0;
+    for (const auto& p : pts) {
+        r_mean += (p - mean).norm();
+    }
+    r_mean /= static_cast<double>(pts.size());
+    para = Eigen::Vector3d(mean.x(), mean.y(), std::max(r_mean, 1.0));
+    return true;
 }
 
 } // namespace
@@ -152,55 +156,55 @@ bool fitCircle3D(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud,
     }
 
     pcl::PointCloud<pcl::PointXYZ>::Ptr points = RemoveInvalidPoints(cloud);
-    const int nums = static_cast<int>(points->size());
-    if (kSampleNum > nums) {
+    const std::size_t n = points->size();
+    if (n < 3) {
         return false;
     }
 
-    int inner = 0;
-    float circle_radius = 0.f;
-    cv::Point3f circle_center(0.f, 0.f, 0.f);
-
-    pcl::KdTreeFLANN<pcl::PointXYZ> kdtree;
-    kdtree.setInputCloud(points);
-
-    std::mt19937 rng{std::random_device{}()};
-    int iters = 0;
-    while (iters < kMaxIters) {
-        int idx[3];
-        SampleDistinctIndices(nums, idx, rng);
-        const Eigen::Vector3d p0 = ToVec(points->points[static_cast<std::size_t>(idx[0])]);
-        const Eigen::Vector3d p1 = ToVec(points->points[static_cast<std::size_t>(idx[1])]);
-        const Eigen::Vector3d p2 = ToVec(points->points[static_cast<std::size_t>(idx[2])]);
-
-        Eigen::Vector3d c;
-        Eigen::Vector3d normal;
-        double r = 0.0;
-        if (!FitCircleFromThreePoints(p0, p1, p2, c, normal, r)) {
-            continue;
-        }
-
-        const int total = CountCircleInliers(kdtree, points, c, normal, r, kDistTh);
-        if (total > inner) {
-            inner = total;
-            circle_center = cv::Point3f(static_cast<float>(c.x()),
-                                         static_cast<float>(c.y()),
-                                         static_cast<float>(c.z()));
-            circle_radius = static_cast<float>(r);
-        }
-
-        // 内点数大于总点数的 99.9% 则停止，0.999 即为置信度
-        if (inner > kConfidence * static_cast<float>(nums)) {
-            break;
-        }
-        ++iters;
-    }
-
-    if (circle_radius < 1e-5f) {
+    Eigen::Vector4f centroid;
+    if (pcl::compute3DCentroid(*points, centroid) == 0) {
         return false;
     }
 
-    center = circle_center;
-    radius = circle_radius;
-    return true;
+    Eigen::Matrix3f covariance;
+    pcl::computeCovarianceMatrixNormalized(*points, centroid, covariance);
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3f> solver(covariance);
+    if (solver.info() != Eigen::Success) {
+        return false;
+    }
+
+    const Eigen::Vector3f normal = solver.eigenvectors().col(0);
+    Eigen::Vector3f u = solver.eigenvectors().col(2);
+    Eigen::Vector3f v = normal.cross(u);
+    if (v.norm() < 1e-8f) {
+        return false;
+    }
+    v.normalize();
+    u = v.cross(normal);
+    u.normalize();
+
+    const Eigen::Vector3f origin = centroid.head<3>();
+    std::vector<Eigen::Vector2d> pts2d;
+    pts2d.reserve(n);
+    for (const auto& p : points->points) {
+        const Eigen::Vector3f rel(p.x - origin.x(), p.y - origin.y(), p.z - origin.z());
+        pts2d.emplace_back(static_cast<double>(rel.dot(u)),
+                           static_cast<double>(rel.dot(v)));
+    }
+
+    Eigen::Vector3d para;
+    if (!InitCirclePara(pts2d, para)) {
+        return false;
+    }
+    if (!LeastsqCircle(pts2d, para)) {
+        return false;
+    }
+
+    const Eigen::Vector3f c3 = origin
+        + static_cast<float>(para(0)) * u
+        + static_cast<float>(para(1)) * v;
+    center = cv::Point3f(c3.x(), c3.y(), c3.z());
+    radius = static_cast<float>(para(2));
+    return std::isfinite(center.x) && std::isfinite(center.y) && std::isfinite(center.z)
+        && std::isfinite(radius) && radius > 0.f;
 }

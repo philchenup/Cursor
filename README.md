@@ -2,7 +2,7 @@
 
 ## fitCircle3D
 
-使用 PCL 按 RANSAC 流程拟合三维空间圆：每次随机取 3 点求外接圆，再用 KdTree 统计内点，输出圆心与半径。
+使用 PCL 以最小二乘拟合三维空间圆（对应 Python `opt.leastsq` + `spherrors`）：PCA 投影到平面后，用残差 `(x-a)^2+(y-b)^2-r^2` 求圆心与半径。
 
 ```cpp
 #include "FitCircle3D.h"
