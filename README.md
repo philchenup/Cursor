@@ -1,5 +1,20 @@
 # Cursor
 
+## fitCircle3D
+
+使用 PCL 对点云拟合三维空间圆，输出圆心与半径。
+
+```cpp
+#include "FitCircle3D.h"
+
+pcl::PointCloud<pcl::PointXYZ>::Ptr cloud = /* 点云 */;
+cv::Point3f center;
+float radius = 0.f;
+if (fitCircle3D(cloud, center, radius)) {
+    // center, radius
+}
+```
+
 ## ScaleAISShapeBy1000
 
 将 OpenCASCADE 的 `AIS_Shape*` 缩小 1000 倍，并返回一个新的 `AIS_Shape*`。
