@@ -2,7 +2,7 @@
 
 ## fitCircle3D
 
-使用 PCL 对点云拟合三维空间圆，输出圆心与半径。
+使用 PCL 按 RANSAC 流程拟合三维空间圆：每次随机取 3 点求外接圆，再用 KdTree 统计内点，输出圆心与半径。
 
 ```cpp
 #include "FitCircle3D.h"

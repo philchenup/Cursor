@@ -6,10 +6,10 @@
 #include <pcl/point_types.h>
 
 /**
- * @brief 对三维点云拟合空间圆。
+ * @brief 对三维点云 RANSAC 拟合空间圆。
  *
- * 优先使用 PCL RANSAC（SACMODEL_CIRCLE3D）抗离群点；
- * 失败时回退到 PCA 平面投影 + 代数最小二乘圆拟合。
+ * 每次随机取 3 个点求外接圆（圆心在三点平面上），再用 PCL KdTree
+ * 统计半径壳层内且贴近该平面的内点；保留内点最多的模型。
  *
  * @param cloud  输入点云（至少 3 个有效点）
  * @param center 输出圆心（世界坐标系）
