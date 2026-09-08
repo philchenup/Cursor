@@ -4,7 +4,7 @@ project(CursorTools LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(PCL REQUIRED COMPONENTS common filters)
+find_package(PCL REQUIRED COMPONENTS common kdtree)
 find_package(OpenCV REQUIRED COMPONENTS core)
 
 add_library(fit_circle_3d STATIC
