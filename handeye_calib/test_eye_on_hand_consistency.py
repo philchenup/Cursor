@@ -90,11 +90,25 @@ def eval_old_reuse(T_end2bases, T_cam2base, T_board2cams, objp):
     return mean_abs_error(collect_points(Ts, objp))
 
 
-def eval_eye_on_hand(T_end2bases, T_cam2base, T_board2cams, objp):
-    """p_end = T_end2base.inverse() * T_cam2base * T_board2cam * p."""
-    Ts = [invert_T(Te2b) @ T_cam2base @ Tboard2cam
-          for Te2b, Tboard2cam in zip(T_end2bases, T_board2cams)]
+def eval_eye_on_hand(T_base2ends, T_cam2base, T_board2cams, objp):
+    """p_end = T_base2end * T_cam2base * T_board2cam * p (OpenCV eye-to-hand poses)."""
+    Ts = [Tb2e @ T_cam2base @ Tboard2cam
+          for Tb2e, Tboard2cam in zip(T_base2ends, T_board2cams)]
     return mean_abs_error(collect_points(Ts, objp)), collect_points(Ts, objp)
+
+
+def eval_eye_on_hand_wrong_end2base(T_end2bases, T_cam2base, T_board2cams, objp):
+    """Bug: treat OpenCV base->end inputs as end->base and left-multiply."""
+    Ts = [Te2b @ T_cam2base @ Tboard2cam
+          for Te2b, Tboard2cam in zip(T_end2bases, T_board2cams)]
+    return mean_abs_error(collect_points(Ts, objp))
+
+
+def eval_eye_on_hand_double_inverse(T_base2ends, T_cam2base, T_board2cams, objp):
+    """Bug: invert poses that are already base->end."""
+    Ts = [invert_T(Tb2e) @ T_cam2base @ Tboard2cam
+          for Tb2e, Tboard2cam in zip(T_base2ends, T_board2cams)]
+    return mean_abs_error(collect_points(Ts, objp))
 
 
 def eval_eye_in_hand(T_end2bases, T_cam2end, T_board2cams, objp):
@@ -117,6 +131,7 @@ def main():
 
     n = 8
     T_end2bases = [random_pose(300, seed=i) for i in range(n)]
+    T_base2ends = [invert_T(T) for T in T_end2bases]
     T_board2cams_on = [
         invert_T(T_cam2base) @ Te2b @ T_board2end for Te2b in T_end2bases
     ]
@@ -125,14 +140,24 @@ def main():
     ]
 
     mae_old = eval_old_reuse(T_end2bases, T_cam2base, T_board2cams_on, objp)
-    mae_on, pts_on = eval_eye_on_hand(T_end2bases, T_cam2base, T_board2cams_on, objp)
+    mae_on, pts_on = eval_eye_on_hand(T_base2ends, T_cam2base, T_board2cams_on, objp)
+    mae_on_wrong = eval_eye_on_hand_wrong_end2base(
+        T_end2bases, T_cam2base, T_board2cams_on, objp
+    )
+    mae_on_double = eval_eye_on_hand_double_inverse(
+        T_base2ends, T_cam2base, T_board2cams_on, objp
+    )
     mae_in, pts_in = eval_eye_in_hand(T_end2bases, T_cam2end, T_board2cams_in, objp)
 
     print("old reuse MAE:", mae_old)
-    print("eye-on-hand MAE (all poses):", mae_on)
+    print("eye-on-hand MAE (base->end, all poses):", mae_on)
+    print("eye-on-hand wrong end->base MAE:", mae_on_wrong)
+    print("eye-on-hand double-inverse MAE:", mae_on_double)
     print("eye-in-hand MAE (all poses):", mae_in)
 
     assert np.all(mae_old > 10.0), "old path should show large motion-scale error"
+    assert np.all(mae_on_wrong > 10.0), "passing end->base into eye-on-hand must fail"
+    assert np.all(mae_on_double > 10.0), "inverting already inverted poses must fail"
     assert np.all(mae_on < 1e-9), "eye-on-hand all-pose path should be numerically zero"
     assert np.all(mae_in < 1e-9), "eye-in-hand all-pose path should be numerically zero"
 

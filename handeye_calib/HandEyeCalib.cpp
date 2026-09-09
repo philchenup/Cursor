@@ -43,8 +43,9 @@ namespace {
         return T;
     }
 
-    void cvRtToContinuous(const cv::Mat& Rin, const cv::Mat& tin, cv::Mat& R, cv::Mat& t)
+    Eigen::Affine3d cvRtToAffineNormalized(const cv::Mat& Rin, const cv::Mat& tin)
     {
+        cv::Mat R, t;
         Rin.copyTo(R);
         tin.copyTo(t);
         if (R.rows == 3 && R.cols == 1) {
@@ -54,58 +55,7 @@ namespace {
         }
         if (t.rows == 1 && t.cols == 3)
             t = t.t();
-    }
-
-    // 所有有效位姿都参与参考均值与误差统计，不再跳过第 0 帧。
-    // perPose* 与评估输入一一对应，updateTable 按 validIndex 顺序消费即可对齐。
-    void accumulatePoseConsistency(
-        const std::vector<eigenVector>& ptsPerPoint,
-        Point3DConsistency& res)
-    {
-        const size_t numPts = ptsPerPoint.size();
-        const size_t numPoses = (numPts == 0) ? 0 : ptsPerPoint[0].size();
-        if (numPoses < 2 || numPts == 0)
-            return;
-
-        res.perPointDev.assign(numPoses, std::vector<Eigen::Vector3d>(numPts, Eigen::Vector3d::Zero()));
-        res.pointMeanInBase.assign(numPts, Eigen::Vector3d::Zero());
-
-        std::vector<Eigen::Vector3d> perPoseSumAbs(numPoses, Eigen::Vector3d::Zero());
-        std::vector<double> perPoseSumDist(numPoses, 0.0);
-
-        Eigen::Vector3d sumAbs = Eigen::Vector3d::Zero();
-        size_t totalSamples = 0;
-        const double nRef = static_cast<double>(numPoses);
-
-        for (size_t jj = 0; jj < numPts; ++jj) {
-            const eigenVector& obs = ptsPerPoint[jj];
-            Eigen::Vector3d mean = Eigen::Vector3d::Zero();
-            for (size_t i = 0; i < numPoses; ++i)
-                mean += obs[i];
-            mean /= nRef;
-            res.pointMeanInBase[jj] = mean;
-
-            for (size_t i = 0; i < numPoses; ++i) {
-                const Eigen::Vector3d d = obs[i] - mean;
-                res.perPointDev[i][jj] = d;
-                perPoseSumAbs[i] += d.cwiseAbs();
-                perPoseSumDist[i] += d.norm();
-                sumAbs += d.cwiseAbs();
-                ++totalSamples;
-            }
-        }
-
-        if (totalSamples > 0)
-            res.meanAbsError = sumAbs / static_cast<double>(totalSamples);
-
-        res.numPoses = static_cast<int>(numPoses);
-        res.perPoseMeanAbsError.resize(numPoses);
-        res.perPoseError.resize(numPoses);
-        const double invNumPts = 1.0 / static_cast<double>(numPts);
-        for (size_t i = 0; i < numPoses; ++i) {
-            res.perPoseMeanAbsError[i] = perPoseSumAbs[i] * invNumPts;
-            res.perPoseError[i] = perPoseSumDist[i] * invNumPts;
-        }
+        return cvRt2Affine(R, t);
     }
 
     bool fitCircle3D(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud,
@@ -647,20 +597,19 @@ Eigen::Affine3f HandEyeCalib::eye_on_hand(
         }
         cv::Mat t_end2base = (cv::Mat_<double>(3, 1) << pose_vec[0], pose_vec[1], pose_vec[2]);
 
-        // 评估函数与眼在手上一致，保存 end->base；OpenCV 眼在手外再单独取逆
-        R_end2bases.push_back(R_end2base.clone());
-        t_end2bases.push_back(t_end2base.clone());
+        // OpenCV 眼在手外与评估函数都使用 base->end
+        cv::Mat R_base2end = R_end2base.t();
+        cv::Mat t_base2end = -R_base2end * t_end2base;
+        R_end2bases.push_back(R_base2end.clone());
+        t_end2bases.push_back(t_base2end.clone());
     }
 
     std::vector<cv::Mat> R_calib, t_calib;
     R_calib.reserve(R_end2bases.size());
     t_calib.reserve(t_end2bases.size());
     for (size_t i = 0; i < R_end2bases.size(); ++i) {
-        // OpenCV 眼在手外需要 base->end；必须 clone，不能存 .t() 视图
-        cv::Mat R_base2end = R_end2bases[i].t();
-        cv::Mat t_base2end = -R_base2end * t_end2bases[i];
-        R_calib.push_back(R_base2end.clone());
-        t_calib.push_back(t_base2end.clone());
+        R_calib.push_back(R_end2bases[i].clone());
+        t_calib.push_back(t_end2bases[i].clone());
     }
 
     cv::Mat R_camera2base, t_camera2base;
@@ -985,40 +934,76 @@ Point3DConsistency HandEyeCalib::evaluate3DPointConsistencyEyeInHand(
     const cv::Mat& T_cam2end,
     const std::vector<cv::Point3f>& objp)
 {
-    // 眼在手上：标定板固定于基座，点应在基座系下一致。
-    // p_base = T_end2base * T_cam2end * T_board2cam * p_board
+    // 眼在手上：标定板固定在基座侧。将棋盘格角点经
+    //   棋盘 -> 相机 -> 法兰 -> 基座
+    // 变到机械臂基座系。各姿态下同一角点应重合，对全部位姿求均值后算偏差，不跳过第 0 帧。
+    // p_cam  = R_board2cam * p_board + t_board2cam
+    // p_end  = R_cam2end   * p_cam   + t_cam2end
+    // p_base = R_end2base  * p_end   + t_end2base
     Point3DConsistency res;
-    const size_t numPoses = R_board2cams.size();
-    const size_t numPts = objp.size();
-    res.numPoses = static_cast<int>(numPoses);
+    const size_t nPose = R_board2cams.size();
+    const size_t nPts = objp.size();
+    res.numPoses = static_cast<int>(nPose);
 
-    if (numPoses < 2 || numPts == 0) {
+    if (nPose < 2 || nPts == 0 ||
+        R_end2bases.size() != nPose || t_end2bases.size() != nPose ||
+        t_board2cams.size() != nPose) {
         printW(tr("3D consistency eval skipped: need >=2 poses and >=1 point."));
         return res;
     }
 
-    const Eigen::Affine3d Tcam2end = cv4x4ToAffine(T_cam2end);
+    const Eigen::Affine3d T_c2e = cv4x4ToAffine(T_cam2end);
+    const Eigen::Matrix3d R_cam2end = T_c2e.linear();
+    const Eigen::Vector3d t_cam2end = T_c2e.translation();
 
-    std::vector<eigenVector> ptsInBase(numPts);
-    for (size_t jj = 0; jj < numPts; ++jj)
-        ptsInBase[jj].reserve(numPoses);
+    std::vector<eigenVector> ptsInBase(nPts, eigenVector(nPose, Eigen::Vector3d::Zero()));
 
-    for (size_t i = 0; i < numPoses; ++i) {
-        cv::Mat R_b2c, t_b2c, R_e2b, t_e2b;
-        cvRtToContinuous(R_board2cams[i], t_board2cams[i], R_b2c, t_b2c);
-        cvRtToContinuous(R_end2bases[i], t_end2bases[i], R_e2b, t_e2b);
+    for (size_t i = 0; i < nPose; ++i) {
+        const Eigen::Affine3d T_b2c = cvRtToAffineNormalized(R_board2cams[i], t_board2cams[i]);
+        const Eigen::Affine3d T_e2b = cvRtToAffineNormalized(R_end2bases[i], t_end2bases[i]);
+        const Eigen::Matrix3d R_board2cam = T_b2c.linear();
+        const Eigen::Vector3d t_board2cam = T_b2c.translation();
+        const Eigen::Matrix3d R_end2base = T_e2b.linear();
+        const Eigen::Vector3d t_end2base = T_e2b.translation();
 
-        const Eigen::Affine3d Tboard2cam = cvRt2Affine(R_b2c, t_b2c);
-        const Eigen::Affine3d Tend2base = cvRt2Affine(R_e2b, t_e2b);
-        const Eigen::Affine3d Tboard2base = Tend2base * Tcam2end * Tboard2cam;
-
-        for (size_t jj = 0; jj < numPts; ++jj) {
-            Eigen::Vector3d p_board(objp[jj].x, objp[jj].y, objp[jj].z);
-            ptsInBase[jj].push_back(Tboard2base * p_board);
+        for (size_t j = 0; j < nPts; ++j) {
+            const Eigen::Vector3d p_board(objp[j].x, objp[j].y, objp[j].z);
+            const Eigen::Vector3d p_cam = R_board2cam * p_board + t_board2cam;
+            const Eigen::Vector3d p_end = R_cam2end * p_cam + t_cam2end;
+            ptsInBase[j][i] = R_end2base * p_end + t_end2base;
         }
     }
 
-    accumulatePoseConsistency(ptsInBase, res);
+    res.perPointDev.assign(nPose, std::vector<Eigen::Vector3d>(nPts, Eigen::Vector3d::Zero()));
+    res.pointMeanInBase.assign(nPts, Eigen::Vector3d::Zero());
+    res.perPoseMeanAbsError.assign(nPose, Eigen::Vector3d::Zero());
+    res.perPoseError.assign(nPose, 0.0);
+
+    Eigen::Vector3d sumAbs = Eigen::Vector3d::Zero();
+    const double invPts = 1.0 / static_cast<double>(nPts);
+    const double invPose = 1.0 / static_cast<double>(nPose);
+
+    for (size_t j = 0; j < nPts; ++j) {
+        Eigen::Vector3d mean = Eigen::Vector3d::Zero();
+        for (size_t i = 0; i < nPose; ++i)
+            mean += ptsInBase[j][i];
+        mean *= invPose;
+        res.pointMeanInBase[j] = mean;
+
+        for (size_t i = 0; i < nPose; ++i) {
+            const Eigen::Vector3d d = ptsInBase[j][i] - mean;
+            res.perPointDev[i][j] = d;
+            res.perPoseMeanAbsError[i] += d.cwiseAbs();
+            res.perPoseError[i] += d.norm();
+            sumAbs += d.cwiseAbs();
+        }
+    }
+
+    for (size_t i = 0; i < nPose; ++i) {
+        res.perPoseMeanAbsError[i] *= invPts;
+        res.perPoseError[i] *= invPts;
+    }
+    res.meanAbsError = sumAbs * (invPts * invPose);
     return res;
 }
 
@@ -1030,40 +1015,78 @@ Point3DConsistency HandEyeCalib::evaluate3DPointConsistencyEyeOnHand(
     const cv::Mat& T_cam2base,
     const std::vector<cv::Point3f>& objp)
 {
-    // 眼在手外：标定板固连末端，必须变到末端系再比一致性。
-    // 入参与眼在手上相同，为 end->base；评估时取逆得到 base->end。
-    // p_end = T_end2base^{-1} * T_cam2base * T_board2cam * p_board
+    // 眼在手外：标定板固连法兰。OpenCV 传入的 R_end2bases 已是 base->end。
+    // 将棋盘格角点经
+    //   棋盘 -> 相机 -> 基座 -> 法兰
+    // 变到法兰系。相机到法兰的观测链在各姿态下应给出同一组法兰系坐标，
+    // 对全部位姿求均值后算偏差，不跳过第 0 帧。
+    // p_cam  = R_board2cam * p_board + t_board2cam
+    // p_base = R_cam2base  * p_cam   + t_cam2base
+    // p_end  = R_base2end  * p_base  + t_base2end
     Point3DConsistency res;
-    const size_t numPoses = R_board2cams.size();
-    const size_t numPts = objp.size();
-    res.numPoses = static_cast<int>(numPoses);
+    const size_t nPose = R_board2cams.size();
+    const size_t nPts = objp.size();
+    res.numPoses = static_cast<int>(nPose);
 
-    if (numPoses < 2 || numPts == 0) {
+    if (nPose < 2 || nPts == 0 ||
+        R_end2bases.size() != nPose || t_end2bases.size() != nPose ||
+        t_board2cams.size() != nPose) {
         printW(tr("3D consistency eval skipped: need >=2 poses and >=1 point."));
         return res;
     }
 
-    const Eigen::Affine3d Tcam2base = cv4x4ToAffine(T_cam2base);
-    std::vector<eigenVector> ptsInEnd(numPts);
-    for (size_t jj = 0; jj < numPts; ++jj)
-        ptsInEnd[jj].reserve(numPoses);
+    const Eigen::Affine3d T_c2b = cv4x4ToAffine(T_cam2base);
+    const Eigen::Matrix3d R_cam2base = T_c2b.linear();
+    const Eigen::Vector3d t_cam2base = T_c2b.translation();
 
-    for (size_t i = 0; i < numPoses; ++i) {
-        cv::Mat R_b2c, t_b2c, R_e2b, t_e2b;
-        cvRtToContinuous(R_board2cams[i], t_board2cams[i], R_b2c, t_b2c);
-        cvRtToContinuous(R_end2bases[i], t_end2bases[i], R_e2b, t_e2b);
+    std::vector<eigenVector> ptsInEnd(nPts, eigenVector(nPose, Eigen::Vector3d::Zero()));
 
-        const Eigen::Affine3d Tboard2cam = cvRt2Affine(R_b2c, t_b2c);
-        const Eigen::Affine3d Tend2base = cvRt2Affine(R_e2b, t_e2b);
-        const Eigen::Affine3d Tboard2end = Tend2base.inverse() * Tcam2base * Tboard2cam;
+    for (size_t i = 0; i < nPose; ++i) {
+        const Eigen::Affine3d T_b2c = cvRtToAffineNormalized(R_board2cams[i], t_board2cams[i]);
+        const Eigen::Affine3d T_b2e = cvRtToAffineNormalized(R_end2bases[i], t_end2bases[i]);
+        const Eigen::Matrix3d R_board2cam = T_b2c.linear();
+        const Eigen::Vector3d t_board2cam = T_b2c.translation();
+        const Eigen::Matrix3d R_base2end = T_b2e.linear();
+        const Eigen::Vector3d t_base2end = T_b2e.translation();
 
-        for (size_t jj = 0; jj < numPts; ++jj) {
-            Eigen::Vector3d p_board(objp[jj].x, objp[jj].y, objp[jj].z);
-            ptsInEnd[jj].push_back(Tboard2end * p_board);
+        for (size_t j = 0; j < nPts; ++j) {
+            const Eigen::Vector3d p_board(objp[j].x, objp[j].y, objp[j].z);
+            const Eigen::Vector3d p_cam = R_board2cam * p_board + t_board2cam;
+            const Eigen::Vector3d p_base = R_cam2base * p_cam + t_cam2base;
+            ptsInEnd[j][i] = R_base2end * p_base + t_base2end;
         }
     }
 
-    accumulatePoseConsistency(ptsInEnd, res);
+    res.perPointDev.assign(nPose, std::vector<Eigen::Vector3d>(nPts, Eigen::Vector3d::Zero()));
+    res.pointMeanInBase.assign(nPts, Eigen::Vector3d::Zero());
+    res.perPoseMeanAbsError.assign(nPose, Eigen::Vector3d::Zero());
+    res.perPoseError.assign(nPose, 0.0);
+
+    Eigen::Vector3d sumAbs = Eigen::Vector3d::Zero();
+    const double invPts = 1.0 / static_cast<double>(nPts);
+    const double invPose = 1.0 / static_cast<double>(nPose);
+
+    for (size_t j = 0; j < nPts; ++j) {
+        Eigen::Vector3d mean = Eigen::Vector3d::Zero();
+        for (size_t i = 0; i < nPose; ++i)
+            mean += ptsInEnd[j][i];
+        mean *= invPose;
+        res.pointMeanInBase[j] = mean;
+
+        for (size_t i = 0; i < nPose; ++i) {
+            const Eigen::Vector3d d = ptsInEnd[j][i] - mean;
+            res.perPointDev[i][j] = d;
+            res.perPoseMeanAbsError[i] += d.cwiseAbs();
+            res.perPoseError[i] += d.norm();
+            sumAbs += d.cwiseAbs();
+        }
+    }
+
+    for (size_t i = 0; i < nPose; ++i) {
+        res.perPoseMeanAbsError[i] *= invPts;
+        res.perPoseError[i] *= invPts;
+    }
+    res.meanAbsError = sumAbs * (invPts * invPose);
     return res;
 }
 

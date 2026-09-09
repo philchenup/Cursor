@@ -142,8 +142,8 @@ public:
         Point3DConsistency& cons);
 
     /**
-     * @brief 眼在手上 3D 一致性：p_base = T_end2base * T_cam2end * T_board2cam * p
-     *        全部有效位姿都参与均值，不跳过第 0 帧。
+     * @brief 眼在手上 3D 一致性：将棋盘格角点变到机械臂基座系，各姿态应重合。
+     *        入参 R_end2bases 为 end->base。全部位姿参与均值，不跳过第 0 帧。
      */
     Point3DConsistency evaluate3DPointConsistencyEyeInHand(
         const std::vector<cv::Mat>& R_board2cams,
@@ -154,8 +154,8 @@ public:
         const std::vector<cv::Point3f>& objp);
 
     /**
-     * @brief 眼在手外 3D 一致性：p_end = T_end2base^{-1} * T_cam2base * T_board2cam * p
-     *        入参与眼在手上相同（end->base）。全部有效位姿都参与均值，不跳过第 0 帧。
+     * @brief 眼在手外 3D 一致性：将棋盘格角点变到法兰系，相机-法兰观测链应给出同一组点。
+     *        入参 R_end2bases 与 OpenCV 眼在手外相同，为 base->end。全部位姿参与均值，不跳过第 0 帧。
      */
     Point3DConsistency evaluate3DPointConsistencyEyeOnHand(
         const std::vector<cv::Mat>& R_board2cams,
