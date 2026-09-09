@@ -168,6 +168,26 @@ namespace {
         return accumulatePointCloudConsistency(pts);
     }
 
+    cv::Mat orthonormalizeRotation(const cv::Mat& Rin)
+    {
+        cv::Mat R;
+        Rin.convertTo(R, CV_64F);
+        if (R.rows == 3 && R.cols == 1) {
+            cv::Mat R3;
+            cv::Rodrigues(R, R3);
+            R = R3;
+        }
+        cv::SVD svd(R, cv::SVD::FULL_UV);
+        cv::Mat U = svd.u;
+        cv::Mat Vt = svd.vt;
+        cv::Mat Rortho = U * Vt;
+        if (cv::determinant(Rortho) < 0) {
+            U.col(2) *= -1.0;
+            Rortho = U * Vt;
+        }
+        return Rortho;
+    }
+
     bool fitCircle3D(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud,
         float dist_th,
         cv::Point3f& center,
@@ -410,7 +430,7 @@ void HandEyeCalib::writeCalibration(const Eigen::Affine3f& result) {
     nlohmann::json j;
     j["EIH"] = ui->EyeInHandbtn->isChecked() ? 1 : 2;
     j["Translation"] = translation_;
-    Eigen::Matrix3f rotation_matrix = result.rotation();
+    Eigen::Matrix3f rotation_matrix = result.linear();
     Eigen::Quaternionf quaternion(rotation_matrix);
     std::vector<float> quat = { quaternion.w(), quaternion.x(), quaternion.y(), quaternion.z() };
     j["Quaternion"] = quat;
@@ -908,31 +928,17 @@ Eigen::Affine3f HandEyeCalib::eye_in_hand(
     std::vector<cv::Mat> rvecs, tvecs;
     double ret = cv::calibrateCamera(obj_points_list, img_points_list, gray.size(), camera_matrix, dist_coeffs, rvecs, tvecs);
 
-    // --- 求解标定板在相机坐标系中的位姿 ---
+    // --- 标定板在相机系中的位姿：用 calibrateCamera 的联合外参 ---
+    // 平面靶二次 solvePnP 容易落到另一支（R 绕板面翻转），平移仍接近而轴向相反。
     std::vector<cv::Mat> R_board2cameras;
     std::vector<cv::Mat> t_board2cameras;
-
-    for (size_t i = 0; i < obj_points_list.size(); ++i) {
-        cv::Mat rvec, tvec;
-        bool success = cv::solvePnP(obj_points_list[i], img_points_list[i], camera_matrix, dist_coeffs, rvec, tvec);
-        if (success) {
-            cv::Mat R_board2camera;
-            cv::Rodrigues(rvec, R_board2camera);
-
-            R_board2cameras.push_back(R_board2camera.clone());
-            t_board2cameras.push_back(tvec.clone());
-
-            /*cv::Mat T_board2camera = cv::Mat::eye(4, 4, CV_64F);
-            R_board2camera.copyTo(T_board2camera(cv::Rect(0, 0, 3, 3)));
-            tvec.copyTo(T_board2camera(cv::Rect(3, 0, 1, 3)));
-            Eigen::Affine3d t1e;
-            cv::cv2eigen(T_board2camera, t1e.matrix());
-            *cam2target_it = t1e.inverse();*/
-        }
-        else {
-            printE(tr("Pnp slove failed!"));
-            return Eigen::Affine3f::Identity();
-        }
+    R_board2cameras.reserve(rvecs.size());
+    t_board2cameras.reserve(tvecs.size());
+    for (size_t i = 0; i < rvecs.size(); ++i) {
+        cv::Mat R_board2camera;
+        cv::Rodrigues(rvecs[i], R_board2camera);
+        R_board2cameras.push_back(R_board2camera.clone());
+        t_board2cameras.push_back(tvecs[i].clone());
     }
 
     // --- 转换机器人位姿数据为末端的变换 (与eye_on_hand不同) ---
@@ -980,12 +986,8 @@ Eigen::Affine3f HandEyeCalib::eye_in_hand(
         transform.translation() = pos;
         *base2end_it = transform;*/
 
-        cv::Mat R_end = cv::Mat::eye(3, 3, CV_64F);
-        for (int i = 0; i < 3; ++i) {
-            for (int j = 0; j < 3; ++j) {
-                R_end.at<double>(i, j) = matrix.matrix()(i, j);
-            }
-        }
+        cv::Mat R_end;
+        cv::eigen2cv(matrix, R_end);
         cv::Mat t_end = (cv::Mat_<double>(3, 1) << pose_vec[0], pose_vec[1], pose_vec[2]);
         R_end2bases.push_back(R_end.clone());
         t_end2bases.push_back(t_end.clone());
@@ -993,10 +995,11 @@ Eigen::Affine3f HandEyeCalib::eye_in_hand(
 
     cv::Mat R_camera2end, t_camera2end;
     cv::calibrateHandEye(R_end2bases, t_end2bases, R_board2cameras, t_board2cameras, R_camera2end, t_camera2end, cv::CALIB_HAND_EYE_TSAI);
+    R_camera2end = orthonormalizeRotation(R_camera2end);
 
-    cv::Mat T_camera2end = cv::Mat::eye(4, 4, CV_64F);
-    R_camera2end.copyTo(T_camera2end(cv::Rect(0, 0, 3, 3)));
-    t_camera2end.copyTo(T_camera2end(cv::Rect(3, 0, 1, 3)));
+    // OpenCV X = cam2gripper：列向量是相机轴在法兰系下的方向（X右 Y下 Z光轴）。
+    // 不要对 R 取转置/求逆后再拼 t，否则原点几乎不动、轴向会反。
+    const cv::Mat T_camera2end = cvRtToHomogeneous(R_camera2end, t_camera2end);
 
     double total_error = 0.0;
     for (size_t i = 0; i < obj_points_list.size(); ++i) {
@@ -1012,12 +1015,8 @@ Eigen::Affine3f HandEyeCalib::eye_in_hand(
         T_camera2end, objp);
     cons.reproject_error_pixel = total_error / static_cast<double>(obj_points_list.size());;
 
-    Eigen::Affine3d trans;
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            trans.matrix()(i, j) = T_camera2end.at<double>(i, j);
-        }
-    }
+    Eigen::Affine3d trans = Eigen::Affine3d::Identity();
+    cv::cv2eigen(T_camera2end, trans.matrix());
 
     updateTable(ui->validTable, keptIndices, cons);
 
@@ -1303,10 +1302,10 @@ void HandEyeCalib::updateVtkWindow(const Eigen::Affine3f& transform, const Point
         printI("Hand On Eye Calibration calc done!");
     }
 
-    Eigen::Affine3f trans;
+    Eigen::Affine3f trans = Eigen::Affine3f::Identity();
     trans.translation() = transform.translation();
-    trans.linear() = transform.rotation();
-    Eigen::Quaternionf quatTcp(transform.rotation());
+    trans.linear() = transform.linear();
+    Eigen::Quaternionf quatTcp(transform.linear());
     quatTcp.normalize();
 
     printI(QString("Translation [x:%1, y:%2, z:%3] Quaternion [w:%4, x:%5, y:%6, z:%7] done.")
