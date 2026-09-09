@@ -125,6 +125,36 @@ def eval_eye_in_hand(T_end2bases, T_cam2end, T_board2cams, objp):
     return mean_abs_error(collect_points(Ts, objp)), collect_points(Ts, objp)
 
 
+def select_eye_in_hand_chain(T_end2bases, T_cam2end, T_board2cams, objp):
+    """Mirror C++ candidate products; return (name, mae, points)."""
+    X = T_cam2end
+    Xi = invert_T(T_cam2end)
+    Hg = T_end2bases
+    Hgi = [invert_T(T) for T in T_end2bases]
+    Hc = T_board2cams
+    Hci = [invert_T(T) for T in T_board2cams]
+    chains = [
+        ("T_end2base * T_cam2end * T_board2cam",
+         [a @ X @ b for a, b in zip(Hg, Hc)]),
+        ("T_end2base * T_end2cam * T_board2cam",
+         [a @ Xi @ b for a, b in zip(Hg, Hc)]),
+        ("T_base2end * T_cam2end * T_board2cam",
+         [a @ X @ b for a, b in zip(Hgi, Hc)]),
+        ("T_base2end * T_end2cam * T_board2cam",
+         [a @ Xi @ b for a, b in zip(Hgi, Hc)]),
+        ("T_end2base * T_cam2end * T_cam2board",
+         [a @ X @ b for a, b in zip(Hg, Hci)]),
+        ("T_board2cam * T_cam2end * T_end2base",
+         [a @ X @ b for a, b in zip(Hc, Hg)]),
+    ]
+    best_name, best_Ts, best_mae = None, None, None
+    for name, Ts in chains:
+        mae = mean_abs_error(collect_points(Ts, objp))
+        if best_mae is None or np.sum(mae) < np.sum(best_mae):
+            best_name, best_Ts, best_mae = name, Ts, mae
+    return best_name, best_mae, collect_points(best_Ts, objp)
+
+
 def main():
     T_cam2base = T_from_Rt(
         rodrigues([0.1, 0.8, 0.2], 0.6), [800.0, -200.0, 600.0]
@@ -159,6 +189,15 @@ def main():
     mae_in_wrong = eval_eye_in_hand_wrong_inverse(
         T_end2bases, T_cam2end, T_board2cams_in, objp
     )
+    sel_name, sel_mae, sel_pts = select_eye_in_hand_chain(
+        T_end2bases, T_cam2end, T_board2cams_in, objp
+    )
+    sel_invpose_name, sel_invpose_mae, _ = select_eye_in_hand_chain(
+        T_base2ends, T_cam2end, T_board2cams_in, objp
+    )
+    sel_swap_name, sel_swap_mae, _ = select_eye_in_hand_chain(
+        T_board2cams_in, T_cam2end, T_end2bases, objp
+    )
 
     print("old reuse MAE:", mae_old)
     print("eye-on-hand MAE (base->end, all poses):", mae_on)
@@ -166,6 +205,9 @@ def main():
     print("eye-on-hand double-inverse MAE:", mae_on_double)
     print("eye-in-hand MAE (all poses):", mae_in)
     print("eye-in-hand wrong inverse T_cam2end MAE:", mae_in_wrong)
+    print("selected EIH chain:", sel_name, sel_mae)
+    print("selected EIH chain if poses already inverted:", sel_invpose_name, sel_invpose_mae)
+    print("selected EIH chain if board/robot args swapped:", sel_swap_name, sel_swap_mae)
 
     for Te2b, Tboard2cam in zip(T_end2bases, T_board2cams_in):
         assert np.allclose(Te2b @ T_cam2end @ Tboard2cam, T_board2base, atol=1e-9)
@@ -176,9 +218,15 @@ def main():
     assert np.all(mae_on < 1e-9), "eye-on-hand all-pose path should be numerically zero"
     assert np.all(mae_in < 1e-9), "eye-in-hand all-pose path should be numerically zero"
     assert np.all(mae_in_wrong > 10.0), "inverting a correct T_cam2end must leak robot motion"
+    assert sel_name == "T_end2base * T_cam2end * T_board2cam"
+    assert np.all(sel_mae < 1e-9)
+    assert sel_invpose_name == "T_base2end * T_cam2end * T_board2cam"
+    assert np.all(sel_invpose_mae < 1e-9)
+    assert sel_swap_name == "T_board2cam * T_cam2end * T_end2base"
+    assert np.all(sel_swap_mae < 1e-9)
 
     packed_on = per_pose_mean_abs(pts_on)
-    packed_in = per_pose_mean_abs(pts_in)
+    packed_in = per_pose_mean_abs(sel_pts)
     assert len(packed_on) == n, "eye-on-hand must report every pose, including the first"
     assert len(packed_in) == n, "eye-in-hand must report every pose, including the first"
     for e in packed_on + packed_in:

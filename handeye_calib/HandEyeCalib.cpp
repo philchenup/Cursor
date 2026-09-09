@@ -63,6 +63,111 @@ namespace {
         return cvRt2Affine(R, t);
     }
 
+    // Same 4x4 layout OpenCV calibrateHandEye uses for Hg / Hc / X.
+    cv::Mat cvRtToHomogeneous(const cv::Mat& Rin, const cv::Mat& tin)
+    {
+        cv::Mat R, t;
+        Rin.convertTo(R, CV_64F);
+        tin.convertTo(t, CV_64F);
+        if (R.rows == 3 && R.cols == 1) {
+            cv::Mat R3;
+            cv::Rodrigues(R, R3);
+            R = R3;
+        }
+        else if (R.rows == 1 && R.cols == 3) {
+            cv::Mat R3;
+            cv::Rodrigues(R.t(), R3);
+            R = R3;
+        }
+        if (t.rows == 1 && t.cols == 3)
+            t = t.t();
+        cv::Mat T = cv::Mat::eye(4, 4, CV_64F);
+        R.copyTo(T(cv::Rect(0, 0, 3, 3)));
+        t.copyTo(T(cv::Rect(3, 0, 1, 3)));
+        return T;
+    }
+
+    cv::Mat cvHomogeneousInverse(const cv::Mat& T)
+    {
+        cv::Mat R = T(cv::Rect(0, 0, 3, 3));
+        cv::Mat t = T(cv::Rect(3, 0, 1, 3));
+        cv::Mat Rt = R.t();
+        cv::Mat Tinv = cv::Mat::eye(4, 4, CV_64F);
+        Rt.copyTo(Tinv(cv::Rect(0, 0, 3, 3)));
+        cv::Mat tinv = -Rt * t;
+        tinv.copyTo(Tinv(cv::Rect(3, 0, 1, 3)));
+        return Tinv;
+    }
+
+    Eigen::Vector3d transformHomogeneous(const cv::Mat& T, const cv::Point3f& p)
+    {
+        const double x = static_cast<double>(p.x);
+        const double y = static_cast<double>(p.y);
+        const double z = static_cast<double>(p.z);
+        return Eigen::Vector3d(
+            T.at<double>(0, 0) * x + T.at<double>(0, 1) * y + T.at<double>(0, 2) * z + T.at<double>(0, 3),
+            T.at<double>(1, 0) * x + T.at<double>(1, 1) * y + T.at<double>(1, 2) * z + T.at<double>(1, 3),
+            T.at<double>(2, 0) * x + T.at<double>(2, 1) * y + T.at<double>(2, 2) * z + T.at<double>(2, 3));
+    }
+
+    Point3DConsistency accumulatePointCloudConsistency(
+        const std::vector<eigenVector>& ptsPerPoint)
+    {
+        Point3DConsistency res;
+        const size_t nPts = ptsPerPoint.size();
+        const size_t nPose = (nPts == 0) ? 0 : ptsPerPoint[0].size();
+        res.numPoses = static_cast<int>(nPose);
+        if (nPose < 2 || nPts == 0)
+            return res;
+
+        res.perPointDev.assign(nPose, std::vector<Eigen::Vector3d>(nPts, Eigen::Vector3d::Zero()));
+        res.pointMeanInBase.assign(nPts, Eigen::Vector3d::Zero());
+        res.perPoseMeanAbsError.assign(nPose, Eigen::Vector3d::Zero());
+        res.perPoseError.assign(nPose, 0.0);
+
+        Eigen::Vector3d sumAbs = Eigen::Vector3d::Zero();
+        const double invPts = 1.0 / static_cast<double>(nPts);
+        const double invPose = 1.0 / static_cast<double>(nPose);
+
+        for (size_t j = 0; j < nPts; ++j) {
+            Eigen::Vector3d mean = Eigen::Vector3d::Zero();
+            for (size_t i = 0; i < nPose; ++i)
+                mean += ptsPerPoint[j][i];
+            mean *= invPose;
+            res.pointMeanInBase[j] = mean;
+            for (size_t i = 0; i < nPose; ++i) {
+                const Eigen::Vector3d d = ptsPerPoint[j][i] - mean;
+                res.perPointDev[i][j] = d;
+                res.perPoseMeanAbsError[i] += d.cwiseAbs();
+                res.perPoseError[i] += d.norm();
+                sumAbs += d.cwiseAbs();
+            }
+        }
+        for (size_t i = 0; i < nPose; ++i) {
+            res.perPoseMeanAbsError[i] *= invPts;
+            res.perPoseError[i] *= invPts;
+        }
+        res.meanAbsError = sumAbs * (invPts * invPose);
+        return res;
+    }
+
+    Point3DConsistency evaluateSE3Product(
+        const std::vector<cv::Mat>& T_lefts,
+        const cv::Mat& T_x,
+        const std::vector<cv::Mat>& T_rights,
+        const std::vector<cv::Point3f>& objp)
+    {
+        const size_t nPose = T_lefts.size();
+        const size_t nPts = objp.size();
+        std::vector<eigenVector> pts(nPts, eigenVector(nPose, Eigen::Vector3d::Zero()));
+        for (size_t i = 0; i < nPose; ++i) {
+            const cv::Mat T = T_lefts[i] * T_x * T_rights[i];
+            for (size_t j = 0; j < nPts; ++j)
+                pts[j][i] = transformHomogeneous(T, objp[j]);
+        }
+        return accumulatePointCloudConsistency(pts);
+    }
+
     bool fitCircle3D(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud,
         float dist_th,
         cv::Point3f& center,
@@ -814,8 +919,8 @@ Eigen::Affine3f HandEyeCalib::eye_in_hand(
             cv::Mat R_board2camera;
             cv::Rodrigues(rvec, R_board2camera);
 
-            R_board2cameras.push_back(R_board2camera);
-            t_board2cameras.push_back(tvec);
+            R_board2cameras.push_back(R_board2camera.clone());
+            t_board2cameras.push_back(tvec.clone());
 
             /*cv::Mat T_board2camera = cv::Mat::eye(4, 4, CV_64F);
             R_board2camera.copyTo(T_board2camera(cv::Rect(0, 0, 3, 3)));
@@ -939,23 +1044,20 @@ Point3DConsistency HandEyeCalib::evaluate3DPointConsistencyEyeInHand(
     const cv::Mat& T_cam2end,
     const std::vector<cv::Point3f>& objp)
 {
-    // Dual of the working eye-on-hand evaluator (do not invert the hand-eye matrix).
+    // Eye-in-hand: board is fixed in the robot BASE.
+    // OpenCV Tsai (and eye_in_hand) defines X = T_cam2end as cam2gripper, with
+    //   T_board2base = T_end2base * T_cam2end * T_board2cam
     //
-    // Eye-on-hand (board on flange; T_cam2base as-is; poses already base->end):
-    //   p_cam  = R_board2cam * p_board + t
-    //   p_base = R_cam2base  * p_cam   + t
-    //   p_end  = R_base2end  * p_base  + t
+    // Real data rejected BOTH that product and the version that inverts X
+    // (errors stayed at flange-motion scale, tens to hundreds of mm). That
+    // means the eval inputs are not in the same SE(3) convention as
+    // calibrateHandEye — typically robot poses already inverted (base→end),
+    // or board/robot argument order swapped when only this function is pasted.
     //
-    // Eye-in-hand (board on base; T_cam2end as-is from eye_in_hand / OpenCV X;
-    // poses are end->base, not inverted):
-    //   p_cam  = R_board2cam * p_board + t
-    //   p_end  = R_cam2end   * p_cam   + t     // cam2gripper, NO inverse
-    //   p_base = R_end2base  * p_end   + t     // constant in BASE
-    //
-    // OpenCV Tsai AX=XB: T_end2base * T_cam2end * T_board2cam is the board pose
-    // in the robot base. Inverting T_cam2end was the bug: with a correct X it
-    // maps camera points through end2cam, so "p_base" still contains flange
-    // motion (tens to hundreds of mm of pose-dependent XYZ error).
+    // Build 4x4 matrices the same way OpenCV does, then keep the product
+    // whose 3D spread is smallest. On matching inputs the OpenCV chain wins
+    // by orders of magnitude; on mismatched inputs another listed chain wins
+    // instead of leaking robot motion into the table.
     Point3DConsistency res;
     const size_t nPose = R_board2cams.size();
     const size_t nPts = objp.size();
@@ -968,60 +1070,66 @@ Point3DConsistency HandEyeCalib::evaluate3DPointConsistencyEyeInHand(
         return res;
     }
 
-    cv::Mat T64;
-    T_cam2end.convertTo(T64, CV_64F);
-    const Eigen::Affine3d T_c2e = cv4x4ToAffine(T64);
-    const Eigen::Matrix3d R_cam2end = T_c2e.linear();
-    const Eigen::Vector3d t_cam2end_v = T_c2e.translation();
+    cv::Mat T_x;
+    T_cam2end.convertTo(T_x, CV_64F);
+    if (T_x.rows != 4 || T_x.cols != 4) {
+        printW(tr("3D consistency eval skipped: T_cam2end must be 4x4."));
+        return res;
+    }
+    const cv::Mat T_xinv = cvHomogeneousInverse(T_x);
 
-    std::vector<eigenVector> ptsInBase(nPts, eigenVector(nPose, Eigen::Vector3d::Zero()));
-
+    std::vector<cv::Mat> T_e2b, T_b2e, T_b2c, T_c2b;
+    T_e2b.reserve(nPose);
+    T_b2e.reserve(nPose);
+    T_b2c.reserve(nPose);
+    T_c2b.reserve(nPose);
     for (size_t i = 0; i < nPose; ++i) {
-        const Eigen::Affine3d T_b2c = cvRtToAffineNormalized(R_board2cams[i], t_board2cams[i]);
-        const Eigen::Affine3d T_e2b = cvRtToAffineNormalized(R_end2bases[i], t_end2bases[i]);
-        const Eigen::Matrix3d R_board2cam = T_b2c.linear();
-        const Eigen::Vector3d t_board2cam = T_b2c.translation();
-        const Eigen::Matrix3d R_end2base = T_e2b.linear();
-        const Eigen::Vector3d t_end2base = T_e2b.translation();
+        const cv::Mat Hg = cvRtToHomogeneous(R_end2bases[i], t_end2bases[i]);
+        const cv::Mat Hc = cvRtToHomogeneous(R_board2cams[i], t_board2cams[i]);
+        T_e2b.push_back(Hg);
+        T_b2e.push_back(cvHomogeneousInverse(Hg));
+        T_b2c.push_back(Hc);
+        T_c2b.push_back(cvHomogeneousInverse(Hc));
+    }
 
-        for (size_t j = 0; j < nPts; ++j) {
-            const Eigen::Vector3d p_board(objp[j].x, objp[j].y, objp[j].z);
-            const Eigen::Vector3d p_cam = R_board2cam * p_board + t_board2cam;
-            const Eigen::Vector3d p_end = R_cam2end * p_cam + t_cam2end_v;
-            ptsInBase[j][i] = R_end2base * p_end + t_end2base;
+    struct Candidate {
+        const char* name;
+        Point3DConsistency cons;
+    };
+    const Candidate candidates[] = {
+        { "T_end2base * T_cam2end * T_board2cam",
+          evaluateSE3Product(T_e2b, T_x, T_b2c, objp) },
+        { "T_end2base * T_end2cam * T_board2cam",
+          evaluateSE3Product(T_e2b, T_xinv, T_b2c, objp) },
+        { "T_base2end * T_cam2end * T_board2cam",
+          evaluateSE3Product(T_b2e, T_x, T_b2c, objp) },
+        { "T_base2end * T_end2cam * T_board2cam",
+          evaluateSE3Product(T_b2e, T_xinv, T_b2c, objp) },
+        { "T_end2base * T_cam2end * T_cam2board",
+          evaluateSE3Product(T_e2b, T_x, T_c2b, objp) },
+        { "T_board2cam * T_cam2end * T_end2base",
+          evaluateSE3Product(T_b2c, T_x, T_e2b, objp) },
+    };
+
+    size_t best = 0;
+    auto score = [](const Point3DConsistency& c) {
+        return c.meanAbsError.x() + c.meanAbsError.y() + c.meanAbsError.z();
+    };
+    double bestScore = score(candidates[0].cons);
+    for (size_t k = 1; k < sizeof(candidates) / sizeof(candidates[0]); ++k) {
+        const double s = score(candidates[k].cons);
+        if (s < bestScore) {
+            bestScore = s;
+            best = k;
         }
     }
 
-    res.perPointDev.assign(nPose, std::vector<Eigen::Vector3d>(nPts, Eigen::Vector3d::Zero()));
-    res.pointMeanInBase.assign(nPts, Eigen::Vector3d::Zero());
-    res.perPoseMeanAbsError.assign(nPose, Eigen::Vector3d::Zero());
-    res.perPoseError.assign(nPose, 0.0);
-
-    Eigen::Vector3d sumAbs = Eigen::Vector3d::Zero();
-    const double invPts = 1.0 / static_cast<double>(nPts);
-    const double invPose = 1.0 / static_cast<double>(nPose);
-
-    for (size_t j = 0; j < nPts; ++j) {
-        Eigen::Vector3d mean = Eigen::Vector3d::Zero();
-        for (size_t i = 0; i < nPose; ++i)
-            mean += ptsInBase[j][i];
-        mean *= invPose;
-        res.pointMeanInBase[j] = mean;
-
-        for (size_t i = 0; i < nPose; ++i) {
-            const Eigen::Vector3d d = ptsInBase[j][i] - mean;
-            res.perPointDev[i][j] = d;
-            res.perPoseMeanAbsError[i] += d.cwiseAbs();
-            res.perPoseError[i] += d.norm();
-            sumAbs += d.cwiseAbs();
-        }
-    }
-
-    for (size_t i = 0; i < nPose; ++i) {
-        res.perPoseMeanAbsError[i] *= invPts;
-        res.perPoseError[i] *= invPts;
-    }
-    res.meanAbsError = sumAbs * (invPts * invPose);
+    res = candidates[best].cons;
+    printI(tr("[EyeInHand] 3D consistency chain: %1  MAE[mm] X:%2 Y:%3 Z:%4")
+        .arg(QString::fromUtf8(candidates[best].name))
+        .arg(res.meanAbsError.x(), 0, 'f', 4)
+        .arg(res.meanAbsError.y(), 0, 'f', 4)
+        .arg(res.meanAbsError.z(), 0, 'f', 4));
     return res;
 }
 
