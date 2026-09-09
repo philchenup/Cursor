@@ -144,7 +144,8 @@ public:
     /**
      * @brief 眼在手上 3D 一致性：棋盘格角点变到机械臂基座系，各姿态应重合。
      *        入参 R_end2bases 为 end->base（不要按眼在手外那样取逆）。
-     *        T_cam2end 按位姿取逆后再把点从相机变到末端。全部位姿参与均值。
+     *        T_cam2end 与 eye_in_hand / OpenCV cam2gripper 相同，直接左乘，不要取逆。
+     *        全部位姿参与均值。
      */
     Point3DConsistency evaluate3DPointConsistencyEyeInHand(
         const std::vector<cv::Mat>& R_board2cams,

@@ -46,11 +46,16 @@ namespace {
     Eigen::Affine3d cvRtToAffineNormalized(const cv::Mat& Rin, const cv::Mat& tin)
     {
         cv::Mat R, t;
-        Rin.copyTo(R);
-        tin.copyTo(t);
+        Rin.convertTo(R, CV_64F);
+        tin.convertTo(t, CV_64F);
         if (R.rows == 3 && R.cols == 1) {
             cv::Mat R3;
             cv::Rodrigues(R, R3);
+            R = R3;
+        }
+        else if (R.rows == 1 && R.cols == 3) {
+            cv::Mat R3;
+            cv::Rodrigues(R.t(), R3);
             R = R3;
         }
         if (t.rows == 1 && t.cols == 3)
@@ -934,11 +939,23 @@ Point3DConsistency HandEyeCalib::evaluate3DPointConsistencyEyeInHand(
     const cv::Mat& T_cam2end,
     const std::vector<cv::Point3f>& objp)
 {
-    // 眼在手上：标定板固定在基座。与眼在手外对偶，但法兰位姿是 end->base（不要取逆）。
-    // OpenCV 的 T_cam2end 是「相机在末端下的位姿」。把点从相机变到末端要用其逆 T_end2cam。
-    // p_cam  = R_board2cam * p_board + t_board2cam
-    // p_end  = R_end2cam   * p_cam   + t_end2cam     // T_cam2end^{-1}
-    // p_base = R_end2base  * p_end   + t_end2base    // 机械臂基座系，各姿态应重合
+    // Dual of the working eye-on-hand evaluator (do not invert the hand-eye matrix).
+    //
+    // Eye-on-hand (board on flange; T_cam2base as-is; poses already base->end):
+    //   p_cam  = R_board2cam * p_board + t
+    //   p_base = R_cam2base  * p_cam   + t
+    //   p_end  = R_base2end  * p_base  + t
+    //
+    // Eye-in-hand (board on base; T_cam2end as-is from eye_in_hand / OpenCV X;
+    // poses are end->base, not inverted):
+    //   p_cam  = R_board2cam * p_board + t
+    //   p_end  = R_cam2end   * p_cam   + t     // cam2gripper, NO inverse
+    //   p_base = R_end2base  * p_end   + t     // constant in BASE
+    //
+    // OpenCV Tsai AX=XB: T_end2base * T_cam2end * T_board2cam is the board pose
+    // in the robot base. Inverting T_cam2end was the bug: with a correct X it
+    // maps camera points through end2cam, so "p_base" still contains flange
+    // motion (tens to hundreds of mm of pose-dependent XYZ error).
     Point3DConsistency res;
     const size_t nPose = R_board2cams.size();
     const size_t nPts = objp.size();
@@ -953,12 +970,9 @@ Point3DConsistency HandEyeCalib::evaluate3DPointConsistencyEyeInHand(
 
     cv::Mat T64;
     T_cam2end.convertTo(T64, CV_64F);
-    cv::Mat R_c2e, t_c2e;
-    T64(cv::Rect(0, 0, 3, 3)).copyTo(R_c2e);
-    T64(cv::Rect(3, 0, 1, 3)).copyTo(t_c2e);
-    const Eigen::Affine3d T_end2cam = cvRtToAffineNormalized(R_c2e, t_c2e).inverse();
-    const Eigen::Matrix3d R_end2cam = T_end2cam.linear();
-    const Eigen::Vector3d t_end2cam = T_end2cam.translation();
+    const Eigen::Affine3d T_c2e = cv4x4ToAffine(T64);
+    const Eigen::Matrix3d R_cam2end = T_c2e.linear();
+    const Eigen::Vector3d t_cam2end_v = T_c2e.translation();
 
     std::vector<eigenVector> ptsInBase(nPts, eigenVector(nPose, Eigen::Vector3d::Zero()));
 
@@ -973,7 +987,7 @@ Point3DConsistency HandEyeCalib::evaluate3DPointConsistencyEyeInHand(
         for (size_t j = 0; j < nPts; ++j) {
             const Eigen::Vector3d p_board(objp[j].x, objp[j].y, objp[j].z);
             const Eigen::Vector3d p_cam = R_board2cam * p_board + t_board2cam;
-            const Eigen::Vector3d p_end = R_end2cam * p_cam + t_end2cam;
+            const Eigen::Vector3d p_end = R_cam2end * p_cam + t_cam2end_v;
             ptsInBase[j][i] = R_end2base * p_end + t_end2base;
         }
     }

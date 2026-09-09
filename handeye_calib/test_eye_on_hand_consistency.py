@@ -111,16 +111,16 @@ def eval_eye_on_hand_double_inverse(T_base2ends, T_cam2base, T_board2cams, objp)
     return mean_abs_error(collect_points(Ts, objp))
 
 
-def eval_eye_in_hand_wrong_no_inverse(T_end2bases, T_cam2end, T_board2cams, objp):
-    """Bug: left-multiply T_cam2end as if it mapped camera points to the flange."""
-    Ts = [Te2b @ T_cam2end @ Tboard2cam
+def eval_eye_in_hand_wrong_inverse(T_end2bases, T_cam2end, T_board2cams, objp):
+    """Bug: invert the already-correct OpenCV cam2gripper T_cam2end."""
+    Ts = [Te2b @ invert_T(T_cam2end) @ Tboard2cam
           for Te2b, Tboard2cam in zip(T_end2bases, T_board2cams)]
     return mean_abs_error(collect_points(Ts, objp))
 
 
 def eval_eye_in_hand(T_end2bases, T_cam2end, T_board2cams, objp):
-    """p_base = T_end2base * T_cam2end.inverse() * T_board2cam * p."""
-    Ts = [Te2b @ invert_T(T_cam2end) @ Tboard2cam
+    """p_base = T_end2base * T_cam2end * T_board2cam * p (OpenCV X, no inverse)."""
+    Ts = [Te2b @ T_cam2end @ Tboard2cam
           for Te2b, Tboard2cam in zip(T_end2bases, T_board2cams)]
     return mean_abs_error(collect_points(Ts, objp)), collect_points(Ts, objp)
 
@@ -142,8 +142,9 @@ def main():
     T_board2cams_on = [
         invert_T(T_cam2base) @ Te2b @ T_board2end for Te2b in T_end2bases
     ]
+    # OpenCV Tsai: T_board2cam = inv(T_cam2end) * inv(T_end2base) * T_board2base
     T_board2cams_in = [
-        T_cam2end @ invert_T(Te2b) @ T_board2base for Te2b in T_end2bases
+        invert_T(T_cam2end) @ invert_T(Te2b) @ T_board2base for Te2b in T_end2bases
     ]
 
     mae_old = eval_old_reuse(T_end2bases, T_cam2base, T_board2cams_on, objp)
@@ -155,7 +156,7 @@ def main():
         T_base2ends, T_cam2base, T_board2cams_on, objp
     )
     mae_in, pts_in = eval_eye_in_hand(T_end2bases, T_cam2end, T_board2cams_in, objp)
-    mae_in_wrong = eval_eye_in_hand_wrong_no_inverse(
+    mae_in_wrong = eval_eye_in_hand_wrong_inverse(
         T_end2bases, T_cam2end, T_board2cams_in, objp
     )
 
@@ -164,14 +165,17 @@ def main():
     print("eye-on-hand wrong end->base MAE:", mae_on_wrong)
     print("eye-on-hand double-inverse MAE:", mae_on_double)
     print("eye-in-hand MAE (all poses):", mae_in)
-    print("eye-in-hand wrong no-inverse MAE:", mae_in_wrong)
+    print("eye-in-hand wrong inverse T_cam2end MAE:", mae_in_wrong)
+
+    for Te2b, Tboard2cam in zip(T_end2bases, T_board2cams_in):
+        assert np.allclose(Te2b @ T_cam2end @ Tboard2cam, T_board2base, atol=1e-9)
 
     assert np.all(mae_old > 10.0), "old path should show large motion-scale error"
     assert np.all(mae_on_wrong > 10.0), "passing end->base into eye-on-hand must fail"
     assert np.all(mae_on_double > 10.0), "inverting already inverted poses must fail"
     assert np.all(mae_on < 1e-9), "eye-on-hand all-pose path should be numerically zero"
     assert np.all(mae_in < 1e-9), "eye-in-hand all-pose path should be numerically zero"
-    assert np.all(mae_in_wrong > 10.0), "eye-in-hand without inverting T_cam2end must fail"
+    assert np.all(mae_in_wrong > 10.0), "inverting a correct T_cam2end must leak robot motion"
 
     packed_on = per_pose_mean_abs(pts_on)
     packed_in = per_pose_mean_abs(pts_in)
