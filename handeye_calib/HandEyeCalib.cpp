@@ -934,12 +934,11 @@ Point3DConsistency HandEyeCalib::evaluate3DPointConsistencyEyeInHand(
     const cv::Mat& T_cam2end,
     const std::vector<cv::Point3f>& objp)
 {
-    // 眼在手上：标定板固定在基座侧。将棋盘格角点经
-    //   棋盘 -> 相机 -> 法兰 -> 基座
-    // 变到机械臂基座系。各姿态下同一角点应重合，对全部位姿求均值后算偏差，不跳过第 0 帧。
+    // 眼在手上：标定板固定在基座。与眼在手外对偶，但法兰位姿是 end->base（不要取逆）。
+    // OpenCV 的 T_cam2end 是「相机在末端下的位姿」。把点从相机变到末端要用其逆 T_end2cam。
     // p_cam  = R_board2cam * p_board + t_board2cam
-    // p_end  = R_cam2end   * p_cam   + t_cam2end
-    // p_base = R_end2base  * p_end   + t_end2base
+    // p_end  = R_end2cam   * p_cam   + t_end2cam     // T_cam2end^{-1}
+    // p_base = R_end2base  * p_end   + t_end2base    // 机械臂基座系，各姿态应重合
     Point3DConsistency res;
     const size_t nPose = R_board2cams.size();
     const size_t nPts = objp.size();
@@ -952,9 +951,14 @@ Point3DConsistency HandEyeCalib::evaluate3DPointConsistencyEyeInHand(
         return res;
     }
 
-    const Eigen::Affine3d T_c2e = cv4x4ToAffine(T_cam2end);
-    const Eigen::Matrix3d R_cam2end = T_c2e.linear();
-    const Eigen::Vector3d t_cam2end = T_c2e.translation();
+    cv::Mat T64;
+    T_cam2end.convertTo(T64, CV_64F);
+    cv::Mat R_c2e, t_c2e;
+    T64(cv::Rect(0, 0, 3, 3)).copyTo(R_c2e);
+    T64(cv::Rect(3, 0, 1, 3)).copyTo(t_c2e);
+    const Eigen::Affine3d T_end2cam = cvRtToAffineNormalized(R_c2e, t_c2e).inverse();
+    const Eigen::Matrix3d R_end2cam = T_end2cam.linear();
+    const Eigen::Vector3d t_end2cam = T_end2cam.translation();
 
     std::vector<eigenVector> ptsInBase(nPts, eigenVector(nPose, Eigen::Vector3d::Zero()));
 
@@ -969,7 +973,7 @@ Point3DConsistency HandEyeCalib::evaluate3DPointConsistencyEyeInHand(
         for (size_t j = 0; j < nPts; ++j) {
             const Eigen::Vector3d p_board(objp[j].x, objp[j].y, objp[j].z);
             const Eigen::Vector3d p_cam = R_board2cam * p_board + t_board2cam;
-            const Eigen::Vector3d p_end = R_cam2end * p_cam + t_cam2end;
+            const Eigen::Vector3d p_end = R_end2cam * p_cam + t_end2cam;
             ptsInBase[j][i] = R_end2base * p_end + t_end2base;
         }
     }
@@ -1015,14 +1019,13 @@ Point3DConsistency HandEyeCalib::evaluate3DPointConsistencyEyeOnHand(
     const cv::Mat& T_cam2base,
     const std::vector<cv::Point3f>& objp)
 {
-    // 眼在手外：标定板固连法兰。OpenCV 传入的 R_end2bases 已是 base->end。
-    // 将棋盘格角点经
-    //   棋盘 -> 相机 -> 基座 -> 法兰
-    // 变到法兰系。相机到法兰的观测链在各姿态下应给出同一组法兰系坐标，
-    // 对全部位姿求均值后算偏差，不跳过第 0 帧。
-    // p_cam  = R_board2cam * p_board + t_board2cam
-    // p_base = R_cam2base  * p_cam   + t_cam2base
-    // p_end  = R_base2end  * p_base  + t_base2end
+    // 眼在手外（当前正确流程）：
+    // 1) PnP：棋盘格点 -> 相机  p_cam  = R_board2cam * p_board + t
+    // 2) 手眼 T_cam2base：相机 -> 基座  p_base = R_cam2base * p_cam + t
+    //    T_cam2base 直接左乘，把相机系的点变到基座系。
+    // 3) 机器人位姿（与 OpenCV 相同，已是 base->end）：基座 -> 法兰
+    //    p_end = R_base2end * p_base + t
+    // 标定板固连法兰，p_end 在各姿态下应重合；全部位姿求均值后算偏差。
     Point3DConsistency res;
     const size_t nPose = R_board2cams.size();
     const size_t nPts = objp.size();
