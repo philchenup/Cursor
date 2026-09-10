@@ -1,5 +1,27 @@
 # Cursor
 
+## CalibrateEyeInHand
+
+眼在手上（相机装在法兰上）的点法手眼标定。每组数据需要：标定点在相机系的 XYZ、拍照时法兰位姿 `^{B}T_{F}`、同一点在基座下的 TCP XYZ；不少于 3 组且对应点不共线。
+
+```cpp
+#include "HandEyeCalibration.h"
+
+EyeInHandCalibResult result = CalibrateEyeInHand(
+    points_in_camera,   // ^{C}P_i
+    flanges_in_base,    // ^{B}T_{F,i}
+    tcps_in_base);      // ^{B}P_i  （TCP 触碰得到）
+
+// result.T_flange_camera 即 ^{F}T_{C}
+```
+
+数学流程：`^{F}P_i = ^{B}T_{F,i}^{-1} {}^{B}P_i`，再对 `(^{C}P_i, ^{F}P_i)` 做 Kabsch–Umeyama / PCL SVD，得到刚体变换 `X = ^{F}T_{C}`。详见 `include/HandEyeCalibration.h`。
+
+```bash
+cmake -S . -B build && cmake --build build
+./build/hand_eye_calibration_example
+```
+
 ## ScaleAISShapeBy1000
 
 将 OpenCASCADE 的 `AIS_Shape*` 缩小 1000 倍，并返回一个新的 `AIS_Shape*`。
