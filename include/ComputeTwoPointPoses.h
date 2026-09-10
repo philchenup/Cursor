@@ -8,14 +8,12 @@
 #include <pcl/kdtree/kdtree_flann.h>
 
 /**
- * @brief 由起点/终点 XYZ 构造相机系下的两个位姿（右手系）。
+ * @brief 由起点/终点 XYZ 构造相机系下的两个焊接位姿（右手系）。
  *
- * Z：查询点半径内场景法线的均值（无效时退回该点法线，再退回 +Z）。
- * X：起点→终点，投影到垂直于 Z 的平面上。
- * Y：Z × X，保证 X × Y = Z（右手定则）。det(R) = +1。
- *
- * 旧实现 y = x_in.cross(z)、x = z.cross(y) 得到的是 X × Y = −Z（左手系），
- * Y 指向 Z × X 的反方向。
+ * Z：查询点半径内场景法线均值（无效时退回该点法线，再退回 +Z）。计算方式不变。
+ * Y：Y = Z × X_chord，若 Y·world_Z < 0 则取反，使与世界 +Z 夹角 ≤ 90°。
+ * X：X = Y × Z，与焊缝（起点—终点）平行，方向随 Y 而定，不要求和起点→终点同向。
+ * 右手系：X × Y = Z，det(R) = +1。
  *
  * @param start_end 含起点、终点（points[0]/points[1]）
  * @param scene     已带法线的场景点云（用于邻域搜索）
@@ -49,7 +47,6 @@ inline bool computeTwoPointPoses(const ct::Cloud::Ptr& start_end,
         return Eigen::Vector3f(sum.normalized());
     };
 
-    // 右手系：先由 Z × X_in 得到 Y，再 X = Y × Z，使 X × Y = Z。
     auto makePose = [](const Eigen::Vector3f& t,
                        const Eigen::Vector3f& z_in,
                        const Eigen::Vector3f& x_in) {
@@ -61,8 +58,11 @@ inline bool computeTwoPointPoses(const ct::Cloud::Ptr& start_end,
                                              : Eigen::Vector3f::UnitX();
             y = z.cross(axis);
         }
+        // 任意位姿：Y 与世界 +Z 夹角 ≤ 90°（Y·UnitZ ≥ 0）。翻转 Y 后由右手系决定 X。
+        if (y.dot(Eigen::Vector3f::UnitZ()) < 0.f)
+            y = -y;
         y.normalize();
-        Eigen::Vector3f x = y.cross(z).normalized();
+        Eigen::Vector3f x = y.cross(z).normalized(); // 与焊缝平行，方向随 Y
         Eigen::Affine3f T = Eigen::Affine3f::Identity();
         T.linear().col(0) = x;
         T.linear().col(1) = y;
