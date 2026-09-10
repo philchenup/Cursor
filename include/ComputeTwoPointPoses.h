@@ -1,0 +1,87 @@
+#ifndef COMPUTE_TWO_POINT_POSES_H
+#define COMPUTE_TWO_POINT_POSES_H
+
+#include <cmath>
+#include <vector>
+
+#include <Eigen/Geometry>
+#include <pcl/kdtree/kdtree_flann.h>
+
+/**
+ * @brief 由起点/终点 XYZ 构造相机系下的两个位姿（右手系）。
+ *
+ * Z：查询点半径内场景法线的均值（无效时退回该点法线，再退回 +Z）。
+ * X：起点→终点，投影到垂直于 Z 的平面上。
+ * Y：Z × X，保证 X × Y = Z（右手定则）。det(R) = +1。
+ *
+ * 旧实现 y = x_in.cross(z)、x = z.cross(y) 得到的是 X × Y = −Z（左手系），
+ * Y 指向 Z × X 的反方向。
+ *
+ * @param start_end 含起点、终点（points[0]/points[1]）
+ * @param scene     已带法线的场景点云（用于邻域搜索）
+ */
+inline bool computeTwoPointPoses(const ct::Cloud::Ptr& start_end,
+                                 const ct::Cloud::Ptr& scene,
+                                 float radius,
+                                 Eigen::Affine3f& pose_start,
+                                 Eigen::Affine3f& pose_end)
+{
+    if (!start_end || start_end->size() < 2 || !scene || scene->empty())
+        return false;
+
+    pcl::KdTreeFLANN<ct::PointXYZRGBN> tree;
+    tree.setInputCloud(scene);
+
+    auto axisZ = [&](const ct::PointXYZRGBN& q) {
+        std::vector<int> ids;
+        std::vector<float> d;
+        Eigen::Vector3f sum(0.f, 0.f, 0.f);
+        if (tree.radiusSearch(q, radius, ids, d) > 0) {
+            for (int i : ids)
+                sum += Eigen::Vector3f(scene->points[static_cast<size_t>(i)].normal_x,
+                                       scene->points[static_cast<size_t>(i)].normal_y,
+                                       scene->points[static_cast<size_t>(i)].normal_z);
+        } else {
+            sum = Eigen::Vector3f(q.normal_x, q.normal_y, q.normal_z);
+        }
+        if (!std::isfinite(sum.x()) || sum.squaredNorm() < 1e-12f)
+            sum = Eigen::Vector3f::UnitZ();
+        return Eigen::Vector3f(sum.normalized());
+    };
+
+    // 右手系：先由 Z × X_in 得到 Y，再 X = Y × Z，使 X × Y = Z。
+    auto makePose = [](const Eigen::Vector3f& t,
+                       const Eigen::Vector3f& z_in,
+                       const Eigen::Vector3f& x_in) {
+        Eigen::Vector3f z = z_in.normalized();
+        Eigen::Vector3f y = z.cross(x_in);
+        if (y.squaredNorm() < 1e-12f) {
+            const Eigen::Vector3f axis = (std::fabs(z.z()) < 0.9f)
+                                             ? Eigen::Vector3f::UnitZ()
+                                             : Eigen::Vector3f::UnitX();
+            y = z.cross(axis);
+        }
+        y.normalize();
+        Eigen::Vector3f x = y.cross(z).normalized();
+        Eigen::Affine3f T = Eigen::Affine3f::Identity();
+        T.linear().col(0) = x;
+        T.linear().col(1) = y;
+        T.linear().col(2) = z;
+        T.translation() = t;
+        return T;
+    };
+
+    const auto& p0 = start_end->points[0];
+    const auto& p1 = start_end->points[1];
+    const Eigen::Vector3f t0(p0.x, p0.y, p0.z);
+    const Eigen::Vector3f t1(p1.x, p1.y, p1.z);
+    const Eigen::Vector3f x_dir = t1 - t0;
+    if (x_dir.squaredNorm() < 1e-12f)
+        return false;
+
+    pose_start = makePose(t0, axisZ(p0), x_dir);
+    pose_end = makePose(t1, axisZ(p1), x_dir);
+    return true;
+}
+
+#endif // COMPUTE_TWO_POINT_POSES_H

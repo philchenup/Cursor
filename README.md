@@ -1,15 +1,21 @@
 # Cursor
 
-## ScaleAISShapeBy1000
+## computeTwoPointPoses 右手系
 
-将 OpenCASCADE 的 `AIS_Shape*` 缩小 1000 倍，并返回一个新的 `AIS_Shape*`。
+旧 `makePose` 用 `Y = X × Z`、`X = Z × Y`，得到 **X × Y = −Z**（左手系），Y 指向 `Z × X` 的反方向。
+
+改为：
+
+- **X**：起点→终点，投影到垂直于 Z 的平面
+- **Z**：邻域法线均值
+- **Y = Z × X**，再 **X = Y × Z**，保证 **X × Y = Z**，`det(R) = +1`
 
 ```cpp
-#include "ScaleAISShape.h"
-
-AIS_Shape* ais = /* 已有对象 */;
-AIS_Shape* scaled = ScaleAISShapeBy1000(ais);
-
-// 推荐用 Handle 接管返回值，避免泄漏
-Handle(AIS_Shape) scaledHandle = ScaleAISShapeBy1000(ais);
+Eigen::Vector3f z = z_in.normalized();
+Eigen::Vector3f y = z.cross(x_in);          // Y = Z × X
+if (y.squaredNorm() < 1e-12f)
+    y = z.cross((std::fabs(z.z()) < 0.9f) ? Eigen::Vector3f::UnitZ()
+                                          : Eigen::Vector3f::UnitX());
+y.normalize();
+Eigen::Vector3f x = y.cross(z).normalized(); // X = Y × Z
 ```
