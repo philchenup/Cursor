@@ -8,16 +8,15 @@
 #include <pcl/kdtree/kdtree_flann.h>
 
 /**
- * @brief 由起点/终点 XYZ 构造相机系下的两个焊接位姿（右手系）。
+ * @brief 由起点/终点 XYZ 构造两个焊接位姿。
  *
  * Z：邻域法线均值，计算方式不变。
- * X：与焊缝方向 weld_dir = 终点 − 起点 平行。先把 weld_dir 投到垂直于 Z 的
- *    平面（保证与 Z 正交），再按 Y 朝上取 ±，不要求和起点→终点同向。
- * Y：Y = Z × X；若 Y·world_Z < 0 则 X、Y 一起取反，与世界 +Z 夹角 ≤ 90°。
- * 右手系：X × Y = Z，det(R) = +1。
+ * X：就是焊缝 3D 方向向量 normalize(终点 − 起点)。不投到 ⊥Z 平面。
+ *    Y 朝上时只取 ±，仍与起点—终点共线。
+ * Y：Y = Z × X；若 Y·world_Z < 0 则 X、Y 一起取反。
  *
  * @param start_end 含起点、终点（points[0]/points[1]）
- * @param scene     已带法线的场景点云（用于邻域搜索）
+ * @param scene     已带法线的场景点云
  */
 inline bool computeTwoPointPoses(const ct::Cloud::Ptr& start_end,
                                  const ct::Cloud::Ptr& scene,
@@ -52,19 +51,18 @@ inline bool computeTwoPointPoses(const ct::Cloud::Ptr& start_end,
                        const Eigen::Vector3f& z_in,
                        const Eigen::Vector3f& weld_dir) {
         Eigen::Vector3f z = z_in.normalized();
-        // X 与起点→终点平行：投到 ⊥Z 平面，保证正交且仍与焊缝共线
-        Eigen::Vector3f x = weld_dir - z * z.dot(weld_dir);
-        if (x.squaredNorm() < 1e-12f) {
+        // X = 起点→终点的 3D 方向，不向 Z 做投影
+        Eigen::Vector3f x = weld_dir.normalized();
+        Eigen::Vector3f y = z.cross(x);
+        if (y.squaredNorm() < 1e-12f) {
             const Eigen::Vector3f axis = (std::fabs(z.z()) < 0.9f)
                                              ? Eigen::Vector3f::UnitZ()
                                              : Eigen::Vector3f::UnitX();
-            x = axis.cross(z);
+            y = z.cross(axis);
         }
-        x.normalize();
-        Eigen::Vector3f y = z.cross(x); // Y = Z × X
         if (y.dot(Eigen::Vector3f::UnitZ()) < 0.f) {
             y = -y;
-            x = -x; // 与焊缝仍平行，仅反向
+            x = -x;
         }
         y.normalize();
         Eigen::Affine3f T = Eigen::Affine3f::Identity();
