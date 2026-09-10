@@ -10,9 +10,10 @@
 /**
  * @brief 由起点/终点 XYZ 构造相机系下的两个焊接位姿（右手系）。
  *
- * Z：查询点半径内场景法线均值（无效时退回该点法线，再退回 +Z）。计算方式不变。
- * Y：Y = Z × X_chord，若 Y·world_Z < 0 则取反，使与世界 +Z 夹角 ≤ 90°。
- * X：X = Y × Z，与焊缝（起点—终点）平行，方向随 Y 而定，不要求和起点→终点同向。
+ * Z：邻域法线均值，计算方式不变。
+ * X：与焊缝方向 weld_dir = 终点 − 起点 平行。先把 weld_dir 投到垂直于 Z 的
+ *    平面（保证与 Z 正交），再按 Y 朝上取 ±，不要求和起点→终点同向。
+ * Y：Y = Z × X；若 Y·world_Z < 0 则 X、Y 一起取反，与世界 +Z 夹角 ≤ 90°。
  * 右手系：X × Y = Z，det(R) = +1。
  *
  * @param start_end 含起点、终点（points[0]/points[1]）
@@ -49,20 +50,23 @@ inline bool computeTwoPointPoses(const ct::Cloud::Ptr& start_end,
 
     auto makePose = [](const Eigen::Vector3f& t,
                        const Eigen::Vector3f& z_in,
-                       const Eigen::Vector3f& x_in) {
+                       const Eigen::Vector3f& weld_dir) {
         Eigen::Vector3f z = z_in.normalized();
-        Eigen::Vector3f y = z.cross(x_in);
-        if (y.squaredNorm() < 1e-12f) {
+        // X 与起点→终点平行：投到 ⊥Z 平面，保证正交且仍与焊缝共线
+        Eigen::Vector3f x = weld_dir - z * z.dot(weld_dir);
+        if (x.squaredNorm() < 1e-12f) {
             const Eigen::Vector3f axis = (std::fabs(z.z()) < 0.9f)
                                              ? Eigen::Vector3f::UnitZ()
                                              : Eigen::Vector3f::UnitX();
-            y = z.cross(axis);
+            x = axis.cross(z);
         }
-        // 任意位姿：Y 与世界 +Z 夹角 ≤ 90°（Y·UnitZ ≥ 0）。翻转 Y 后由右手系决定 X。
-        if (y.dot(Eigen::Vector3f::UnitZ()) < 0.f)
+        x.normalize();
+        Eigen::Vector3f y = z.cross(x); // Y = Z × X
+        if (y.dot(Eigen::Vector3f::UnitZ()) < 0.f) {
             y = -y;
+            x = -x; // 与焊缝仍平行，仅反向
+        }
         y.normalize();
-        Eigen::Vector3f x = y.cross(z).normalized(); // 与焊缝平行，方向随 Y
         Eigen::Affine3f T = Eigen::Affine3f::Identity();
         T.linear().col(0) = x;
         T.linear().col(1) = y;
@@ -75,12 +79,12 @@ inline bool computeTwoPointPoses(const ct::Cloud::Ptr& start_end,
     const auto& p1 = start_end->points[1];
     const Eigen::Vector3f t0(p0.x, p0.y, p0.z);
     const Eigen::Vector3f t1(p1.x, p1.y, p1.z);
-    const Eigen::Vector3f x_dir = t1 - t0;
-    if (x_dir.squaredNorm() < 1e-12f)
+    const Eigen::Vector3f weld_dir = t1 - t0;
+    if (weld_dir.squaredNorm() < 1e-12f)
         return false;
 
-    pose_start = makePose(t0, axisZ(p0), x_dir);
-    pose_end = makePose(t1, axisZ(p1), x_dir);
+    pose_start = makePose(t0, axisZ(p0), weld_dir);
+    pose_end = makePose(t1, axisZ(p1), weld_dir);
     return true;
 }
 
