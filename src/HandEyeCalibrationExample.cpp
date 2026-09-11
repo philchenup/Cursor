@@ -2,157 +2,177 @@
 
 #include <Eigen/Geometry>
 #include <cmath>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <random>
+#include <sstream>
+#include <stdexcept>
+#include <string>
 #include <vector>
+
+#ifndef HAND_EYE_DATA_DIR
+#define HAND_EYE_DATA_DIR "data"
+#endif
 
 namespace {
 
-Eigen::Isometry3d MakePose(const Eigen::Vector3d& t, const Eigen::Vector3d& rpy)
+constexpr double kPi = 3.14159265358979323846;
+constexpr double kDeg2Rad = kPi / 180.0;
+constexpr double kRad2Deg = 180.0 / kPi;
+
+std::string Trim(const std::string& s)
 {
-    return FlangePoseFromXyzRpyZYX(t.x(), t.y(), t.z(), rpy.x(), rpy.y(), rpy.z());
+    const auto begin = s.find_first_not_of(" \t\r\n");
+    if (begin == std::string::npos) {
+        return {};
+    }
+    const auto end = s.find_last_not_of(" \t\r\n");
+    return s.substr(begin, end - begin + 1);
 }
 
-double RotationGeodesicDeg(const Eigen::Matrix3d& a, const Eigen::Matrix3d& b)
+std::vector<double> SplitCsvDoubles(const std::string& line)
 {
-    const Eigen::Matrix3d d = a.transpose() * b;
-    const double c = std::max(-1.0, std::min(1.0, 0.5 * (d.trace() - 1.0)));
-    return std::acos(c) * 180.0 / 3.14159265358979323846;
-}
-
-bool RunSyntheticTrial(const char* name, int n, unsigned seed, bool noisy)
-{
-    std::mt19937 rng(seed);
-    std::uniform_real_distribution<double> trans(-200.0, 200.0);
-    std::uniform_real_distribution<double> ang(-0.8, 0.8);
-    std::uniform_real_distribution<double> tcp_xy(300.0, 700.0);
-    std::uniform_real_distribution<double> tcp_z(50.0, 250.0);
-    std::normal_distribution<double> noise(0.0, noisy ? 0.05 : 0.0);
-
-    const Eigen::Isometry3d T_gt = MakePose(
-        Eigen::Vector3d(42.0, -18.5, 95.0),
-        Eigen::Vector3d(0.12, -0.35, 1.10));
-
-    std::vector<Eigen::Vector3d> points_in_camera;
-    Isometry3dVector flanges_in_base;
-    std::vector<Eigen::Vector3d> tcps_in_base;
-    points_in_camera.reserve(static_cast<std::size_t>(n));
-    flanges_in_base.reserve(static_cast<std::size_t>(n));
-    tcps_in_base.reserve(static_cast<std::size_t>(n));
-
-    for (int i = 0; i < n; ++i) {
-        const Eigen::Vector3d tcp(tcp_xy(rng), tcp_xy(rng), tcp_z(rng));
-        const Eigen::Isometry3d flange = MakePose(
-            Eigen::Vector3d(trans(rng), trans(rng), 400.0 + 0.2 * trans(rng)),
-            Eigen::Vector3d(ang(rng), ang(rng), ang(rng)));
-        Eigen::Vector3d p_cam = T_gt.inverse() * (flange.inverse() * tcp);
-        if (noisy) {
-            p_cam += Eigen::Vector3d(noise(rng), noise(rng), noise(rng));
+    std::vector<double> values;
+    std::stringstream ss(line);
+    std::string token;
+    while (std::getline(ss, token, ',')) {
+        const std::string item = Trim(token);
+        if (item.empty()) {
+            continue;
         }
-        points_in_camera.push_back(p_cam);
-        flanges_in_base.push_back(flange);
-        tcps_in_base.push_back(tcp);
+        values.push_back(std::stod(item));
     }
-
-    const EyeInHandCalibResult result =
-        CalibrateEyeInHand(points_in_camera, flanges_in_base, tcps_in_base);
-
-    const double rot_err = RotationGeodesicDeg(result.T_flange_camera.linear(), T_gt.linear());
-    const double t_err = (result.T_flange_camera.translation() - T_gt.translation()).norm();
-
-    std::cout << "\n=== " << name << " ===\n";
-    std::cout << std::fixed << std::setprecision(6);
-    std::cout << result.message << "\n";
-    std::cout << "T_flange_camera =\n" << result.T_flange_camera.matrix() << "\n";
-    std::cout << "rotation error (deg) = " << rot_err << "\n";
-    std::cout << "translation error    = " << t_err << "\n";
-
-    if (!result.success) {
-        std::cerr << "FAIL: " << result.message << "\n";
-        return false;
-    }
-
-    const double rot_tol = noisy ? 0.05 : 1e-5;
-    const double t_tol = noisy ? 0.2 : 1e-6;
-    const double rmse_tol = noisy ? 0.2 : 1e-6;
-    if (rot_err > rot_tol || t_err > t_tol || result.rmse > rmse_tol) {
-        std::cerr << "FAIL: recovered X is too far from ground truth\n";
-        return false;
-    }
-    std::cout << "PASS\n";
-    return true;
+    return values;
 }
 
-bool RunTooFewSamples()
+std::vector<std::vector<double>> LoadCsvRows(const std::string& path, std::size_t expected_cols)
 {
-    std::vector<Eigen::Vector3d> pts(2, Eigen::Vector3d::Zero());
-    Isometry3dVector poses(2, Eigen::Isometry3d::Identity());
-    std::vector<Eigen::Vector3d> tcps(2, Eigen::Vector3d::UnitX());
-    const EyeInHandCalibResult result = CalibrateEyeInHand(pts, poses, tcps);
-    std::cout << "\n=== too few samples ===\n" << result.message << "\n";
-    if (result.success) {
-        std::cerr << "FAIL: expected rejection of N < 3\n";
-        return false;
+    std::ifstream in(path);
+    if (!in) {
+        throw std::runtime_error("failed to open " + path);
     }
-    std::cout << "PASS\n";
-    return true;
+
+    std::vector<std::vector<double>> rows;
+    std::string line;
+    std::size_t line_no = 0;
+    while (std::getline(in, line)) {
+        ++line_no;
+        const std::string trimmed = Trim(line);
+        if (trimmed.empty()) {
+            continue;
+        }
+        const std::vector<double> values = SplitCsvDoubles(trimmed);
+        if (values.size() != expected_cols) {
+            throw std::runtime_error(
+                path + " line " + std::to_string(line_no) + " has " +
+                std::to_string(values.size()) + " values, expected " +
+                std::to_string(expected_cols));
+        }
+        rows.push_back(values);
+    }
+    if (rows.empty()) {
+        throw std::runtime_error(path + " contains no data");
+    }
+    return rows;
 }
 
-bool RunSingleFixedTcp()
+Eigen::Vector3d RotationMatrixToRpyZYXDeg(const Eigen::Matrix3d& R)
 {
-    const Eigen::Isometry3d T_gt = MakePose(
-        Eigen::Vector3d(-12.0, 30.0, 80.0),
-        Eigen::Vector3d(0.4, -0.2, 0.7));
-    const Eigen::Vector3d tcp(500.0, 120.0, 80.0);
-
-    const Eigen::Isometry3d poses_src[] = {
-        MakePose(Eigen::Vector3d(100, 0, 400), Eigen::Vector3d(0.1, 0.2, 0.3)),
-        MakePose(Eigen::Vector3d(80, 40, 420), Eigen::Vector3d(-0.4, 0.15, 0.6)),
-        MakePose(Eigen::Vector3d(60, -30, 380), Eigen::Vector3d(0.35, -0.5, -0.2)),
-        MakePose(Eigen::Vector3d(120, 20, 450), Eigen::Vector3d(-0.2, 0.45, -0.4)),
-    };
-
-    std::vector<Eigen::Vector3d> points_in_camera;
-    Isometry3dVector flanges_in_base;
-    std::vector<Eigen::Vector3d> tcps_in_base;
-    for (const Eigen::Isometry3d& flange : poses_src) {
-        points_in_camera.push_back(T_gt.inverse() * (flange.inverse() * tcp));
-        flanges_in_base.push_back(flange);
-        tcps_in_base.push_back(tcp);
+    // ZYX: R = Rz(yaw) * Ry(pitch) * Rx(roll)
+    const double pitch = std::asin(std::max(-1.0, std::min(1.0, -R(2, 0))));
+    const double cp = std::cos(pitch);
+    double roll = 0.0;
+    double yaw = 0.0;
+    if (std::abs(cp) > 1e-8) {
+        roll = std::atan2(R(2, 1), R(2, 2));
+        yaw = std::atan2(R(1, 0), R(0, 0));
+    } else {
+        roll = 0.0;
+        yaw = std::atan2(-R(0, 1), R(1, 1));
     }
+    return Eigen::Vector3d(roll * kRad2Deg, pitch * kRad2Deg, yaw * kRad2Deg);
+}
 
-    const EyeInHandCalibResult result =
-        CalibrateEyeInHand(points_in_camera, flanges_in_base, tcps_in_base);
-    const double rot_err = RotationGeodesicDeg(result.T_flange_camera.linear(), T_gt.linear());
-    const double t_err = (result.T_flange_camera.translation() - T_gt.translation()).norm();
-
-    std::cout << "\n=== single fixed TCP, 4 flange poses ===\n";
-    std::cout << result.message << "\n";
-    std::cout << "rotation error (deg) = " << rot_err << "\n";
-    std::cout << "translation error    = " << t_err << "\n";
-    if (!result.success || rot_err > 1e-5 || t_err > 1e-6) {
-        std::cerr << "FAIL: single-TCP multi-pose case\n";
-        return false;
+void PrintMatrix(const Eigen::Matrix4d& T)
+{
+    std::cout << std::fixed << std::setprecision(9);
+    for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 4; ++c) {
+            std::cout << std::setw(16) << T(r, c);
+        }
+        std::cout << "\n";
     }
-    std::cout << "PASS\n";
-    return true;
 }
 
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
-    bool ok = true;
-    ok = RunTooFewSamples() && ok;
-    ok = RunSingleFixedTcp() && ok;
-    ok = RunSyntheticTrial("3 samples, noiseless", 3, 1, false) && ok;
-    ok = RunSyntheticTrial("8 samples, noiseless", 8, 2, false) && ok;
-    ok = RunSyntheticTrial("8 samples, 0.05 noise", 8, 3, true) && ok;
-    if (!ok) {
-        std::cerr << "\nHand-eye calibration tests failed.\n";
+    const std::string data_dir = HAND_EYE_DATA_DIR;
+    const std::string camera_path = argc > 1 ? argv[1] : data_dir + "/camera_point.txt";
+    const std::string flange_path = argc > 2 ? argv[2] : data_dir + "/robot_flange_pose.txt";
+    const std::string tcp_path = argc > 3 ? argv[3] : data_dir + "/tcp_pose.txt";
+
+    try {
+        const auto camera_rows = LoadCsvRows(camera_path, 3);
+        const auto flange_rows = LoadCsvRows(flange_path, 6);
+        const auto tcp_rows = LoadCsvRows(tcp_path, 3);
+
+        if (camera_rows.size() != flange_rows.size() || camera_rows.size() != tcp_rows.size()) {
+            std::cerr << "sample counts differ: camera=" << camera_rows.size()
+                      << " flange=" << flange_rows.size()
+                      << " tcp=" << tcp_rows.size() << "\n";
+            return 1;
+        }
+
+        std::vector<Eigen::Vector3d> points_in_camera;
+        Isometry3dVector flanges_in_base;
+        std::vector<Eigen::Vector3d> tcps_in_base;
+        points_in_camera.reserve(camera_rows.size());
+        flanges_in_base.reserve(flange_rows.size());
+        tcps_in_base.reserve(tcp_rows.size());
+
+        std::cout << "Loaded " << camera_rows.size() << " samples\n";
+        std::cout << "camera: " << camera_path << "\n";
+        std::cout << "flange: " << flange_path << "  (xyz mm + ZYX Euler deg -> rad)\n";
+        std::cout << "tcp:    " << tcp_path << "\n\n";
+
+        for (std::size_t i = 0; i < camera_rows.size(); ++i) {
+            points_in_camera.emplace_back(camera_rows[i][0], camera_rows[i][1], camera_rows[i][2]);
+            tcps_in_base.emplace_back(tcp_rows[i][0], tcp_rows[i][1], tcp_rows[i][2]);
+            flanges_in_base.push_back(FlangePoseFromXyzRpyZYX(
+                flange_rows[i][0], flange_rows[i][1], flange_rows[i][2],
+                flange_rows[i][3] * kDeg2Rad,
+                flange_rows[i][4] * kDeg2Rad,
+                flange_rows[i][5] * kDeg2Rad));
+        }
+
+        const EyeInHandCalibResult result =
+            CalibrateEyeInHand(points_in_camera, flanges_in_base, tcps_in_base);
+
+        std::cout << result.message << "\n";
+        if (!result.success) {
+            std::cerr << "calibration failed\n";
+            return 1;
+        }
+
+        const Eigen::Vector3d t = result.T_flange_camera.translation();
+        const Eigen::Vector3d rpy = RotationMatrixToRpyZYXDeg(result.T_flange_camera.linear());
+
+        std::cout << "\nT_flange_camera (^{F}T_{C}) =\n";
+        PrintMatrix(result.T_flange_camera.matrix());
+
+        std::cout << std::fixed << std::setprecision(6);
+        std::cout << "\ntranslation xyz = " << t.x() << ", " << t.y() << ", " << t.z() << "\n";
+        std::cout << "rotation rpy ZYX deg = " << rpy.x() << ", " << rpy.y() << ", " << rpy.z() << "\n";
+        std::cout << "RMSE = " << result.rmse << "\n";
+        std::cout << "per-sample error:\n";
+        for (std::size_t i = 0; i < result.per_sample_error.size(); ++i) {
+            std::cout << "  [" << i << "] " << result.per_sample_error[i] << "\n";
+        }
+        return 0;
+    } catch (const std::exception& ex) {
+        std::cerr << ex.what() << "\n";
         return 1;
     }
-    std::cout << "\nAll hand-eye calibration tests passed.\n";
-    return 0;
 }

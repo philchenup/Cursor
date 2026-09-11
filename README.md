@@ -17,9 +17,13 @@ EyeInHandCalibResult result = CalibrateEyeInHand(
 
 数学流程：`^{F}P_i = ^{B}T_{F,i}^{-1} {}^{B}P_i`，再对 `(^{C}P_i, ^{F}P_i)` 做 Kabsch–Umeyama / PCL SVD，得到刚体变换 `X = ^{F}T_{C}`。详见 `include/HandEyeCalibration.h`。
 
+示例读取 `data/` 下三份 TXT（相机点 XYZ、法兰 `x,y,z,rx,ry,rz` 度、TCP XYZ），计算并打印 \(^{F}T_{C}\)：
+
 ```bash
-cmake -S . -B build && cmake --build build
+cmake -S . -B build -DCMAKE_CXX_COMPILER=g++ && cmake --build build
 ./build/hand_eye_calibration_example
+# 或指定路径：
+# ./build/hand_eye_calibration_example camera_point.txt robot_flange_pose.txt tcp_pose.txt
 ```
 
 ## ScaleAISShapeBy1000

@@ -32,6 +32,10 @@ target_link_libraries(hand_eye_calibration_example
     PRIVATE
         hand_eye_calibration
 )
+target_compile_definitions(hand_eye_calibration_example
+    PRIVATE
+        HAND_EYE_DATA_DIR="${CMAKE_SOURCE_DIR}/data"
+)
 
 enable_testing()
 add_test(NAME hand_eye_calibration_example COMMAND hand_eye_calibration_example)
