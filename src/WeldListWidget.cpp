@@ -4,6 +4,7 @@
 #include <QAbstractSpinBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QEvent>
 #include <QFont>
 #include <QHeaderView>
 #include <QList>
@@ -126,6 +127,8 @@ QComboBox* comboAt(QTableWidget* table, int row, int col)
     return qobject_cast<QComboBox*>(table->cellWidget(row, col));
 }
 
+void fitColumnWidths(QTableWidget* table);
+
 void applyInsetDisplay(QTableWidget* table, int row)
 {
     QTableWidgetItem* startItem = table->item(row, ColStart);
@@ -183,7 +186,73 @@ void updateDynamicColumns(QTableWidget* table)
     table->setColumnHidden(ColGrooveAngle, !anyMulti);
     table->setColumnHidden(ColFitUpGap, !anyMulti);
     table->setColumnHidden(ColPenetration, !anyMulti);
+    fitColumnWidths(table);
 }
+
+void fitColumnWidths(QTableWidget* table)
+{
+    if (!table || table->property("_fittingColumns").toBool()) {
+        return;
+    }
+    table->setProperty("_fittingColumns", true);
+
+    QHeaderView* header = table->horizontalHeader();
+    header->setStretchLastSection(false);
+    for (int col = 0; col < table->columnCount(); ++col) {
+        if (!table->isColumnHidden(col)) {
+            header->setSectionResizeMode(col, QHeaderView::ResizeToContents);
+        }
+    }
+    table->resizeColumnsToContents();
+
+    int total = 0;
+    for (int col = 0; col < table->columnCount(); ++col) {
+        if (table->isColumnHidden(col)) {
+            continue;
+        }
+        header->setSectionResizeMode(col, QHeaderView::Interactive);
+        total += header->sectionSize(col);
+    }
+
+    const int viewW = table->viewport()->width();
+    if (viewW > 0 && total > 0 && total < viewW) {
+        int used = 0;
+        int lastVisible = -1;
+        for (int col = 0; col < table->columnCount(); ++col) {
+            if (table->isColumnHidden(col)) {
+                continue;
+            }
+            lastVisible = col;
+            const int w = qMax(header->minimumSectionSize(),
+                               qRound(header->sectionSize(col) * (static_cast<double>(viewW) / total)));
+            header->resizeSection(col, w);
+            used += w;
+        }
+        if (lastVisible >= 0 && used != viewW) {
+            header->resizeSection(lastVisible,
+                                  qMax(header->minimumSectionSize(),
+                                       header->sectionSize(lastVisible) + (viewW - used)));
+        }
+    }
+
+    table->setProperty("_fittingColumns", false);
+}
+
+class WeldTableResizeFilter : public QObject
+{
+public:
+    using QObject::QObject;
+
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        if (event->type() == QEvent::Resize) {
+            if (auto* table = qobject_cast<QTableWidget*>(watched)) {
+                fitColumnWidths(table);
+            }
+        }
+        return QObject::eventFilter(watched, event);
+    }
+};
 
 void applyTableStyle(QTableWidget* table)
 {
@@ -203,13 +272,17 @@ void applyTableStyle(QTableWidget* table)
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table->setFocusPolicy(Qt::StrongFocus);
     table->setWordWrap(false);
+    table->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+    table->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
 
     QHeaderView* header = table->horizontalHeader();
     header->setHighlightSections(false);
     header->setDefaultAlignment(Qt::AlignCenter);
     header->setMinimumSectionSize(56);
-    header->setSectionResizeMode(QHeaderView::Stretch);
+    header->setStretchLastSection(false);
+    header->setSectionResizeMode(QHeaderView::Interactive);
     table->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    fitColumnWidths(table);
 }
 
 QTableWidget* createWeldTable(QDockWidget* dock)
@@ -239,6 +312,7 @@ QTableWidget* createWeldTable(QDockWidget* dock)
     table->setColumnHidden(ColGrooveAngle, true);
     table->setColumnHidden(ColFitUpGap, true);
     table->setColumnHidden(ColPenetration, true);
+    table->installEventFilter(new WeldTableResizeFilter(table));
     dock->setWidget(table);
     return table;
 }
