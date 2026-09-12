@@ -28,6 +28,7 @@ enum WeldCol {
     ColInset,
     ColSpeed,
     ColWeaveMode,
+    ColWeaveType,
     ColAmplitude,
     ColChord,
     ColMultiMode,
@@ -153,7 +154,7 @@ void updateRowEditors(QTableWidget* table, int row)
     const bool weaving = weaveCombo && weaveCombo->currentIndex() == 1;
     const bool multilayer = multiCombo && multiCombo->currentIndex() == 1;
 
-    const int weaveCols[] = {ColAmplitude, ColChord};
+    const int weaveCols[] = {ColWeaveType, ColAmplitude, ColChord};
     for (int col : weaveCols) {
         if (QWidget* w = table->cellWidget(row, col)) {
             w->setEnabled(weaving);
@@ -180,6 +181,7 @@ void updateDynamicColumns(QTableWidget* table)
         }
         updateRowEditors(table, row);
     }
+    table->setColumnHidden(ColWeaveType, !anyWeave);
     table->setColumnHidden(ColAmplitude, !anyWeave);
     table->setColumnHidden(ColChord, !anyWeave);
     table->setColumnHidden(ColThickness, !anyMulti);
@@ -297,6 +299,7 @@ QTableWidget* createWeldTable(QDockWidget* dock)
         QString::fromUtf8("内缩"),
         QString::fromUtf8("焊接速度"),
         QString::fromUtf8("摆动方式"),
+        QString::fromUtf8("摆动类型"),
         QString::fromUtf8("幅度"),
         QString::fromUtf8("弦长"),
         QString::fromUtf8("多层多道"),
@@ -306,6 +309,7 @@ QTableWidget* createWeldTable(QDockWidget* dock)
         QString::fromUtf8("熔深"),
     });
     applyTableStyle(table);
+    table->setColumnHidden(ColWeaveType, true);
     table->setColumnHidden(ColAmplitude, true);
     table->setColumnHidden(ColChord, true);
     table->setColumnHidden(ColThickness, true);
@@ -343,11 +347,14 @@ void addWeldRow(QTableWidget* table, const Eigen::Vector3d& start, const Eigen::
 
     QComboBox* weaveCombo = makeCombo(
         table, {QString::fromUtf8("直线焊"), QString::fromUtf8("摆动焊")});
+    QComboBox* weaveTypeCombo = makeCombo(
+        table, {QString::fromUtf8("正弦"), QString::fromUtf8("三角")});
     QComboBox* multiCombo = makeCombo(
         table, {QString::fromUtf8("单层单道"), QString::fromUtf8("多层多道")});
 
-    const QWidgetList editors = {insetSpin, speedSpin, weaveCombo, ampSpin, chordSpin,
-                                 multiCombo, thickSpin, grooveSpin, gapSpin, penSpin};
+    const QWidgetList editors = {insetSpin, speedSpin, weaveCombo, weaveTypeCombo,
+                                 ampSpin, chordSpin, multiCombo, thickSpin, grooveSpin,
+                                 gapSpin, penSpin};
     for (QWidget* editor : editors) {
         editor->setFont(table->font());
     }
@@ -355,6 +362,7 @@ void addWeldRow(QTableWidget* table, const Eigen::Vector3d& start, const Eigen::
     table->setCellWidget(row, ColInset, insetSpin);
     table->setCellWidget(row, ColSpeed, speedSpin);
     table->setCellWidget(row, ColWeaveMode, weaveCombo);
+    table->setCellWidget(row, ColWeaveType, weaveTypeCombo);
     table->setCellWidget(row, ColAmplitude, ampSpin);
     table->setCellWidget(row, ColChord, chordSpin);
     table->setCellWidget(row, ColMultiMode, multiCombo);
