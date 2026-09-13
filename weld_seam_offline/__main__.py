@@ -25,6 +25,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tcp-offset", action="store_true", help="Apply the original uplift_z TCP offset.")
     parser.add_argument("--make-sample", action="store_true", help="Write a synthetic V-groove PLY and run on it.")
     parser.add_argument("--sample-path", default="data/sample_vgroove.ply", help="Where to write --make-sample.")
+    parser.add_argument(
+        "--pick",
+        action="store_true",
+        help="Open an Open3D window and pick points (Shift+left click). Needs a display.",
+    )
+    parser.add_argument("--point-size", type=float, default=6.0, help="Open3D point size when using --pick.")
     return parser
 
 
@@ -36,6 +42,20 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Wrote sample workpiece: {ply_path}")
     if ply_path is None:
         raise SystemExit("Provide a PLY path or pass --make-sample")
+
+    if args.pick:
+        from .pick import pick_from_ply
+
+        picked = pick_from_ply(ply_path, voxel_size=args.voxel_size, point_size=args.point_size)
+        out_dir = Path(args.out_dir)
+        paths = picked.save(out_dir)
+        print("Picked count:", len(picked.indices))
+        print("Indices:", picked.indices.tolist())
+        print("XYZ:")
+        for i, xyz in zip(picked.indices, picked.xyz):
+            print(f"  #{int(i):6d}  {xyz[0]: .6f} {xyz[1]: .6f} {xyz[2]: .6f}")
+        print("CSV:", paths["csv"])
+        return 0
 
     result = detect_weld_seam(
         ply_path,

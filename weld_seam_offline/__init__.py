@@ -7,5 +7,13 @@ PCA thinning, directional sort, B-spline, and torch orientation.
 
 from .pipeline import WeldSeamResult, detect_weld_seam
 
-__all__ = ["WeldSeamResult", "detect_weld_seam"]
+__all__ = ["WeldSeamResult", "detect_weld_seam", "PickedPoints"]
+
+
+def __getattr__(name: str):
+    if name == "PickedPoints":
+        from .pick import PickedPoints
+
+        return PickedPoints
+    raise AttributeError(name)
 __version__ = "1.0.0"

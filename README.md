@@ -32,6 +32,33 @@ Generated files:
 
 Optional flags: `--voxel-size`, `--keep-ratio`, `--max-depth` (camera-frame Z cut), `--tcp-offset`.
 
+### Open3D 窗口里怎么选点
+
+`VisualizerWithEditing` **普通左键不会选点**，只旋转视角。必须：
+
+| 操作 | 作用 |
+|------|------|
+| **Shift + 左键** | 选中最近的顶点，窗口里出现黄球，终端打印 `Picked point #i (x, y, z)` |
+| **Shift + 右键** | 撤销上一个选点 |
+| 左键拖动 | 旋转 |
+| Ctrl + 左键拖动 | 平移 |
+| 滚轮 | 缩放 |
+| **Q** | 关闭窗口，再用 `get_picked_points()` 取索引 |
+
+`get_picked_points()` 返回的是 **点云顶点下标**，坐标要自己取：
+
+```python
+idx = vis.get_picked_points()
+xyz = np.asarray(pcd.points)[idx]
+```
+
+本机有显示器时：
+
+```bash
+python3 -m pip install open3d
+python3 -m weld_seam_offline data/sample_vgroove.ply --pick --out-dir output/picked
+```
+
 ```bash
 python3 -m unittest tests.test_weld_seam_offline
 ```

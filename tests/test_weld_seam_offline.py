@@ -12,6 +12,7 @@ from weld_seam_offline.pipeline import detect_weld_seam
 from weld_seam_offline.ply_io import load_ply, save_ply
 from weld_seam_offline.sample import make_vgroove_cloud, write_sample_ply
 from weld_seam_offline.visualize import render_result
+from weld_seam_offline.pick import PickedPoints, picked_xyz
 
 
 class PlyIoTests(unittest.TestCase):
@@ -55,6 +56,30 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(from_file.trajectory.shape[1], 3)
         self.assertEqual(from_array.trajectory.shape[1], 3)
         self.assertLessEqual(abs(len(from_file.trajectory) - len(from_array.trajectory)), 4)
+
+
+class PickHelperTests(unittest.TestCase):
+    def test_indices_to_xyz(self) -> None:
+        class _Cloud:
+            def __init__(self, points: np.ndarray) -> None:
+                self.points = points
+
+        pts = np.array([[0.0, 0.0, 0.0], [1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        xyz = picked_xyz(_Cloud(pts), [2, 0])
+        np.testing.assert_allclose(xyz, [[4.0, 5.0, 6.0], [0.0, 0.0, 0.0]])
+        empty = picked_xyz(_Cloud(pts), [])
+        self.assertEqual(empty.shape, (0, 3))
+
+    def test_save_picked_csv(self) -> None:
+        picked = PickedPoints(
+            indices=np.array([3, 7]),
+            xyz=np.array([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]),
+        )
+        with TemporaryDirectory() as tmp:
+            paths = picked.save(Path(tmp))
+            loaded = np.loadtxt(paths["csv"], delimiter=",", skiprows=1)
+        self.assertEqual(loaded.shape, (2, 4))
+        np.testing.assert_allclose(loaded[0], [3, 0.1, 0.2, 0.3])
 
 
 if __name__ == "__main__":
