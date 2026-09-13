@@ -121,6 +121,27 @@ def pick_points_interactive(
     return list(vis.get_picked_points())
 
 
+def make_line_set(
+    points: np.ndarray,
+    edges: list[list[int]] | np.ndarray,
+    color: tuple[float, float, float] = (1.0, 0.0, 0.0),
+):
+    """Build an Open3D LineSet.
+
+    ``points`` are XYZ. ``edges`` are integer index pairs such as ``[[0, 1], [1, 2]]``.
+    Do not pass edges to ``Vector3dVector`` — that type is only for 3D floats and
+    raises RuntimeError: Unable to cast Python instance of type list to C++ type.
+    """
+    o3d = _require_open3d()
+    pts = np.asarray(points, dtype=np.float64).reshape(-1, 3)
+    idx = np.asarray(edges, dtype=np.int32).reshape(-1, 2)
+    line = o3d.geometry.LineSet()
+    line.points = o3d.utility.Vector3dVector(pts)
+    line.lines = o3d.utility.Vector2iVector(idx)
+    line.colors = o3d.utility.Vector3dVector(np.tile(np.asarray(color, dtype=np.float64), (len(idx), 1)))
+    return line
+
+
 def picked_xyz(pcd, indices: list[int] | np.ndarray) -> np.ndarray:
     points = np.asarray(pcd.points)
     idx = np.asarray(indices, dtype=int)
@@ -211,9 +232,6 @@ def pick_three_point_roi_from_ply(
         roi_pcd.paint_uniform_color([1.0, 0.5, 0.5])
         overlay = o3d.geometry.PointCloud(pcd)
         overlay.paint_uniform_color([0.8, 0.8, 0.8])
-        line = o3d.geometry.LineSet()
-        line.points = o3d.utility.Vector3dVector(xyz)
-        line.lines = o3d.utility.Vector2iVector([[0, 1], [1, 2]])
-        line.colors = o3d.utility.Vector3dVector([[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+        line = make_line_set(xyz, [[0, 1], [1, 2]], color=(1.0, 0.0, 0.0))
         o3d.visualization.draw_geometries([overlay, roi_pcd, line], window_name="ROI + polyline")
     return PickedPoints(indices=np.asarray(indices, dtype=int), xyz=xyz), roi
