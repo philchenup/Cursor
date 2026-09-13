@@ -120,6 +120,23 @@ def ransac_plane(
     return best_model
 
 
+def points_in_cylinder(pt1: np.ndarray, pt2: np.ndarray, radius: float, query_points: np.ndarray) -> np.ndarray:
+    """Points inside the finite cylinder from ``pt1`` to ``pt2`` (Jeffery demo)."""
+    pts = np.asarray(query_points, dtype=np.float64).reshape(-1, 3)
+    a = np.asarray(pt1, dtype=np.float64).reshape(3)
+    b = np.asarray(pt2, dtype=np.float64).reshape(3)
+    axis = b - a
+    length = float(np.linalg.norm(axis))
+    if length < 1e-12 or len(pts) == 0:
+        return np.zeros((0, 3), dtype=np.float64)
+    rel = pts - a
+    t = rel @ axis
+    inside_caps = (t >= 0.0) & (t <= length * length)
+    radial = np.linalg.norm(np.cross(rel, axis), axis=1)
+    inside = inside_caps & (radial <= radius * length)
+    return pts[inside]
+
+
 def angle_deg(a: np.ndarray, b: np.ndarray) -> float:
     na = np.linalg.norm(a)
     nb = np.linalg.norm(b)

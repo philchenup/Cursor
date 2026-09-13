@@ -12,7 +12,8 @@ from weld_seam_offline.pipeline import detect_weld_seam
 from weld_seam_offline.ply_io import load_ply, save_ply
 from weld_seam_offline.sample import make_vgroove_cloud, write_sample_ply
 from weld_seam_offline.visualize import render_result
-from weld_seam_offline.pick import PickedPoints, picked_xyz
+from weld_seam_offline.geometry import points_in_cylinder
+from weld_seam_offline.pick import PickedPoints, picked_xyz, three_point_cylinder_roi
 
 
 class PlyIoTests(unittest.TestCase):
@@ -80,6 +81,23 @@ class PickHelperTests(unittest.TestCase):
             loaded = np.loadtxt(paths["csv"], delimiter=",", skiprows=1)
         self.assertEqual(loaded.shape, (2, 4))
         np.testing.assert_allclose(loaded[0], [3, 0.1, 0.2, 0.3])
+
+    def test_three_point_cylinder_roi(self) -> None:
+        x = np.linspace(0.0, 1.0, 21)
+        seam = np.column_stack([x, np.zeros(21), np.zeros(21)])
+        noise = np.array([[0.5, 0.2, 0.0], [0.2, -0.25, 0.0]])
+        cloud = np.vstack((seam, noise))
+        roi = three_point_cylinder_roi(
+            cloud,
+            start=seam[0],
+            corner=seam[10],
+            end=seam[-1],
+            radius=0.03,
+        )
+        self.assertGreaterEqual(len(roi), 15)
+        self.assertTrue(np.all(np.abs(roi[:, 1]) < 0.05))
+        inside = points_in_cylinder(seam[0], seam[-1], 0.02, cloud)
+        self.assertGreaterEqual(len(inside), 15)
 
 
 if __name__ == "__main__":

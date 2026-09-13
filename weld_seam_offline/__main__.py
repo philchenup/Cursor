@@ -30,6 +30,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Open an Open3D window and pick points (Shift+left click). Needs a display.",
     )
+    parser.add_argument(
+        "--pick-roi",
+        action="store_true",
+        help="Jeffery workflow: Shift+click START, CORNER, END then extract a cylinder ROI.",
+    )
     parser.add_argument("--point-size", type=float, default=6.0, help="Open3D point size when using --pick.")
     return parser
 
@@ -43,17 +48,28 @@ def main(argv: list[str] | None = None) -> int:
     if ply_path is None:
         raise SystemExit("Provide a PLY path or pass --make-sample")
 
-    if args.pick:
-        from .pick import pick_from_ply
+    if args.pick or args.pick_roi:
+        from .pick import pick_from_ply, pick_three_point_roi_from_ply
+        from .ply_io import save_ply
 
-        picked = pick_from_ply(ply_path, voxel_size=args.voxel_size, point_size=args.point_size)
         out_dir = Path(args.out_dir)
+        if args.pick_roi:
+            voxel = args.voxel_size if args.voxel_size is not None else 0.001
+            picked, roi = pick_three_point_roi_from_ply(
+                ply_path, voxel_size=voxel, point_size=args.point_size
+            )
+            save_ply(out_dir / "roi.ply", roi)
+            print("ROI points:", len(roi))
+        else:
+            picked = pick_from_ply(ply_path, voxel_size=args.voxel_size, point_size=args.point_size)
         paths = picked.save(out_dir)
         print("Picked count:", len(picked.indices))
         print("Indices:", picked.indices.tolist())
+        labels = ("start", "corner", "end") if args.pick_roi else None
         print("XYZ:")
-        for i, xyz in zip(picked.indices, picked.xyz):
-            print(f"  #{int(i):6d}  {xyz[0]: .6f} {xyz[1]: .6f} {xyz[2]: .6f}")
+        for n, (i, xyz) in enumerate(zip(picked.indices, picked.xyz)):
+            tag = f"  {labels[n]}" if labels and n < 3 else ""
+            print(f"  #{int(i):6d}  {xyz[0]: .6f} {xyz[1]: .6f} {xyz[2]: .6f}{tag}")
         print("CSV:", paths["csv"])
         return 0
 

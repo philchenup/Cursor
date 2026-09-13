@@ -57,6 +57,8 @@ xyz = np.asarray(pcd.points)[idx]
 ```bash
 python3 -m pip install open3d
 python3 -m weld_seam_offline data/sample_vgroove.ply --pick --out-dir output/picked
+# Jeffery 三人机选点：第1点起点、第2点拐角、第3点终点
+python3 -m weld_seam_offline data/sample_vgroove.ply --pick-roi --out-dir output/picked
 ```
 
 ```bash
