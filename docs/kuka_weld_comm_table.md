@@ -4,133 +4,133 @@
 
 ## 上位机 → KUKA
 
-| 数据类型 | 信号名 |
-| --- | --- |
-| FLOAT32 | Extern_Speed |
-| FLOAT32 | Extern_Acc |
-| FLOAT32 | Robot_Speed |
-| FLOAT32 | Robot_Acc |
-| FLOAT32 | Extern_E1 |
-| FLOAT32 | Extern_E2 |
-| FLOAT32 | Extern_E3 |
-| FLOAT32 | Robot_X |
-| FLOAT32 | Robot_Y |
-| FLOAT32 | Robot_Z |
-| FLOAT32 | Robot_A |
-| FLOAT32 | Robot_B |
-| FLOAT32 | Robot_C |
-| FLOAT32 | Robot_J1 |
-| FLOAT32 | Robot_J2 |
-| FLOAT32 | Robot_J3 |
-| FLOAT32 | Robot_J4 |
-| FLOAT32 | Robot_J5 |
-| FLOAT32 | Robot_J6 |
-| INT32 | Host_Heartbeat |
-| INT32 | Host_Cmd |
-| INT32 | Host_CmdSeq |
-| INT32 | Job_Id |
-| INT32 | Job_SeamCount |
-| INT32 | Job_PassCount |
-| INT32 | Job_ToolNo |
-| INT32 | Job_BaseNo |
-| FLOAT32 | Job_Override |
-| FLOAT32 | Job_Approach |
-| FLOAT32 | Job_Retract |
-| INT32 | Seam_Id |
-| FLOAT32 | Seam_StartX |
-| FLOAT32 | Seam_StartY |
-| FLOAT32 | Seam_StartZ |
-| FLOAT32 | Seam_StartA |
-| FLOAT32 | Seam_StartB |
-| FLOAT32 | Seam_StartC |
-| FLOAT32 | Seam_EndX |
-| FLOAT32 | Seam_EndY |
-| FLOAT32 | Seam_EndZ |
-| FLOAT32 | Seam_EndA |
-| FLOAT32 | Seam_EndB |
-| FLOAT32 | Seam_EndC |
-| FLOAT32 | Seam_Inset |
-| FLOAT32 | Seam_WeldSpeed |
-| INT32 | Seam_WeaveMode |
-| INT32 | Seam_WeaveType |
-| FLOAT32 | Seam_Amplitude |
-| FLOAT32 | Seam_Chord |
-| INT32 | Seam_MultiMode |
-| FLOAT32 | Seam_Thickness |
-| FLOAT32 | Seam_Groove |
-| FLOAT32 | Seam_FitUpGap |
-| FLOAT32 | Seam_Penetration |
-| INT32 | Pass_SeamId |
-| INT32 | Pass_Layer |
-| INT32 | Pass_Local |
-| INT32 | Pass_Seq |
-| INT32 | Pass_Kind |
-| FLOAT32 | Pass_StartX |
-| FLOAT32 | Pass_StartY |
-| FLOAT32 | Pass_StartZ |
-| FLOAT32 | Pass_StartA |
-| FLOAT32 | Pass_StartB |
-| FLOAT32 | Pass_StartC |
-| FLOAT32 | Pass_EndX |
-| FLOAT32 | Pass_EndY |
-| FLOAT32 | Pass_EndZ |
-| FLOAT32 | Pass_EndA |
-| FLOAT32 | Pass_EndB |
-| FLOAT32 | Pass_EndC |
-| FLOAT32 | Pass_Speed |
-| INT32 | Traj_Index |
-| INT32 | Traj_Count |
-| FLOAT32 | Traj_Speed |
-| INT32 | Traj_Flag |
-| BOOL | Weld_ArcEnable |
-| BOOL | Weld_GasEnable |
-| FLOAT32 | Weld_Current |
-| FLOAT32 | Weld_Voltage |
-| FLOAT32 | Weld_WireSpeed |
-| INT32 | Weld_GasPreflow |
-| INT32 | Weld_GasPostflow |
-| INT32 | Weld_Crater |
+| 数据类型 | 信号名 | 含义 |
+| --- | --- | --- |
+| FLOAT32 | Extern_Speed | 外部轴速度指令 mm/s |
+| FLOAT32 | Extern_Acc | 外部轴加速度指令 |
+| FLOAT32 | Robot_Speed | 机器人速度指令；焊接时为焊速 mm/s |
+| FLOAT32 | Robot_Acc | 机器人加速度指令 |
+| FLOAT32 | Extern_E1 | 外部轴 E1 位置指令（地轨）mm |
+| FLOAT32 | Extern_E2 | 外部轴 E2 位置指令 mm |
+| FLOAT32 | Extern_E3 | 外部轴 E3 位置指令 mm |
+| FLOAT32 | Robot_X | TCP X 位置指令 mm |
+| FLOAT32 | Robot_Y | TCP Y 位置指令 mm |
+| FLOAT32 | Robot_Z | TCP Z 位置指令 mm |
+| FLOAT32 | Robot_A | TCP 姿态 A 指令 deg（绕 Z） |
+| FLOAT32 | Robot_B | TCP 姿态 B 指令 deg（绕 Y） |
+| FLOAT32 | Robot_C | TCP 姿态 C 指令 deg（绕 X） |
+| FLOAT32 | Robot_J1 | 关节 1 角度指令 deg |
+| FLOAT32 | Robot_J2 | 关节 2 角度指令 deg |
+| FLOAT32 | Robot_J3 | 关节 3 角度指令 deg |
+| FLOAT32 | Robot_J4 | 关节 4 角度指令 deg |
+| FLOAT32 | Robot_J5 | 关节 5 角度指令 deg |
+| FLOAT32 | Robot_J6 | 关节 6 角度指令 deg |
+| INT32 | Host_Heartbeat | 上位机心跳，周期递增 |
+| INT32 | Host_Cmd | 命令字：0空闲 1复位 2-5下载 6启动 7暂停 8继续 9停止 10收弧 11回Home 12故障确认 |
+| INT32 | Host_CmdSeq | 命令序号，KUKA 仅在变化时执行一次 |
+| INT32 | Job_Id | 焊接作业号 |
+| INT32 | Job_SeamCount | 本作业焊缝条数 |
+| INT32 | Job_PassCount | 本作业焊道总数 |
+| INT32 | Job_ToolNo | 焊枪工具坐标系 $TOOL 编号 |
+| INT32 | Job_BaseNo | 工件坐标系 $BASE 编号 |
+| FLOAT32 | Job_Override | 建议速度倍率 % |
+| FLOAT32 | Job_Approach | 接近高度 mm（沿 TCP -Z） |
+| FLOAT32 | Job_Retract | 收弧后回撤高度 mm |
+| INT32 | Seam_Id | 焊缝序号，对应工艺表序号 |
+| FLOAT32 | Seam_StartX | 焊缝原始起点 X mm（内缩前） |
+| FLOAT32 | Seam_StartY | 焊缝原始起点 Y mm |
+| FLOAT32 | Seam_StartZ | 焊缝原始起点 Z mm |
+| FLOAT32 | Seam_StartA | 焊缝起点姿态 A deg |
+| FLOAT32 | Seam_StartB | 焊缝起点姿态 B deg |
+| FLOAT32 | Seam_StartC | 焊缝起点姿态 C deg |
+| FLOAT32 | Seam_EndX | 焊缝原始终点 X mm（内缩前） |
+| FLOAT32 | Seam_EndY | 焊缝原始终点 Y mm |
+| FLOAT32 | Seam_EndZ | 焊缝原始终点 Z mm |
+| FLOAT32 | Seam_EndA | 焊缝终点姿态 A deg |
+| FLOAT32 | Seam_EndB | 焊缝终点姿态 B deg |
+| FLOAT32 | Seam_EndC | 焊缝终点姿态 C deg |
+| FLOAT32 | Seam_Inset | 内缩 mm，沿焊缝从起终点各收回 |
+| FLOAT32 | Seam_WeldSpeed | 焊接速度 mm/s，对应工艺表焊接速度 |
+| INT32 | Seam_WeaveMode | 摆动方式：0 直线焊  1 摆动焊 |
+| INT32 | Seam_WeaveType | 摆动类型：0 正弦  1 三角 |
+| FLOAT32 | Seam_Amplitude | 摆动幅度 mm（侧向峰值） |
+| FLOAT32 | Seam_Chord | 摆动弦长 mm（一个周期沿焊缝长度） |
+| INT32 | Seam_MultiMode | 0 单层单道  1 多层多道 |
+| FLOAT32 | Seam_Thickness | 板厚 mm |
+| FLOAT32 | Seam_Groove | 坡口角度 deg |
+| FLOAT32 | Seam_FitUpGap | 装配间隙 mm |
+| FLOAT32 | Seam_Penetration | 熔深 mm |
+| INT32 | Pass_SeamId | 本焊道所属焊缝号 |
+| INT32 | Pass_Layer | 层号，打底层为 1 |
+| INT32 | Pass_Local | 层内道号 |
+| INT32 | Pass_Seq | 全局焊接顺序 |
+| INT32 | Pass_Kind | 焊道类型：0 打底  1 填充  2 盖面 |
+| FLOAT32 | Pass_StartX | 本焊道起点 X mm（含层/道偏移） |
+| FLOAT32 | Pass_StartY | 本焊道起点 Y mm |
+| FLOAT32 | Pass_StartZ | 本焊道起点 Z mm |
+| FLOAT32 | Pass_StartA | 本焊道起点姿态 A deg |
+| FLOAT32 | Pass_StartB | 本焊道起点姿态 B deg |
+| FLOAT32 | Pass_StartC | 本焊道起点姿态 C deg |
+| FLOAT32 | Pass_EndX | 本焊道终点 X mm |
+| FLOAT32 | Pass_EndY | 本焊道终点 Y mm |
+| FLOAT32 | Pass_EndZ | 本焊道终点 Z mm |
+| FLOAT32 | Pass_EndA | 本焊道终点姿态 A deg |
+| FLOAT32 | Pass_EndB | 本焊道终点姿态 B deg |
+| FLOAT32 | Pass_EndC | 本焊道终点姿态 C deg |
+| FLOAT32 | Pass_Speed | 本焊道焊接速度 mm/s |
+| INT32 | Traj_Index | 当前轨迹点序号 |
+| INT32 | Traj_Count | 本焊道轨迹点总数 |
+| FLOAT32 | Traj_Speed | 该轨迹点进给速度 mm/s |
+| INT32 | Traj_Flag | bit0 起弧点  bit1 收弧点  bit2 本焊道末点 |
+| BOOL | Weld_ArcEnable | 允许起弧 |
+| BOOL | Weld_GasEnable | 允许送保护气 |
+| FLOAT32 | Weld_Current | 焊接电流设定 A |
+| FLOAT32 | Weld_Voltage | 电弧电压设定 V |
+| FLOAT32 | Weld_WireSpeed | 送丝速度 m/min |
+| INT32 | Weld_GasPreflow | 起弧前气体预吹时间 ms |
+| INT32 | Weld_GasPostflow | 收弧后气体滞后时间 ms |
+| INT32 | Weld_Crater | 填弧坑时间 ms |
 
 ## KUKA → 上位机
 
-| 数据类型 | 信号名 |
-| --- | --- |
-| INT32 | Kuka_Heartbeat |
-| INT32 | Kuka_CmdAck |
-| INT32 | Kuka_Phase |
-| INT32 | Kuka_OpMode |
-| BOOL | Kuka_ProActive |
-| BOOL | Kuka_DrivesOn |
-| BOOL | Kuka_EStop |
-| INT32 | Kuka_MsgId |
-| INT32 | Kuka_SeamId |
-| INT32 | Kuka_Layer |
-| INT32 | Kuka_PassSeq |
-| INT32 | Kuka_TrajIndex |
-| FLOAT32 | Act_Extern_Speed |
-| FLOAT32 | Act_Extern_Acc |
-| FLOAT32 | Act_Robot_Speed |
-| FLOAT32 | Act_Robot_Acc |
-| FLOAT32 | Act_Extern_E1 |
-| FLOAT32 | Act_Extern_E2 |
-| FLOAT32 | Act_Extern_E3 |
-| FLOAT32 | Act_Robot_X |
-| FLOAT32 | Act_Robot_Y |
-| FLOAT32 | Act_Robot_Z |
-| FLOAT32 | Act_Robot_A |
-| FLOAT32 | Act_Robot_B |
-| FLOAT32 | Act_Robot_C |
-| FLOAT32 | Act_Robot_J1 |
-| FLOAT32 | Act_Robot_J2 |
-| FLOAT32 | Act_Robot_J3 |
-| FLOAT32 | Act_Robot_J4 |
-| FLOAT32 | Act_Robot_J5 |
-| FLOAT32 | Act_Robot_J6 |
-| BOOL | Kuka_ArcOn |
-| BOOL | Kuka_Collision |
-| BOOL | Kuka_DownloadOk |
-| BOOL | Kuka_JobDone |
-| FLOAT32 | Kuka_Progress |
+| 数据类型 | 信号名 | 含义 |
+| --- | --- | --- |
+| INT32 | Kuka_Heartbeat | 机器人心跳 |
+| INT32 | Kuka_CmdAck | 已接受的命令序号 |
+| INT32 | Kuka_Phase | 工艺阶段：地轨/接近/到位/预吹/起弧/焊接/收弧/回撤/回Home/故障 |
+| INT32 | Kuka_OpMode | 运行模式：0 T1  1 T2  2 AUT  3 EXT |
+| BOOL | Kuka_ProActive | 解释器程序正在运行 |
+| BOOL | Kuka_DrivesOn | 驱动已使能 |
+| BOOL | Kuka_EStop | 急停 |
+| INT32 | Kuka_MsgId | 报警号，0 表示无报警 |
+| INT32 | Kuka_SeamId | 当前焊缝号 |
+| INT32 | Kuka_Layer | 当前层号 |
+| INT32 | Kuka_PassSeq | 当前焊道全局序号 |
+| INT32 | Kuka_TrajIndex | 当前轨迹点序号 |
+| FLOAT32 | Act_Extern_Speed | 外部轴实际速度 mm/s |
+| FLOAT32 | Act_Extern_Acc | 外部轴实际加速度 |
+| FLOAT32 | Act_Robot_Speed | 机器人实际速度 mm/s |
+| FLOAT32 | Act_Robot_Acc | 机器人实际加速度 |
+| FLOAT32 | Act_Extern_E1 | 外部轴 E1 实际位置 mm |
+| FLOAT32 | Act_Extern_E2 | 外部轴 E2 实际位置 mm |
+| FLOAT32 | Act_Extern_E3 | 外部轴 E3 实际位置 mm |
+| FLOAT32 | Act_Robot_X | TCP 实际 X mm |
+| FLOAT32 | Act_Robot_Y | TCP 实际 Y mm |
+| FLOAT32 | Act_Robot_Z | TCP 实际 Z mm |
+| FLOAT32 | Act_Robot_A | TCP 实际姿态 A deg |
+| FLOAT32 | Act_Robot_B | TCP 实际姿态 B deg |
+| FLOAT32 | Act_Robot_C | TCP 实际姿态 C deg |
+| FLOAT32 | Act_Robot_J1 | 关节 1 实际角度 deg |
+| FLOAT32 | Act_Robot_J2 | 关节 2 实际角度 deg |
+| FLOAT32 | Act_Robot_J3 | 关节 3 实际角度 deg |
+| FLOAT32 | Act_Robot_J4 | 关节 4 实际角度 deg |
+| FLOAT32 | Act_Robot_J5 | 关节 5 实际角度 deg |
+| FLOAT32 | Act_Robot_J6 | 关节 6 实际角度 deg |
+| BOOL | Kuka_ArcOn | 焊机起弧成功反馈 |
+| BOOL | Kuka_Collision | 碰撞或力矩超限 |
+| BOOL | Kuka_DownloadOk | 作业/焊缝/焊道/轨迹下载完成 |
+| BOOL | Kuka_JobDone | 全部焊缝焊完并已回 Home |
+| FLOAT32 | Kuka_Progress | 当前作业进度 % |
 
 ## 上位机→KUKA 报文示例
 

@@ -1,6 +1,6 @@
 # 上位机 ↔ KUKA 焊接通讯数据表
 
-表格式与 PLC/示教器映射一致：两列 **数据类型**、**信号名**。运动区前 19 项与现场表相同（`Extern_Speed` … `Robot_J6`），其后为焊接工艺字。
+表格式与 PLC/示教器映射一致：三列 **数据类型**、**信号名**、**含义**。运动区前 19 项与现场表相同（`Extern_Speed` … `Robot_J6`），其后为焊接工艺字。
 
 - Markdown：[`kuka_weld_comm_table.md`](kuka_weld_comm_table.md)
 - CSV：[`kuka_weld_comm_table.csv`](kuka_weld_comm_table.csv)

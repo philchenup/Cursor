@@ -226,6 +226,7 @@ struct CommSignal {
     const char* type;          ///< FLOAT32 / INT32 / BOOL
     const char* name;          ///< 如 Extern_Speed、Robot_X
     CommDirection direction;
+    const char* meaning;       ///< 参数含义
 };
 
 const std::vector<CommSignal>& kukaWeldCommSignals();

@@ -61,7 +61,7 @@ int main()
         expect(s.index > 0, "positive index");
         expect(names.insert(s.name).second, "unique signal name");
         const std::string t = s.type;
-        expect(t == "FLOAT32" || t == "INT32" || t == "BOOL", "plc type");
+        expect(s.meaning != nullptr && s.meaning[0] != '\0', "meaning present");
         if (s.direction == CommDirection::HostToKuka) {
             ++host_n;
         } else {
@@ -210,12 +210,16 @@ int main()
     expect(csv.find("1,2,3,4,5,6,7,10,1;") == 0, "traj csv first group");
 
     const std::string md = commTableMarkdown();
-    expect(md.find("| 数据类型 | 信号名 |") != std::string::npos, "two-column header");
-    expect(md.find("| FLOAT32 | Extern_Speed |") != std::string::npos, "screenshot first row");
-    expect(md.find("| FLOAT32 | Robot_J6 |") != std::string::npos, "screenshot last joint");
+    expect(md.find("| 数据类型 | 信号名 | 含义 |") != std::string::npos, "three-column header");
+    expect(md.find("| FLOAT32 | Extern_Speed | 外部轴速度指令 mm/s |") != std::string::npos,
+           "screenshot first row with meaning");
+    expect(md.find("| FLOAT32 | Robot_J6 | 关节 6 角度指令 deg |") != std::string::npos,
+           "screenshot last joint with meaning");
+    expect(md.find("| FLOAT32 | Seam_Inset |") != std::string::npos, "inset meaning row");
     const std::string table_csv = commTableCsv();
-    expect(table_csv.find("数据类型,信号名,方向") == 0, "csv header");
-    expect(table_csv.find("FLOAT32,Extern_Speed,") != std::string::npos, "csv motion");
+    expect(table_csv.find("数据类型,信号名,含义,方向") == 0, "csv header");
+    expect(table_csv.find("FLOAT32,Extern_Speed,外部轴速度指令 mm/s,") != std::string::npos,
+           "csv motion meaning");
 
     const std::string eki = ekiConfigXml("10.0.0.8", 54600);
     expect(eki.find("Tag=\"Extern_Speed\" Type=\"REAL\"") != std::string::npos, "eki motion tag");

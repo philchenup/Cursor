@@ -143,12 +143,29 @@ const char* ekiType(const char* plc_type)
     return (std::string(plc_type) == "FLOAT32") ? "REAL" : "INT";
 }
 
+std::string csvEscape(const std::string& s)
+{
+    if (s.find_first_of(",\"\n") == std::string::npos) {
+        return s;
+    }
+    std::string out = "\"";
+    for (char c : s) {
+        if (c == '"') {
+            out += "\"\"";
+        } else {
+            out += c;
+        }
+    }
+    out += '"';
+    return out;
+}
+
 void appendTable(std::ostringstream& oss, CommDirection dir)
 {
-    oss << "| 数据类型 | 信号名 |\n| --- | --- |\n";
+    oss << "| 数据类型 | 信号名 | 含义 |\n| --- | --- | --- |\n";
     for (const CommSignal& s : kukaWeldCommSignals()) {
         if (s.direction == dir) {
-            oss << "| " << s.type << " | " << s.name << " |\n";
+            oss << "| " << s.type << " | " << s.name << " | " << s.meaning << " |\n";
         }
     }
 }
@@ -158,133 +175,132 @@ void appendTable(std::ostringstream& oss, CommDirection dir)
 const std::vector<CommSignal>& kukaWeldCommSignals()
 {
     static const std::vector<CommSignal> kSignals = {
-        // 运动指令（与 PLC 表一致：速度/加速度、外部轴、笛卡尔、关节）
-        {1, "FLOAT32", "Extern_Speed", CommDirection::HostToKuka},
-        {2, "FLOAT32", "Extern_Acc", CommDirection::HostToKuka},
-        {3, "FLOAT32", "Robot_Speed", CommDirection::HostToKuka},
-        {4, "FLOAT32", "Robot_Acc", CommDirection::HostToKuka},
-        {5, "FLOAT32", "Extern_E1", CommDirection::HostToKuka},
-        {6, "FLOAT32", "Extern_E2", CommDirection::HostToKuka},
-        {7, "FLOAT32", "Extern_E3", CommDirection::HostToKuka},
-        {8, "FLOAT32", "Robot_X", CommDirection::HostToKuka},
-        {9, "FLOAT32", "Robot_Y", CommDirection::HostToKuka},
-        {10, "FLOAT32", "Robot_Z", CommDirection::HostToKuka},
-        {11, "FLOAT32", "Robot_A", CommDirection::HostToKuka},
-        {12, "FLOAT32", "Robot_B", CommDirection::HostToKuka},
-        {13, "FLOAT32", "Robot_C", CommDirection::HostToKuka},
-        {14, "FLOAT32", "Robot_J1", CommDirection::HostToKuka},
-        {15, "FLOAT32", "Robot_J2", CommDirection::HostToKuka},
-        {16, "FLOAT32", "Robot_J3", CommDirection::HostToKuka},
-        {17, "FLOAT32", "Robot_J4", CommDirection::HostToKuka},
-        {18, "FLOAT32", "Robot_J5", CommDirection::HostToKuka},
-        {19, "FLOAT32", "Robot_J6", CommDirection::HostToKuka},
+        {1, "FLOAT32", "Extern_Speed", CommDirection::HostToKuka, "外部轴速度指令 mm/s"},
+        {2, "FLOAT32", "Extern_Acc", CommDirection::HostToKuka, "外部轴加速度指令"},
+        {3, "FLOAT32", "Robot_Speed", CommDirection::HostToKuka, "机器人速度指令；焊接时为焊速 mm/s"},
+        {4, "FLOAT32", "Robot_Acc", CommDirection::HostToKuka, "机器人加速度指令"},
+        {5, "FLOAT32", "Extern_E1", CommDirection::HostToKuka, "外部轴 E1 位置指令（地轨）mm"},
+        {6, "FLOAT32", "Extern_E2", CommDirection::HostToKuka, "外部轴 E2 位置指令 mm"},
+        {7, "FLOAT32", "Extern_E3", CommDirection::HostToKuka, "外部轴 E3 位置指令 mm"},
+        {8, "FLOAT32", "Robot_X", CommDirection::HostToKuka, "TCP X 位置指令 mm"},
+        {9, "FLOAT32", "Robot_Y", CommDirection::HostToKuka, "TCP Y 位置指令 mm"},
+        {10, "FLOAT32", "Robot_Z", CommDirection::HostToKuka, "TCP Z 位置指令 mm"},
+        {11, "FLOAT32", "Robot_A", CommDirection::HostToKuka, "TCP 姿态 A 指令 deg（绕 Z）"},
+        {12, "FLOAT32", "Robot_B", CommDirection::HostToKuka, "TCP 姿态 B 指令 deg（绕 Y）"},
+        {13, "FLOAT32", "Robot_C", CommDirection::HostToKuka, "TCP 姿态 C 指令 deg（绕 X）"},
+        {14, "FLOAT32", "Robot_J1", CommDirection::HostToKuka, "关节 1 角度指令 deg"},
+        {15, "FLOAT32", "Robot_J2", CommDirection::HostToKuka, "关节 2 角度指令 deg"},
+        {16, "FLOAT32", "Robot_J3", CommDirection::HostToKuka, "关节 3 角度指令 deg"},
+        {17, "FLOAT32", "Robot_J4", CommDirection::HostToKuka, "关节 4 角度指令 deg"},
+        {18, "FLOAT32", "Robot_J5", CommDirection::HostToKuka, "关节 5 角度指令 deg"},
+        {19, "FLOAT32", "Robot_J6", CommDirection::HostToKuka, "关节 6 角度指令 deg"},
 
-        {20, "INT32", "Host_Heartbeat", CommDirection::HostToKuka},
-        {21, "INT32", "Host_Cmd", CommDirection::HostToKuka},
-        {22, "INT32", "Host_CmdSeq", CommDirection::HostToKuka},
-        {23, "INT32", "Job_Id", CommDirection::HostToKuka},
-        {24, "INT32", "Job_SeamCount", CommDirection::HostToKuka},
-        {25, "INT32", "Job_PassCount", CommDirection::HostToKuka},
-        {26, "INT32", "Job_ToolNo", CommDirection::HostToKuka},
-        {27, "INT32", "Job_BaseNo", CommDirection::HostToKuka},
-        {28, "FLOAT32", "Job_Override", CommDirection::HostToKuka},
-        {29, "FLOAT32", "Job_Approach", CommDirection::HostToKuka},
-        {30, "FLOAT32", "Job_Retract", CommDirection::HostToKuka},
+        {20, "INT32", "Host_Heartbeat", CommDirection::HostToKuka, "上位机心跳，周期递增"},
+        {21, "INT32", "Host_Cmd", CommDirection::HostToKuka, "命令字：0空闲 1复位 2-5下载 6启动 7暂停 8继续 9停止 10收弧 11回Home 12故障确认"},
+        {22, "INT32", "Host_CmdSeq", CommDirection::HostToKuka, "命令序号，KUKA 仅在变化时执行一次"},
+        {23, "INT32", "Job_Id", CommDirection::HostToKuka, "焊接作业号"},
+        {24, "INT32", "Job_SeamCount", CommDirection::HostToKuka, "本作业焊缝条数"},
+        {25, "INT32", "Job_PassCount", CommDirection::HostToKuka, "本作业焊道总数"},
+        {26, "INT32", "Job_ToolNo", CommDirection::HostToKuka, "焊枪工具坐标系 $TOOL 编号"},
+        {27, "INT32", "Job_BaseNo", CommDirection::HostToKuka, "工件坐标系 $BASE 编号"},
+        {28, "FLOAT32", "Job_Override", CommDirection::HostToKuka, "建议速度倍率 %"},
+        {29, "FLOAT32", "Job_Approach", CommDirection::HostToKuka, "接近高度 mm（沿 TCP -Z）"},
+        {30, "FLOAT32", "Job_Retract", CommDirection::HostToKuka, "收弧后回撤高度 mm"},
 
-        {31, "INT32", "Seam_Id", CommDirection::HostToKuka},
-        {32, "FLOAT32", "Seam_StartX", CommDirection::HostToKuka},
-        {33, "FLOAT32", "Seam_StartY", CommDirection::HostToKuka},
-        {34, "FLOAT32", "Seam_StartZ", CommDirection::HostToKuka},
-        {35, "FLOAT32", "Seam_StartA", CommDirection::HostToKuka},
-        {36, "FLOAT32", "Seam_StartB", CommDirection::HostToKuka},
-        {37, "FLOAT32", "Seam_StartC", CommDirection::HostToKuka},
-        {38, "FLOAT32", "Seam_EndX", CommDirection::HostToKuka},
-        {39, "FLOAT32", "Seam_EndY", CommDirection::HostToKuka},
-        {40, "FLOAT32", "Seam_EndZ", CommDirection::HostToKuka},
-        {41, "FLOAT32", "Seam_EndA", CommDirection::HostToKuka},
-        {42, "FLOAT32", "Seam_EndB", CommDirection::HostToKuka},
-        {43, "FLOAT32", "Seam_EndC", CommDirection::HostToKuka},
-        {44, "FLOAT32", "Seam_Inset", CommDirection::HostToKuka},
-        {45, "FLOAT32", "Seam_WeldSpeed", CommDirection::HostToKuka},
-        {46, "INT32", "Seam_WeaveMode", CommDirection::HostToKuka},
-        {47, "INT32", "Seam_WeaveType", CommDirection::HostToKuka},
-        {48, "FLOAT32", "Seam_Amplitude", CommDirection::HostToKuka},
-        {49, "FLOAT32", "Seam_Chord", CommDirection::HostToKuka},
-        {50, "INT32", "Seam_MultiMode", CommDirection::HostToKuka},
-        {51, "FLOAT32", "Seam_Thickness", CommDirection::HostToKuka},
-        {52, "FLOAT32", "Seam_Groove", CommDirection::HostToKuka},
-        {53, "FLOAT32", "Seam_FitUpGap", CommDirection::HostToKuka},
-        {54, "FLOAT32", "Seam_Penetration", CommDirection::HostToKuka},
+        {31, "INT32", "Seam_Id", CommDirection::HostToKuka, "焊缝序号，对应工艺表序号"},
+        {32, "FLOAT32", "Seam_StartX", CommDirection::HostToKuka, "焊缝原始起点 X mm（内缩前）"},
+        {33, "FLOAT32", "Seam_StartY", CommDirection::HostToKuka, "焊缝原始起点 Y mm"},
+        {34, "FLOAT32", "Seam_StartZ", CommDirection::HostToKuka, "焊缝原始起点 Z mm"},
+        {35, "FLOAT32", "Seam_StartA", CommDirection::HostToKuka, "焊缝起点姿态 A deg"},
+        {36, "FLOAT32", "Seam_StartB", CommDirection::HostToKuka, "焊缝起点姿态 B deg"},
+        {37, "FLOAT32", "Seam_StartC", CommDirection::HostToKuka, "焊缝起点姿态 C deg"},
+        {38, "FLOAT32", "Seam_EndX", CommDirection::HostToKuka, "焊缝原始终点 X mm（内缩前）"},
+        {39, "FLOAT32", "Seam_EndY", CommDirection::HostToKuka, "焊缝原始终点 Y mm"},
+        {40, "FLOAT32", "Seam_EndZ", CommDirection::HostToKuka, "焊缝原始终点 Z mm"},
+        {41, "FLOAT32", "Seam_EndA", CommDirection::HostToKuka, "焊缝终点姿态 A deg"},
+        {42, "FLOAT32", "Seam_EndB", CommDirection::HostToKuka, "焊缝终点姿态 B deg"},
+        {43, "FLOAT32", "Seam_EndC", CommDirection::HostToKuka, "焊缝终点姿态 C deg"},
+        {44, "FLOAT32", "Seam_Inset", CommDirection::HostToKuka, "内缩 mm，沿焊缝从起终点各收回"},
+        {45, "FLOAT32", "Seam_WeldSpeed", CommDirection::HostToKuka, "焊接速度 mm/s，对应工艺表焊接速度"},
+        {46, "INT32", "Seam_WeaveMode", CommDirection::HostToKuka, "摆动方式：0 直线焊  1 摆动焊"},
+        {47, "INT32", "Seam_WeaveType", CommDirection::HostToKuka, "摆动类型：0 正弦  1 三角"},
+        {48, "FLOAT32", "Seam_Amplitude", CommDirection::HostToKuka, "摆动幅度 mm（侧向峰值）"},
+        {49, "FLOAT32", "Seam_Chord", CommDirection::HostToKuka, "摆动弦长 mm（一个周期沿焊缝长度）"},
+        {50, "INT32", "Seam_MultiMode", CommDirection::HostToKuka, "0 单层单道  1 多层多道"},
+        {51, "FLOAT32", "Seam_Thickness", CommDirection::HostToKuka, "板厚 mm"},
+        {52, "FLOAT32", "Seam_Groove", CommDirection::HostToKuka, "坡口角度 deg"},
+        {53, "FLOAT32", "Seam_FitUpGap", CommDirection::HostToKuka, "装配间隙 mm"},
+        {54, "FLOAT32", "Seam_Penetration", CommDirection::HostToKuka, "熔深 mm"},
 
-        {55, "INT32", "Pass_SeamId", CommDirection::HostToKuka},
-        {56, "INT32", "Pass_Layer", CommDirection::HostToKuka},
-        {57, "INT32", "Pass_Local", CommDirection::HostToKuka},
-        {58, "INT32", "Pass_Seq", CommDirection::HostToKuka},
-        {59, "INT32", "Pass_Kind", CommDirection::HostToKuka},
-        {60, "FLOAT32", "Pass_StartX", CommDirection::HostToKuka},
-        {61, "FLOAT32", "Pass_StartY", CommDirection::HostToKuka},
-        {62, "FLOAT32", "Pass_StartZ", CommDirection::HostToKuka},
-        {63, "FLOAT32", "Pass_StartA", CommDirection::HostToKuka},
-        {64, "FLOAT32", "Pass_StartB", CommDirection::HostToKuka},
-        {65, "FLOAT32", "Pass_StartC", CommDirection::HostToKuka},
-        {66, "FLOAT32", "Pass_EndX", CommDirection::HostToKuka},
-        {67, "FLOAT32", "Pass_EndY", CommDirection::HostToKuka},
-        {68, "FLOAT32", "Pass_EndZ", CommDirection::HostToKuka},
-        {69, "FLOAT32", "Pass_EndA", CommDirection::HostToKuka},
-        {70, "FLOAT32", "Pass_EndB", CommDirection::HostToKuka},
-        {71, "FLOAT32", "Pass_EndC", CommDirection::HostToKuka},
-        {72, "FLOAT32", "Pass_Speed", CommDirection::HostToKuka},
+        {55, "INT32", "Pass_SeamId", CommDirection::HostToKuka, "本焊道所属焊缝号"},
+        {56, "INT32", "Pass_Layer", CommDirection::HostToKuka, "层号，打底层为 1"},
+        {57, "INT32", "Pass_Local", CommDirection::HostToKuka, "层内道号"},
+        {58, "INT32", "Pass_Seq", CommDirection::HostToKuka, "全局焊接顺序"},
+        {59, "INT32", "Pass_Kind", CommDirection::HostToKuka, "焊道类型：0 打底  1 填充  2 盖面"},
+        {60, "FLOAT32", "Pass_StartX", CommDirection::HostToKuka, "本焊道起点 X mm（含层/道偏移）"},
+        {61, "FLOAT32", "Pass_StartY", CommDirection::HostToKuka, "本焊道起点 Y mm"},
+        {62, "FLOAT32", "Pass_StartZ", CommDirection::HostToKuka, "本焊道起点 Z mm"},
+        {63, "FLOAT32", "Pass_StartA", CommDirection::HostToKuka, "本焊道起点姿态 A deg"},
+        {64, "FLOAT32", "Pass_StartB", CommDirection::HostToKuka, "本焊道起点姿态 B deg"},
+        {65, "FLOAT32", "Pass_StartC", CommDirection::HostToKuka, "本焊道起点姿态 C deg"},
+        {66, "FLOAT32", "Pass_EndX", CommDirection::HostToKuka, "本焊道终点 X mm"},
+        {67, "FLOAT32", "Pass_EndY", CommDirection::HostToKuka, "本焊道终点 Y mm"},
+        {68, "FLOAT32", "Pass_EndZ", CommDirection::HostToKuka, "本焊道终点 Z mm"},
+        {69, "FLOAT32", "Pass_EndA", CommDirection::HostToKuka, "本焊道终点姿态 A deg"},
+        {70, "FLOAT32", "Pass_EndB", CommDirection::HostToKuka, "本焊道终点姿态 B deg"},
+        {71, "FLOAT32", "Pass_EndC", CommDirection::HostToKuka, "本焊道终点姿态 C deg"},
+        {72, "FLOAT32", "Pass_Speed", CommDirection::HostToKuka, "本焊道焊接速度 mm/s"},
 
-        {73, "INT32", "Traj_Index", CommDirection::HostToKuka},
-        {74, "INT32", "Traj_Count", CommDirection::HostToKuka},
-        {75, "FLOAT32", "Traj_Speed", CommDirection::HostToKuka},
-        {76, "INT32", "Traj_Flag", CommDirection::HostToKuka},
+        {73, "INT32", "Traj_Index", CommDirection::HostToKuka, "当前轨迹点序号"},
+        {74, "INT32", "Traj_Count", CommDirection::HostToKuka, "本焊道轨迹点总数"},
+        {75, "FLOAT32", "Traj_Speed", CommDirection::HostToKuka, "该轨迹点进给速度 mm/s"},
+        {76, "INT32", "Traj_Flag", CommDirection::HostToKuka, "bit0 起弧点  bit1 收弧点  bit2 本焊道末点"},
 
-        {77, "BOOL", "Weld_ArcEnable", CommDirection::HostToKuka},
-        {78, "BOOL", "Weld_GasEnable", CommDirection::HostToKuka},
-        {79, "FLOAT32", "Weld_Current", CommDirection::HostToKuka},
-        {80, "FLOAT32", "Weld_Voltage", CommDirection::HostToKuka},
-        {81, "FLOAT32", "Weld_WireSpeed", CommDirection::HostToKuka},
-        {82, "INT32", "Weld_GasPreflow", CommDirection::HostToKuka},
-        {83, "INT32", "Weld_GasPostflow", CommDirection::HostToKuka},
-        {84, "INT32", "Weld_Crater", CommDirection::HostToKuka},
+        {77, "BOOL", "Weld_ArcEnable", CommDirection::HostToKuka, "允许起弧"},
+        {78, "BOOL", "Weld_GasEnable", CommDirection::HostToKuka, "允许送保护气"},
+        {79, "FLOAT32", "Weld_Current", CommDirection::HostToKuka, "焊接电流设定 A"},
+        {80, "FLOAT32", "Weld_Voltage", CommDirection::HostToKuka, "电弧电压设定 V"},
+        {81, "FLOAT32", "Weld_WireSpeed", CommDirection::HostToKuka, "送丝速度 m/min"},
+        {82, "INT32", "Weld_GasPreflow", CommDirection::HostToKuka, "起弧前气体预吹时间 ms"},
+        {83, "INT32", "Weld_GasPostflow", CommDirection::HostToKuka, "收弧后气体滞后时间 ms"},
+        {84, "INT32", "Weld_Crater", CommDirection::HostToKuka, "填弧坑时间 ms"},
 
-        {85, "INT32", "Kuka_Heartbeat", CommDirection::KukaToHost},
-        {86, "INT32", "Kuka_CmdAck", CommDirection::KukaToHost},
-        {87, "INT32", "Kuka_Phase", CommDirection::KukaToHost},
-        {88, "INT32", "Kuka_OpMode", CommDirection::KukaToHost},
-        {89, "BOOL", "Kuka_ProActive", CommDirection::KukaToHost},
-        {90, "BOOL", "Kuka_DrivesOn", CommDirection::KukaToHost},
-        {91, "BOOL", "Kuka_EStop", CommDirection::KukaToHost},
-        {92, "INT32", "Kuka_MsgId", CommDirection::KukaToHost},
-        {93, "INT32", "Kuka_SeamId", CommDirection::KukaToHost},
-        {94, "INT32", "Kuka_Layer", CommDirection::KukaToHost},
-        {95, "INT32", "Kuka_PassSeq", CommDirection::KukaToHost},
-        {96, "INT32", "Kuka_TrajIndex", CommDirection::KukaToHost},
-        {97, "FLOAT32", "Act_Extern_Speed", CommDirection::KukaToHost},
-        {98, "FLOAT32", "Act_Extern_Acc", CommDirection::KukaToHost},
-        {99, "FLOAT32", "Act_Robot_Speed", CommDirection::KukaToHost},
-        {100, "FLOAT32", "Act_Robot_Acc", CommDirection::KukaToHost},
-        {101, "FLOAT32", "Act_Extern_E1", CommDirection::KukaToHost},
-        {102, "FLOAT32", "Act_Extern_E2", CommDirection::KukaToHost},
-        {103, "FLOAT32", "Act_Extern_E3", CommDirection::KukaToHost},
-        {104, "FLOAT32", "Act_Robot_X", CommDirection::KukaToHost},
-        {105, "FLOAT32", "Act_Robot_Y", CommDirection::KukaToHost},
-        {106, "FLOAT32", "Act_Robot_Z", CommDirection::KukaToHost},
-        {107, "FLOAT32", "Act_Robot_A", CommDirection::KukaToHost},
-        {108, "FLOAT32", "Act_Robot_B", CommDirection::KukaToHost},
-        {109, "FLOAT32", "Act_Robot_C", CommDirection::KukaToHost},
-        {110, "FLOAT32", "Act_Robot_J1", CommDirection::KukaToHost},
-        {111, "FLOAT32", "Act_Robot_J2", CommDirection::KukaToHost},
-        {112, "FLOAT32", "Act_Robot_J3", CommDirection::KukaToHost},
-        {113, "FLOAT32", "Act_Robot_J4", CommDirection::KukaToHost},
-        {114, "FLOAT32", "Act_Robot_J5", CommDirection::KukaToHost},
-        {115, "FLOAT32", "Act_Robot_J6", CommDirection::KukaToHost},
-        {116, "BOOL", "Kuka_ArcOn", CommDirection::KukaToHost},
-        {117, "BOOL", "Kuka_Collision", CommDirection::KukaToHost},
-        {118, "BOOL", "Kuka_DownloadOk", CommDirection::KukaToHost},
-        {119, "BOOL", "Kuka_JobDone", CommDirection::KukaToHost},
-        {120, "FLOAT32", "Kuka_Progress", CommDirection::KukaToHost},
+        {85, "INT32", "Kuka_Heartbeat", CommDirection::KukaToHost, "机器人心跳"},
+        {86, "INT32", "Kuka_CmdAck", CommDirection::KukaToHost, "已接受的命令序号"},
+        {87, "INT32", "Kuka_Phase", CommDirection::KukaToHost, "工艺阶段：地轨/接近/到位/预吹/起弧/焊接/收弧/回撤/回Home/故障"},
+        {88, "INT32", "Kuka_OpMode", CommDirection::KukaToHost, "运行模式：0 T1  1 T2  2 AUT  3 EXT"},
+        {89, "BOOL", "Kuka_ProActive", CommDirection::KukaToHost, "解释器程序正在运行"},
+        {90, "BOOL", "Kuka_DrivesOn", CommDirection::KukaToHost, "驱动已使能"},
+        {91, "BOOL", "Kuka_EStop", CommDirection::KukaToHost, "急停"},
+        {92, "INT32", "Kuka_MsgId", CommDirection::KukaToHost, "报警号，0 表示无报警"},
+        {93, "INT32", "Kuka_SeamId", CommDirection::KukaToHost, "当前焊缝号"},
+        {94, "INT32", "Kuka_Layer", CommDirection::KukaToHost, "当前层号"},
+        {95, "INT32", "Kuka_PassSeq", CommDirection::KukaToHost, "当前焊道全局序号"},
+        {96, "INT32", "Kuka_TrajIndex", CommDirection::KukaToHost, "当前轨迹点序号"},
+        {97, "FLOAT32", "Act_Extern_Speed", CommDirection::KukaToHost, "外部轴实际速度 mm/s"},
+        {98, "FLOAT32", "Act_Extern_Acc", CommDirection::KukaToHost, "外部轴实际加速度"},
+        {99, "FLOAT32", "Act_Robot_Speed", CommDirection::KukaToHost, "机器人实际速度 mm/s"},
+        {100, "FLOAT32", "Act_Robot_Acc", CommDirection::KukaToHost, "机器人实际加速度"},
+        {101, "FLOAT32", "Act_Extern_E1", CommDirection::KukaToHost, "外部轴 E1 实际位置 mm"},
+        {102, "FLOAT32", "Act_Extern_E2", CommDirection::KukaToHost, "外部轴 E2 实际位置 mm"},
+        {103, "FLOAT32", "Act_Extern_E3", CommDirection::KukaToHost, "外部轴 E3 实际位置 mm"},
+        {104, "FLOAT32", "Act_Robot_X", CommDirection::KukaToHost, "TCP 实际 X mm"},
+        {105, "FLOAT32", "Act_Robot_Y", CommDirection::KukaToHost, "TCP 实际 Y mm"},
+        {106, "FLOAT32", "Act_Robot_Z", CommDirection::KukaToHost, "TCP 实际 Z mm"},
+        {107, "FLOAT32", "Act_Robot_A", CommDirection::KukaToHost, "TCP 实际姿态 A deg"},
+        {108, "FLOAT32", "Act_Robot_B", CommDirection::KukaToHost, "TCP 实际姿态 B deg"},
+        {109, "FLOAT32", "Act_Robot_C", CommDirection::KukaToHost, "TCP 实际姿态 C deg"},
+        {110, "FLOAT32", "Act_Robot_J1", CommDirection::KukaToHost, "关节 1 实际角度 deg"},
+        {111, "FLOAT32", "Act_Robot_J2", CommDirection::KukaToHost, "关节 2 实际角度 deg"},
+        {112, "FLOAT32", "Act_Robot_J3", CommDirection::KukaToHost, "关节 3 实际角度 deg"},
+        {113, "FLOAT32", "Act_Robot_J4", CommDirection::KukaToHost, "关节 4 实际角度 deg"},
+        {114, "FLOAT32", "Act_Robot_J5", CommDirection::KukaToHost, "关节 5 实际角度 deg"},
+        {115, "FLOAT32", "Act_Robot_J6", CommDirection::KukaToHost, "关节 6 实际角度 deg"},
+        {116, "BOOL", "Kuka_ArcOn", CommDirection::KukaToHost, "焊机起弧成功反馈"},
+        {117, "BOOL", "Kuka_Collision", CommDirection::KukaToHost, "碰撞或力矩超限"},
+        {118, "BOOL", "Kuka_DownloadOk", CommDirection::KukaToHost, "作业/焊缝/焊道/轨迹下载完成"},
+        {119, "BOOL", "Kuka_JobDone", CommDirection::KukaToHost, "全部焊缝焊完并已回 Home"},
+        {120, "FLOAT32", "Kuka_Progress", CommDirection::KukaToHost, "当前作业进度 %"},
     };
     return kSignals;
 }
@@ -353,9 +369,10 @@ std::string commTableMarkdown()
 std::string commTableCsv()
 {
     std::ostringstream oss;
-    oss << "数据类型,信号名,方向\n";
+    oss << "数据类型,信号名,含义,方向\n";
     for (const CommSignal& s : kukaWeldCommSignals()) {
-        oss << s.type << ',' << s.name << ',' << commDirectionName(s.direction) << '\n';
+        oss << s.type << ',' << s.name << ',' << csvEscape(s.meaning) << ','
+            << csvEscape(commDirectionName(s.direction)) << '\n';
     }
     return oss.str();
 }
