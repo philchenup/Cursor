@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ETHERNETKRL>
+  <CONFIGURATION>
+    <EXTERNAL>
+      <IP>192.168.1.100</IP>
+      <PORT>54600</PORT>
+      <TYPE>Client</TYPE>
+    </EXTERNAL>
+    <INTERNAL>
+      <ENVIRONMENT>Program</ENVIRONMENT>
+      <BUFFERING Mode="FIFO" Limit="10"/>
+      <ALIVE Set_Flag="2688" Ping="2000" Timeout="6000"/>
+    </INTERNAL>
+  </CONFIGURATION>
+  <RECEIVE>
+    <XML>
+      <ELEMENT Tag="Host_Heartbeat" Type="INT"/>
+      <ELEMENT Tag="Host_Cmd" Type="INT"/>
+      <ELEMENT Tag="Host_CmdSeq" Type="INT"/>
+      <ELEMENT Tag="Seam_Id" Type="INT"/>
+      <ELEMENT Tag="Seam_StartX" Type="REAL"/>
+      <ELEMENT Tag="Seam_StartY" Type="REAL"/>
+      <ELEMENT Tag="Seam_StartZ" Type="REAL"/>
+      <ELEMENT Tag="Seam_EndX" Type="REAL"/>
+      <ELEMENT Tag="Seam_EndY" Type="REAL"/>
+      <ELEMENT Tag="Seam_EndZ" Type="REAL"/>
+      <ELEMENT Tag="Torch_A" Type="REAL"/>
+      <ELEMENT Tag="Torch_B" Type="REAL"/>
+      <ELEMENT Tag="Torch_C" Type="REAL"/>
+      <ELEMENT Tag="Seam_WeldSpeed" Type="REAL"/>
+      <ELEMENT Tag="Seam_WeaveMode" Type="INT"/>
+      <ELEMENT Tag="Seam_WeaveType" Type="INT"/>
+      <ELEMENT Tag="Seam_Amplitude" Type="REAL"/>
+      <ELEMENT Tag="Seam_Chord" Type="REAL"/>
+      <ELEMENT Tag="Laser_Mode" Type="INT"/>
+      <ELEMENT Tag="Laser_LookAhead" Type="REAL"/>
+      <ELEMENT Tag="Laser_SearchRadius" Type="REAL"/>
+      <ELEMENT Tag="Laser_Timeout" Type="INT"/>
+      <ELEMENT Tag="Weld_ArcEnable" Type="INT"/>
+    </XML>
+  </RECEIVE>
+  <SEND>
+    <XML>
+      <ELEMENT Tag="Kuka_Heartbeat" Type="INT"/>
+      <ELEMENT Tag="Kuka_CmdAck" Type="INT"/>
+      <ELEMENT Tag="Kuka_Phase" Type="INT"/>
+      <ELEMENT Tag="Kuka_EStop" Type="INT"/>
+      <ELEMENT Tag="Kuka_MsgId" Type="INT"/>
+      <ELEMENT Tag="Laser_Ready" Type="INT"/>
+      <ELEMENT Tag="Laser_StartValid" Type="INT"/>
+      <ELEMENT Tag="Laser_EndValid" Type="INT"/>
+      <ELEMENT Tag="Laser_Lost" Type="INT"/>
+      <ELEMENT Tag="Found_StartX" Type="REAL"/>
+      <ELEMENT Tag="Found_StartY" Type="REAL"/>
+      <ELEMENT Tag="Found_StartZ" Type="REAL"/>
+      <ELEMENT Tag="Found_EndX" Type="REAL"/>
+      <ELEMENT Tag="Found_EndY" Type="REAL"/>
+      <ELEMENT Tag="Found_EndZ" Type="REAL"/>
+      <ELEMENT Tag="Kuka_JobDone" Type="INT"/>
+    </XML>
+  </SEND>
+</ETHERNETKRL>

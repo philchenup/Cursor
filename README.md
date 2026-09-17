@@ -13,3 +13,17 @@ AIS_Shape* scaled = ScaleAISShapeBy1000(ais);
 // 推荐用 Handle 接管返回值，避免泄漏
 Handle(AIS_Shape) scaledHandle = ScaleAISShapeBy1000(ais);
 ```
+
+## 上位机 ↔ KUKA 焊接通讯表
+
+通讯表仅含焊接总流程必要项（参考起终点、焊枪姿态、焊速、摆动、寻缝命令与找到的点），共 39 项。焊中纠偏走 RSI。
+
+- 规范：[`docs/kuka_weld_comm.md`](docs/kuka_weld_comm.md)
+- 通讯表：[`docs/kuka_weld_comm_table.md`](docs/kuka_weld_comm_table.md) / [`.csv`](docs/kuka_weld_comm_table.csv)
+- EKI：[`kuka/EthernetKRL/WeldHost.xml`](kuka/EthernetKRL/WeldHost.xml)
+
+```bash
+make test
+make docs
+```
+
