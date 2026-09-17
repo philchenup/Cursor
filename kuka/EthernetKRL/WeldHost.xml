@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ETHERNETKRL>
+  <CONFIGURATION>
+    <EXTERNAL>
+      <IP>192.168.1.100</IP>
+      <PORT>54600</PORT>
+      <TYPE>Client</TYPE>
+    </EXTERNAL>
+    <INTERNAL>
+      <ENVIRONMENT>Program</ENVIRONMENT>
+      <BUFFERING Mode="FIFO" Limit="10"/>
+      <ALIVE Set_Flag="2688" Ping="2000" Timeout="6000"/>
+    </INTERNAL>
+  </CONFIGURATION>
+  <RECEIVE>
+    <XML>
+      <ELEMENT Tag="Host/Heartbeat" Type="INT"/>
+      <ELEMENT Tag="Host/Cmd" Type="INT"/>
+      <ELEMENT Tag="Host/CmdSeq" Type="INT"/>
+      <ELEMENT Tag="Host/JobId" Type="INT"/>
+      <ELEMENT Tag="Host/SeamCount" Type="INT"/>
+      <ELEMENT Tag="Host/PassCount" Type="INT"/>
+      <ELEMENT Tag="Host/ToolNo" Type="INT"/>
+      <ELEMENT Tag="Host/BaseNo" Type="INT"/>
+      <ELEMENT Tag="Host/OverridePct" Type="REAL"/>
+      <ELEMENT Tag="Host/ApproachMm" Type="REAL"/>
+      <ELEMENT Tag="Host/RetractMm" Type="REAL"/>
+      <ELEMENT Tag="Host/Seam/Id" Type="INT"/>
+      <ELEMENT Tag="Host/Seam/Start/X" Type="REAL"/>
+      <ELEMENT Tag="Host/Seam/Start/Y" Type="REAL"/>
+      <ELEMENT Tag="Host/Seam/Start/Z" Type="REAL"/>
+      <ELEMENT Tag="Host/Seam/Start/A" Type="REAL"/>
+      <ELEMENT Tag="Host/Seam/Start/B" Type="REAL"/>
+      <ELEMENT Tag="Host/Seam/Start/C" Type="REAL"/>
+      <ELEMENT Tag="Host/Seam/Start/E1" Type="REAL"/>
+      <ELEMENT Tag="Host/Seam/End/X" Type="REAL"/>
+      <ELEMENT Tag="Host/Seam/End/Y" Type="REAL"/>
+      <ELEMENT Tag="Host/Seam/End/Z" Type="REAL"/>
+      <ELEMENT Tag="Host/Seam/End/A" Type="REAL"/>
+      <ELEMENT Tag="Host/Seam/End/B" Type="REAL"/>
+      <ELEMENT Tag="Host/Seam/End/C" Type="REAL"/>
+      <ELEMENT Tag="Host/Seam/End/E1" Type="REAL"/>
+      <ELEMENT Tag="Host/Seam/InsetMm" Type="REAL"/>
+      <ELEMENT Tag="Host/Seam/SpeedMmS" Type="REAL"/>
+      <ELEMENT Tag="Host/Seam/WeaveMode" Type="INT"/>
+      <ELEMENT Tag="Host/Seam/WeaveType" Type="INT"/>
+      <ELEMENT Tag="Host/Seam/AmplitudeMm" Type="REAL"/>
+      <ELEMENT Tag="Host/Seam/ChordMm" Type="REAL"/>
+      <ELEMENT Tag="Host/Seam/MultiMode" Type="INT"/>
+      <ELEMENT Tag="Host/Seam/ThicknessMm" Type="REAL"/>
+      <ELEMENT Tag="Host/Seam/GrooveDeg" Type="REAL"/>
+      <ELEMENT Tag="Host/Seam/FitUpGapMm" Type="REAL"/>
+      <ELEMENT Tag="Host/Seam/PenetrationMm" Type="REAL"/>
+      <ELEMENT Tag="Host/Pass/SeamId" Type="INT"/>
+      <ELEMENT Tag="Host/Pass/Layer" Type="INT"/>
+      <ELEMENT Tag="Host/Pass/LocalIndex" Type="INT"/>
+      <ELEMENT Tag="Host/Pass/Sequence" Type="INT"/>
+      <ELEMENT Tag="Host/Pass/Kind" Type="INT"/>
+      <ELEMENT Tag="Host/Pass/Start/X" Type="REAL"/>
+      <ELEMENT Tag="Host/Pass/Start/Y" Type="REAL"/>
+      <ELEMENT Tag="Host/Pass/Start/Z" Type="REAL"/>
+      <ELEMENT Tag="Host/Pass/Start/A" Type="REAL"/>
+      <ELEMENT Tag="Host/Pass/Start/B" Type="REAL"/>
+      <ELEMENT Tag="Host/Pass/Start/C" Type="REAL"/>
+      <ELEMENT Tag="Host/Pass/Start/E1" Type="REAL"/>
+      <ELEMENT Tag="Host/Pass/End/X" Type="REAL"/>
+      <ELEMENT Tag="Host/Pass/End/Y" Type="REAL"/>
+      <ELEMENT Tag="Host/Pass/End/Z" Type="REAL"/>
+      <ELEMENT Tag="Host/Pass/End/A" Type="REAL"/>
+      <ELEMENT Tag="Host/Pass/End/B" Type="REAL"/>
+      <ELEMENT Tag="Host/Pass/End/C" Type="REAL"/>
+      <ELEMENT Tag="Host/Pass/End/E1" Type="REAL"/>
+      <ELEMENT Tag="Host/Pass/SpeedMmS" Type="REAL"/>
+      <ELEMENT Tag="Host/Traj/Index" Type="INT"/>
+      <ELEMENT Tag="Host/Traj/Count" Type="INT"/>
+      <ELEMENT Tag="Host/Traj/X" Type="REAL"/>
+      <ELEMENT Tag="Host/Traj/Y" Type="REAL"/>
+      <ELEMENT Tag="Host/Traj/Z" Type="REAL"/>
+      <ELEMENT Tag="Host/Traj/A" Type="REAL"/>
+      <ELEMENT Tag="Host/Traj/B" Type="REAL"/>
+      <ELEMENT Tag="Host/Traj/C" Type="REAL"/>
+      <ELEMENT Tag="Host/Traj/E1" Type="REAL"/>
+      <ELEMENT Tag="Host/Traj/SpeedMmS" Type="REAL"/>
+      <ELEMENT Tag="Host/Traj/Flag" Type="INT"/>
+      <ELEMENT Tag="Host/Welder/ArcEnable" Type="INT"/>
+      <ELEMENT Tag="Host/Welder/GasEnable" Type="INT"/>
+      <ELEMENT Tag="Host/Welder/CurrentA" Type="REAL"/>
+      <ELEMENT Tag="Host/Welder/VoltageV" Type="REAL"/>
+      <ELEMENT Tag="Host/Welder/WireMMin" Type="REAL"/>
+      <ELEMENT Tag="Host/Welder/GasPreflowMs" Type="INT"/>
+      <ELEMENT Tag="Host/Welder/GasPostflowMs" Type="INT"/>
+      <ELEMENT Tag="Host/Welder/CraterMs" Type="INT"/>
+    </XML>
+  </RECEIVE>
+  <SEND>
+    <XML>
+      <ELEMENT Tag="Kuka/Heartbeat" Type="INT"/>
+      <ELEMENT Tag="Kuka/CmdAckSeq" Type="INT"/>
+      <ELEMENT Tag="Kuka/Phase" Type="INT"/>
+      <ELEMENT Tag="Kuka/OpMode" Type="INT"/>
+      <ELEMENT Tag="Kuka/ProActive" Type="INT"/>
+      <ELEMENT Tag="Kuka/DrivesOn" Type="INT"/>
+      <ELEMENT Tag="Kuka/EStop" Type="INT"/>
+      <ELEMENT Tag="Kuka/MsgId" Type="INT"/>
+      <ELEMENT Tag="Kuka/SeamId" Type="INT"/>
+      <ELEMENT Tag="Kuka/Layer" Type="INT"/>
+      <ELEMENT Tag="Kuka/PassSeq" Type="INT"/>
+      <ELEMENT Tag="Kuka/TrajIndex" Type="INT"/>
+      <ELEMENT Tag="Kuka/Tcp/X" Type="REAL"/>
+      <ELEMENT Tag="Kuka/Tcp/Y" Type="REAL"/>
+      <ELEMENT Tag="Kuka/Tcp/Z" Type="REAL"/>
+      <ELEMENT Tag="Kuka/Tcp/A" Type="REAL"/>
+      <ELEMENT Tag="Kuka/Tcp/B" Type="REAL"/>
+      <ELEMENT Tag="Kuka/Tcp/C" Type="REAL"/>
+      <ELEMENT Tag="Kuka/Tcp/E1" Type="REAL"/>
+      <ELEMENT Tag="Kuka/ActSpeedMmS" Type="REAL"/>
+      <ELEMENT Tag="Kuka/ArcOn" Type="INT"/>
+      <ELEMENT Tag="Kuka/Collision" Type="INT"/>
+      <ELEMENT Tag="Kuka/DownloadOk" Type="INT"/>
+      <ELEMENT Tag="Kuka/JobDone" Type="INT"/>
+      <ELEMENT Tag="Kuka/ProgressPct" Type="REAL"/>
+    </XML>
+  </SEND>
+</ETHERNETKRL>
