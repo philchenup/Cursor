@@ -1,119 +1,145 @@
 # 上位机 ↔ KUKA 焊接通讯数据结构表
 
-共 101 个信号。命令 Start=6，阶段 Welding=10。
+共 120 个信号。命令 Start=6，阶段 Welding=10。
 
-| 序号 | 分组 | 信号名 | XPath | 方向 | KRL类型 | 字节 | 单位 | 取值 | 工艺步骤 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | 握手控制 | Heartbeat | `Host/Heartbeat` | 上位机→KUKA | INT | 4 | - | 0..2^31-1 | 全程 | 上位机心跳，周期递增，KUKA 用于判断通讯中断 |
-| 2 | 握手控制 | Cmd | `Host/Cmd` | 上位机→KUKA | INT | 4 | - | 0..12 | 作业控制 | 命令字 Idle Reset Download Start Pause Resume Stop ArcOff GoHome AckFault |
-| 3 | 握手控制 | CmdSeq | `Host/CmdSeq` | 上位机→KUKA | INT | 4 | - | 1..2^31-1 | 作业控制 | 命令序号，KUKA 仅在序号变化时执行一次 |
-| 4 | 握手控制 | JobId | `Host/JobId` | 上位机→KUKA | INT | 4 | - | 1..9999 | 下载作业 | 焊接作业号 |
-| 5 | 握手控制 | SeamCount | `Host/SeamCount` | 上位机→KUKA | INT | 4 | - | 1..256 | 下载作业 | 本作业焊缝条数 |
-| 6 | 握手控制 | PassCount | `Host/PassCount` | 上位机→KUKA | INT | 4 | - | 1..1024 | 下载作业 | 本作业焊道总数（单层单道时等于焊缝数） |
-| 7 | 握手控制 | ToolNo | `Host/ToolNo` | 上位机→KUKA | INT | 4 | - | 1..16 | 下载作业 | 焊枪 TCP 对应 $TOOL 编号 |
-| 8 | 握手控制 | BaseNo | `Host/BaseNo` | 上位机→KUKA | INT | 4 | - | 0..32 | 下载作业 | 工件坐标系 $BASE 编号 |
-| 9 | 握手控制 | OverridePct | `Host/OverridePct` | 上位机→KUKA | REAL | 4 | % | 1..100 | 运行 | 建议速度倍率；实际仍受示教器倍率限制 |
-| 10 | 握手控制 | ApproachMm | `Host/ApproachMm` | 上位机→KUKA | REAL | 4 | mm | 0..500 | 接近 | 焊枪沿 TCP -Z 的接近高度 |
-| 11 | 握手控制 | RetractMm | `Host/RetractMm` | 上位机→KUKA | REAL | 4 | mm | 0..500 | 回撤 | 收弧后沿 TCP -Z 的回撤高度 |
-| 12 | 焊缝工艺 | SeamId | `Host/Seam/Id` | 上位机→KUKA | INT | 4 | - | 1..256 | 下载焊缝 | 焊缝序号，对应工艺表「序号」 |
-| 13 | 焊缝工艺 | StartX | `Host/Seam/Start/X` | 上位机→KUKA | REAL | 4 | mm | ±10000 | 下载焊缝 | 原始起点 X（内缩前），对应「起点」 |
-| 14 | 焊缝工艺 | StartY | `Host/Seam/Start/Y` | 上位机→KUKA | REAL | 4 | mm | ±10000 | 下载焊缝 | 原始起点 Y |
-| 15 | 焊缝工艺 | StartZ | `Host/Seam/Start/Z` | 上位机→KUKA | REAL | 4 | mm | ±10000 | 下载焊缝 | 原始起点 Z |
-| 16 | 焊缝工艺 | StartA | `Host/Seam/Start/A` | 上位机→KUKA | REAL | 4 | deg | ±180 | 下载焊缝 | 起点姿态 A（绕 Z） |
-| 17 | 焊缝工艺 | StartB | `Host/Seam/Start/B` | 上位机→KUKA | REAL | 4 | deg | ±180 | 下载焊缝 | 起点姿态 B（绕 Y） |
-| 18 | 焊缝工艺 | StartC | `Host/Seam/Start/C` | 上位机→KUKA | REAL | 4 | deg | ±180 | 下载焊缝 | 起点姿态 C（绕 X） |
-| 19 | 焊缝工艺 | StartE1 | `Host/Seam/Start/E1` | 上位机→KUKA | REAL | 4 | mm | 地轨行程 | 下载焊缝 | 地轨：先对齐焊点 Y，再手臂到位 |
-| 20 | 焊缝工艺 | EndX | `Host/Seam/End/X` | 上位机→KUKA | REAL | 4 | mm | ±10000 | 下载焊缝 | 原始终点 X，对应「终点」 |
-| 21 | 焊缝工艺 | EndY | `Host/Seam/End/Y` | 上位机→KUKA | REAL | 4 | mm | ±10000 | 下载焊缝 | 原始终点 Y |
-| 22 | 焊缝工艺 | EndZ | `Host/Seam/End/Z` | 上位机→KUKA | REAL | 4 | mm | ±10000 | 下载焊缝 | 原始终点 Z |
-| 23 | 焊缝工艺 | EndA | `Host/Seam/End/A` | 上位机→KUKA | REAL | 4 | deg | ±180 | 下载焊缝 | 终点姿态 A |
-| 24 | 焊缝工艺 | EndB | `Host/Seam/End/B` | 上位机→KUKA | REAL | 4 | deg | ±180 | 下载焊缝 | 终点姿态 B |
-| 25 | 焊缝工艺 | EndC | `Host/Seam/End/C` | 上位机→KUKA | REAL | 4 | deg | ±180 | 下载焊缝 | 终点姿态 C |
-| 26 | 焊缝工艺 | EndE1 | `Host/Seam/End/E1` | 上位机→KUKA | REAL | 4 | mm | 地轨行程 | 下载焊缝 | 终点地轨位置，通常与起点 E1 相同 |
-| 27 | 焊缝工艺 | InsetMm | `Host/Seam/InsetMm` | 上位机→KUKA | REAL | 4 | mm | 0..半缝长 | 下载焊缝 | 沿焊缝从起终点各收回，对应「内缩」 |
-| 28 | 焊缝工艺 | SpeedMmS | `Host/Seam/SpeedMmS` | 上位机→KUKA | REAL | 4 | mm/s | 0..1e5 | 焊接 | 焊接速度，对应「焊接速度」，默认 10 mm/s |
-| 29 | 焊缝工艺 | WeaveMode | `Host/Seam/WeaveMode` | 上位机→KUKA | INT | 4 | - | 0直线 1摆动 | 焊接 | 对应「摆动方式」 |
-| 30 | 焊缝工艺 | WeaveType | `Host/Seam/WeaveType` | 上位机→KUKA | INT | 4 | - | 0正弦 1三角 | 摆动焊 | 对应「摆动类型」；直线焊时忽略 |
-| 31 | 焊缝工艺 | AmplitudeMm | `Host/Seam/AmplitudeMm` | 上位机→KUKA | REAL | 4 | mm | 0..1e4 | 摆动焊 | 侧向峰值偏移，对应「幅度」，默认 5 mm |
-| 32 | 焊缝工艺 | ChordMm | `Host/Seam/ChordMm` | 上位机→KUKA | REAL | 4 | mm | >0 | 摆动焊 | 一个摆动周期沿焊缝的长度，对应「弦长」，默认 20 mm |
-| 33 | 焊缝工艺 | MultiMode | `Host/Seam/MultiMode` | 上位机→KUKA | INT | 4 | - | 0单层单道 1多层多道 | 焊接 | 对应「多层多道」 |
-| 34 | 焊缝工艺 | ThicknessMm | `Host/Seam/ThicknessMm` | 上位机→KUKA | REAL | 4 | mm | 0..1e4 | 多层多道 | 板厚，对应「板厚」 |
-| 35 | 焊缝工艺 | GrooveDeg | `Host/Seam/GrooveDeg` | 上位机→KUKA | REAL | 4 | deg | 0..90 | 多层多道 | 坡口角度，对应「坡口角度」 |
-| 36 | 焊缝工艺 | FitUpGapMm | `Host/Seam/FitUpGapMm` | 上位机→KUKA | REAL | 4 | mm | 0..1e3 | 多层多道 | 装配间隙，对应「装配间隙」 |
-| 37 | 焊缝工艺 | PenetrationMm | `Host/Seam/PenetrationMm` | 上位机→KUKA | REAL | 4 | mm | 0..1e4 | 多层多道 | 熔深，对应「熔深」 |
-| 38 | 焊道 | PassSeamId | `Host/Pass/SeamId` | 上位机→KUKA | INT | 4 | - | 1..256 | 下载焊道 | 本焊道所属焊缝 |
-| 39 | 焊道 | PassLayer | `Host/Pass/Layer` | 上位机→KUKA | INT | 4 | - | 1..64 | 下载焊道 | 层号，打底层为 1 |
-| 40 | 焊道 | PassLocal | `Host/Pass/LocalIndex` | 上位机→KUKA | INT | 4 | - | 1..32 | 下载焊道 | 层内道号 |
-| 41 | 焊道 | PassSeq | `Host/Pass/Sequence` | 上位机→KUKA | INT | 4 | - | 1..1024 | 下载焊道 | 全局焊接顺序 |
-| 42 | 焊道 | PassKind | `Host/Pass/Kind` | 上位机→KUKA | INT | 4 | - | 0打底 1填充 2盖面 | 下载焊道 | 焊道类型，决定焊枪倾角与规范 |
-| 43 | 焊道 | PassStartX | `Host/Pass/Start/X` | 上位机→KUKA | REAL | 4 | mm | ±10000 | 下载焊道 | 本焊道起点 X（已含层/道偏移） |
-| 44 | 焊道 | PassStartY | `Host/Pass/Start/Y` | 上位机→KUKA | REAL | 4 | mm | ±10000 | 下载焊道 | 本焊道起点 Y |
-| 45 | 焊道 | PassStartZ | `Host/Pass/Start/Z` | 上位机→KUKA | REAL | 4 | mm | ±10000 | 下载焊道 | 本焊道起点 Z |
-| 46 | 焊道 | PassStartA | `Host/Pass/Start/A` | 上位机→KUKA | REAL | 4 | deg | ±180 | 下载焊道 | 本焊道焊枪姿态 A |
-| 47 | 焊道 | PassStartB | `Host/Pass/Start/B` | 上位机→KUKA | REAL | 4 | deg | ±180 | 下载焊道 | 本焊道焊枪姿态 B |
-| 48 | 焊道 | PassStartC | `Host/Pass/Start/C` | 上位机→KUKA | REAL | 4 | deg | ±180 | 下载焊道 | 本焊道焊枪姿态 C |
-| 49 | 焊道 | PassStartE1 | `Host/Pass/Start/E1` | 上位机→KUKA | REAL | 4 | mm | 地轨行程 | 下载焊道 | 本焊道地轨 |
-| 50 | 焊道 | PassEndX | `Host/Pass/End/X` | 上位机→KUKA | REAL | 4 | mm | ±10000 | 下载焊道 | 本焊道终点 X |
-| 51 | 焊道 | PassEndY | `Host/Pass/End/Y` | 上位机→KUKA | REAL | 4 | mm | ±10000 | 下载焊道 | 本焊道终点 Y |
-| 52 | 焊道 | PassEndZ | `Host/Pass/End/Z` | 上位机→KUKA | REAL | 4 | mm | ±10000 | 下载焊道 | 本焊道终点 Z |
-| 53 | 焊道 | PassEndA | `Host/Pass/End/A` | 上位机→KUKA | REAL | 4 | deg | ±180 | 下载焊道 | 本焊道终点姿态 A |
-| 54 | 焊道 | PassEndB | `Host/Pass/End/B` | 上位机→KUKA | REAL | 4 | deg | ±180 | 下载焊道 | 本焊道终点姿态 B |
-| 55 | 焊道 | PassEndC | `Host/Pass/End/C` | 上位机→KUKA | REAL | 4 | deg | ±180 | 下载焊道 | 本焊道终点姿态 C |
-| 56 | 焊道 | PassEndE1 | `Host/Pass/End/E1` | 上位机→KUKA | REAL | 4 | mm | 地轨行程 | 下载焊道 | 本焊道终点地轨 |
-| 57 | 焊道 | PassSpeedMmS | `Host/Pass/SpeedMmS` | 上位机→KUKA | REAL | 4 | mm/s | 0..1e5 | 焊接 | 本焊道焊接速度，可覆盖焊缝默认速度 |
-| 58 | 轨迹 | TrajIndex | `Host/Traj/Index` | 上位机→KUKA | INT | 4 | - | 0..N-1 | 下载轨迹 | 当前轨迹点序号 |
-| 59 | 轨迹 | TrajCount | `Host/Traj/Count` | 上位机→KUKA | INT | 4 | - | 2..4096 | 下载轨迹 | 本焊道轨迹点总数 |
-| 60 | 轨迹 | TrajX | `Host/Traj/X` | 上位机→KUKA | REAL | 4 | mm | ±10000 | 下载轨迹 | 插值点 X（摆动后 TCP） |
-| 61 | 轨迹 | TrajY | `Host/Traj/Y` | 上位机→KUKA | REAL | 4 | mm | ±10000 | 下载轨迹 | 插值点 Y |
-| 62 | 轨迹 | TrajZ | `Host/Traj/Z` | 上位机→KUKA | REAL | 4 | mm | ±10000 | 下载轨迹 | 插值点 Z |
-| 63 | 轨迹 | TrajA | `Host/Traj/A` | 上位机→KUKA | REAL | 4 | deg | ±180 | 下载轨迹 | 插值点姿态 A |
-| 64 | 轨迹 | TrajB | `Host/Traj/B` | 上位机→KUKA | REAL | 4 | deg | ±180 | 下载轨迹 | 插值点姿态 B |
-| 65 | 轨迹 | TrajC | `Host/Traj/C` | 上位机→KUKA | REAL | 4 | deg | ±180 | 下载轨迹 | 插值点姿态 C |
-| 66 | 轨迹 | TrajE1 | `Host/Traj/E1` | 上位机→KUKA | REAL | 4 | mm | 地轨行程 | 下载轨迹 | 插值点地轨 |
-| 67 | 轨迹 | TrajSpeedMmS | `Host/Traj/SpeedMmS` | 上位机→KUKA | REAL | 4 | mm/s | 0..1e5 | 焊接 | 该点进给速度 |
-| 68 | 轨迹 | TrajFlag | `Host/Traj/Flag` | 上位机→KUKA | INT | 4 | - | bit 掩码 | 起弧/收弧 | bit0=起弧点 bit1=收弧点 bit2=本焊道末点 |
-| 69 | 焊机 | ArcEnable | `Host/Welder/ArcEnable` | 上位机→KUKA | BOOL | 4 | - | 0/1 | 起弧 | 允许起弧；KUKA 在 AtStart 后置位焊机起弧输出 |
-| 70 | 焊机 | GasEnable | `Host/Welder/GasEnable` | 上位机→KUKA | BOOL | 4 | - | 0/1 | 气体 | 允许送气 |
-| 71 | 焊机 | CurrentA | `Host/Welder/CurrentA` | 上位机→KUKA | REAL | 4 | A | 0..500 | 焊接 | 焊接电流设定 |
-| 72 | 焊机 | VoltageV | `Host/Welder/VoltageV` | 上位机→KUKA | REAL | 4 | V | 0..50 | 焊接 | 电弧电压设定 |
-| 73 | 焊机 | WireMMin | `Host/Welder/WireMMin` | 上位机→KUKA | REAL | 4 | m/min | 0..25 | 焊接 | 送丝速度 |
-| 74 | 焊机 | GasPreflowMs | `Host/Welder/GasPreflowMs` | 上位机→KUKA | INT | 4 | ms | 0..5000 | 气体预吹 | 起弧前保护气时间 |
-| 75 | 焊机 | GasPostflowMs | `Host/Welder/GasPostflowMs` | 上位机→KUKA | INT | 4 | ms | 0..5000 | 气体滞后 | 收弧后保护气时间 |
-| 76 | 焊机 | CraterMs | `Host/Welder/CraterMs` | 上位机→KUKA | INT | 4 | ms | 0..2000 | 收弧 | 填弧坑时间 |
-| 77 | 状态回传 | KukaHeartbeat | `Kuka/Heartbeat` | KUKA→上位机 | INT | 4 | - | 0..2^31-1 | 全程 | 机器人心跳 |
-| 78 | 状态回传 | CmdAckSeq | `Kuka/CmdAckSeq` | KUKA→上位机 | INT | 4 | - | 0..2^31-1 | 作业控制 | 已接受/已执行的命令序号 |
-| 79 | 状态回传 | Phase | `Kuka/Phase` | KUKA→上位机 | INT | 4 | - | 0..18 | 全程 | 工艺阶段：地轨/接近/到位/预吹/起弧/焊接/收弧/回撤/回Home/故障 |
-| 80 | 状态回传 | OpMode | `Kuka/OpMode` | KUKA→上位机 | INT | 4 | - | 0T1 1T2 2AUT 3EXT | 联机 | 运行模式，正式焊接应为 EXT |
-| 81 | 状态回传 | ProActive | `Kuka/ProActive` | KUKA→上位机 | BOOL | 4 | - | 0/1 | 联机 | 解释器程序正在运行 |
-| 82 | 状态回传 | DrivesOn | `Kuka/DrivesOn` | KUKA→上位机 | BOOL | 4 | - | 0/1 | 联机 | 驱动使能 |
-| 83 | 状态回传 | EStop | `Kuka/EStop` | KUKA→上位机 | BOOL | 4 | - | 0/1 | 安全 | 急停 |
-| 84 | 状态回传 | MsgId | `Kuka/MsgId` | KUKA→上位机 | INT | 4 | - | 0=无 | 故障 | KUKA 报警号或自定义故障码 |
-| 85 | 状态回传 | FbSeamId | `Kuka/SeamId` | KUKA→上位机 | INT | 4 | - | 0..256 | 焊接 | 当前焊缝 |
-| 86 | 状态回传 | FbLayer | `Kuka/Layer` | KUKA→上位机 | INT | 4 | - | 0..64 | 多层多道 | 当前层 |
-| 87 | 状态回传 | FbPassSeq | `Kuka/PassSeq` | KUKA→上位机 | INT | 4 | - | 0..1024 | 多层多道 | 当前焊道全局序号 |
-| 88 | 状态回传 | FbTrajIndex | `Kuka/TrajIndex` | KUKA→上位机 | INT | 4 | - | 0..N | 焊接 | 当前轨迹点 |
-| 89 | 状态回传 | TcpX | `Kuka/Tcp/X` | KUKA→上位机 | REAL | 4 | mm | ±10000 | 全程 | 实际 TCP X |
-| 90 | 状态回传 | TcpY | `Kuka/Tcp/Y` | KUKA→上位机 | REAL | 4 | mm | ±10000 | 全程 | 实际 TCP Y |
-| 91 | 状态回传 | TcpZ | `Kuka/Tcp/Z` | KUKA→上位机 | REAL | 4 | mm | ±10000 | 全程 | 实际 TCP Z |
-| 92 | 状态回传 | TcpA | `Kuka/Tcp/A` | KUKA→上位机 | REAL | 4 | deg | ±180 | 全程 | 实际姿态 A |
-| 93 | 状态回传 | TcpB | `Kuka/Tcp/B` | KUKA→上位机 | REAL | 4 | deg | ±180 | 全程 | 实际姿态 B |
-| 94 | 状态回传 | TcpC | `Kuka/Tcp/C` | KUKA→上位机 | REAL | 4 | deg | ±180 | 全程 | 实际姿态 C |
-| 95 | 状态回传 | TcpE1 | `Kuka/Tcp/E1` | KUKA→上位机 | REAL | 4 | mm | 地轨行程 | 全程 | 实际地轨 |
-| 96 | 状态回传 | ActSpeedMmS | `Kuka/ActSpeedMmS` | KUKA→上位机 | REAL | 4 | mm/s | ≥0 | 焊接 | 实际焊接速度 |
-| 97 | 状态回传 | ArcOn | `Kuka/ArcOn` | KUKA→上位机 | BOOL | 4 | - | 0/1 | 起弧 | 焊机起弧成功反馈 |
-| 98 | 状态回传 | Collision | `Kuka/Collision` | KUKA→上位机 | BOOL | 4 | - | 0/1 | 安全 | 碰撞/力矩超限 |
-| 99 | 状态回传 | DownloadOk | `Kuka/DownloadOk` | KUKA→上位机 | BOOL | 4 | - | 0/1 | 下载作业 | 作业/焊缝/焊道/轨迹下载完成 |
-| 100 | 状态回传 | JobDone | `Kuka/JobDone` | KUKA→上位机 | BOOL | 4 | - | 0/1 | 作业完成 | 全部焊缝焊完并已回 Home |
-| 101 | 状态回传 | ProgressPct | `Kuka/ProgressPct` | KUKA→上位机 | REAL | 4 | % | 0..100 | 全程 | 当前作业进度 |
+## 上位机 → KUKA
+
+| 数据类型 | 信号名 |
+| --- | --- |
+| FLOAT32 | Extern_Speed |
+| FLOAT32 | Extern_Acc |
+| FLOAT32 | Robot_Speed |
+| FLOAT32 | Robot_Acc |
+| FLOAT32 | Extern_E1 |
+| FLOAT32 | Extern_E2 |
+| FLOAT32 | Extern_E3 |
+| FLOAT32 | Robot_X |
+| FLOAT32 | Robot_Y |
+| FLOAT32 | Robot_Z |
+| FLOAT32 | Robot_A |
+| FLOAT32 | Robot_B |
+| FLOAT32 | Robot_C |
+| FLOAT32 | Robot_J1 |
+| FLOAT32 | Robot_J2 |
+| FLOAT32 | Robot_J3 |
+| FLOAT32 | Robot_J4 |
+| FLOAT32 | Robot_J5 |
+| FLOAT32 | Robot_J6 |
+| INT32 | Host_Heartbeat |
+| INT32 | Host_Cmd |
+| INT32 | Host_CmdSeq |
+| INT32 | Job_Id |
+| INT32 | Job_SeamCount |
+| INT32 | Job_PassCount |
+| INT32 | Job_ToolNo |
+| INT32 | Job_BaseNo |
+| FLOAT32 | Job_Override |
+| FLOAT32 | Job_Approach |
+| FLOAT32 | Job_Retract |
+| INT32 | Seam_Id |
+| FLOAT32 | Seam_StartX |
+| FLOAT32 | Seam_StartY |
+| FLOAT32 | Seam_StartZ |
+| FLOAT32 | Seam_StartA |
+| FLOAT32 | Seam_StartB |
+| FLOAT32 | Seam_StartC |
+| FLOAT32 | Seam_EndX |
+| FLOAT32 | Seam_EndY |
+| FLOAT32 | Seam_EndZ |
+| FLOAT32 | Seam_EndA |
+| FLOAT32 | Seam_EndB |
+| FLOAT32 | Seam_EndC |
+| FLOAT32 | Seam_Inset |
+| FLOAT32 | Seam_WeldSpeed |
+| INT32 | Seam_WeaveMode |
+| INT32 | Seam_WeaveType |
+| FLOAT32 | Seam_Amplitude |
+| FLOAT32 | Seam_Chord |
+| INT32 | Seam_MultiMode |
+| FLOAT32 | Seam_Thickness |
+| FLOAT32 | Seam_Groove |
+| FLOAT32 | Seam_FitUpGap |
+| FLOAT32 | Seam_Penetration |
+| INT32 | Pass_SeamId |
+| INT32 | Pass_Layer |
+| INT32 | Pass_Local |
+| INT32 | Pass_Seq |
+| INT32 | Pass_Kind |
+| FLOAT32 | Pass_StartX |
+| FLOAT32 | Pass_StartY |
+| FLOAT32 | Pass_StartZ |
+| FLOAT32 | Pass_StartA |
+| FLOAT32 | Pass_StartB |
+| FLOAT32 | Pass_StartC |
+| FLOAT32 | Pass_EndX |
+| FLOAT32 | Pass_EndY |
+| FLOAT32 | Pass_EndZ |
+| FLOAT32 | Pass_EndA |
+| FLOAT32 | Pass_EndB |
+| FLOAT32 | Pass_EndC |
+| FLOAT32 | Pass_Speed |
+| INT32 | Traj_Index |
+| INT32 | Traj_Count |
+| FLOAT32 | Traj_Speed |
+| INT32 | Traj_Flag |
+| BOOL | Weld_ArcEnable |
+| BOOL | Weld_GasEnable |
+| FLOAT32 | Weld_Current |
+| FLOAT32 | Weld_Voltage |
+| FLOAT32 | Weld_WireSpeed |
+| INT32 | Weld_GasPreflow |
+| INT32 | Weld_GasPostflow |
+| INT32 | Weld_Crater |
+
+## KUKA → 上位机
+
+| 数据类型 | 信号名 |
+| --- | --- |
+| INT32 | Kuka_Heartbeat |
+| INT32 | Kuka_CmdAck |
+| INT32 | Kuka_Phase |
+| INT32 | Kuka_OpMode |
+| BOOL | Kuka_ProActive |
+| BOOL | Kuka_DrivesOn |
+| BOOL | Kuka_EStop |
+| INT32 | Kuka_MsgId |
+| INT32 | Kuka_SeamId |
+| INT32 | Kuka_Layer |
+| INT32 | Kuka_PassSeq |
+| INT32 | Kuka_TrajIndex |
+| FLOAT32 | Act_Extern_Speed |
+| FLOAT32 | Act_Extern_Acc |
+| FLOAT32 | Act_Robot_Speed |
+| FLOAT32 | Act_Robot_Acc |
+| FLOAT32 | Act_Extern_E1 |
+| FLOAT32 | Act_Extern_E2 |
+| FLOAT32 | Act_Extern_E3 |
+| FLOAT32 | Act_Robot_X |
+| FLOAT32 | Act_Robot_Y |
+| FLOAT32 | Act_Robot_Z |
+| FLOAT32 | Act_Robot_A |
+| FLOAT32 | Act_Robot_B |
+| FLOAT32 | Act_Robot_C |
+| FLOAT32 | Act_Robot_J1 |
+| FLOAT32 | Act_Robot_J2 |
+| FLOAT32 | Act_Robot_J3 |
+| FLOAT32 | Act_Robot_J4 |
+| FLOAT32 | Act_Robot_J5 |
+| FLOAT32 | Act_Robot_J6 |
+| BOOL | Kuka_ArcOn |
+| BOOL | Kuka_Collision |
+| BOOL | Kuka_DownloadOk |
+| BOOL | Kuka_JobDone |
+| FLOAT32 | Kuka_Progress |
 
 ## 上位机→KUKA 报文示例
 
 ```xml
-<Host><Heartbeat>1</Heartbeat><Cmd>3</Cmd><CmdSeq>1</CmdSeq><JobId>1</JobId><SeamCount>1</SeamCount><PassCount>1</PassCount><ToolNo>1</ToolNo><BaseNo>0</BaseNo><OverridePct>100</OverridePct><ApproachMm>50</ApproachMm><RetractMm>50</RetractMm><Seam><Id>1</Id><Start><X>0</X><Y>0</Y><Z>0</Z><A>0</A><B>90</B><C>180</C><E1>0</E1></Start><End><X>100</X><Y>0</Y><Z>0</Z><A>0</A><B>90</B><C>180</C><E1>0</E1></End><InsetMm>0</InsetMm><SpeedMmS>10</SpeedMmS><WeaveMode>1</WeaveMode><WeaveType>0</WeaveType><AmplitudeMm>5</AmplitudeMm><ChordMm>20</ChordMm><MultiMode>0</MultiMode><ThicknessMm>0</ThicknessMm><GrooveDeg>0</GrooveDeg><FitUpGapMm>0</FitUpGapMm><PenetrationMm>0</PenetrationMm></Seam><Pass><SeamId>1</SeamId><Layer>1</Layer><LocalIndex>1</LocalIndex><Sequence>1</Sequence><Kind>0</Kind><Start><X>0</X><Y>0</Y><Z>0</Z><A>0</A><B>0</B><C>0</C><E1>0</E1></Start><End><X>0</X><Y>0</Y><Z>0</Z><A>0</A><B>0</B><C>0</C><E1>0</E1></End><SpeedMmS>10</SpeedMmS></Pass><Traj><Index>0</Index><Count>2</Count><X>0</X><Y>0</Y><Z>0</Z><A>0</A><B>0</B><C>0</C><E1>0</E1><SpeedMmS>10</SpeedMmS><Flag>1</Flag></Traj><Welder><ArcEnable>1</ArcEnable><GasEnable>1</GasEnable><CurrentA>0</CurrentA><VoltageV>0</VoltageV><WireMMin>0</WireMMin><GasPreflowMs>200</GasPreflowMs><GasPostflowMs>400</GasPostflowMs><CraterMs>200</CraterMs></Welder></Host>
+<Host><Extern_Speed>0</Extern_Speed><Extern_Acc>0</Extern_Acc><Robot_Speed>10</Robot_Speed><Robot_Acc>0</Robot_Acc><Extern_E1>0</Extern_E1><Extern_E2>0</Extern_E2><Extern_E3>0</Extern_E3><Robot_X>0</Robot_X><Robot_Y>0</Robot_Y><Robot_Z>0</Robot_Z><Robot_A>0</Robot_A><Robot_B>90</Robot_B><Robot_C>180</Robot_C><Robot_J1>0</Robot_J1><Robot_J2>0</Robot_J2><Robot_J3>0</Robot_J3><Robot_J4>0</Robot_J4><Robot_J5>0</Robot_J5><Robot_J6>0</Robot_J6><Host_Heartbeat>1</Host_Heartbeat><Host_Cmd>3</Host_Cmd><Host_CmdSeq>1</Host_CmdSeq><Job_Id>1</Job_Id><Job_SeamCount>1</Job_SeamCount><Job_PassCount>1</Job_PassCount><Job_ToolNo>1</Job_ToolNo><Job_BaseNo>0</Job_BaseNo><Job_Override>100</Job_Override><Job_Approach>50</Job_Approach><Job_Retract>50</Job_Retract><Seam_Id>1</Seam_Id><Seam_StartX>0</Seam_StartX><Seam_StartY>0</Seam_StartY><Seam_StartZ>0</Seam_StartZ><Seam_StartA>0</Seam_StartA><Seam_StartB>90</Seam_StartB><Seam_StartC>180</Seam_StartC><Seam_EndX>100</Seam_EndX><Seam_EndY>0</Seam_EndY><Seam_EndZ>0</Seam_EndZ><Seam_EndA>0</Seam_EndA><Seam_EndB>90</Seam_EndB><Seam_EndC>180</Seam_EndC><Seam_Inset>0</Seam_Inset><Seam_WeldSpeed>10</Seam_WeldSpeed><Seam_WeaveMode>1</Seam_WeaveMode><Seam_WeaveType>0</Seam_WeaveType><Seam_Amplitude>5</Seam_Amplitude><Seam_Chord>20</Seam_Chord><Seam_MultiMode>0</Seam_MultiMode><Seam_Thickness>0</Seam_Thickness><Seam_Groove>0</Seam_Groove><Seam_FitUpGap>0</Seam_FitUpGap><Seam_Penetration>0</Seam_Penetration><Pass_SeamId>1</Pass_SeamId><Pass_Layer>1</Pass_Layer><Pass_Local>1</Pass_Local><Pass_Seq>1</Pass_Seq><Pass_Kind>0</Pass_Kind><Pass_StartX>0</Pass_StartX><Pass_StartY>0</Pass_StartY><Pass_StartZ>0</Pass_StartZ><Pass_StartA>0</Pass_StartA><Pass_StartB>0</Pass_StartB><Pass_StartC>0</Pass_StartC><Pass_EndX>0</Pass_EndX><Pass_EndY>0</Pass_EndY><Pass_EndZ>0</Pass_EndZ><Pass_EndA>0</Pass_EndA><Pass_EndB>0</Pass_EndB><Pass_EndC>0</Pass_EndC><Pass_Speed>10</Pass_Speed><Traj_Index>0</Traj_Index><Traj_Count>2</Traj_Count><Traj_Speed>10</Traj_Speed><Traj_Flag>1</Traj_Flag><Weld_ArcEnable>1</Weld_ArcEnable><Weld_GasEnable>1</Weld_GasEnable><Weld_Current>0</Weld_Current><Weld_Voltage>0</Weld_Voltage><Weld_WireSpeed>0</Weld_WireSpeed><Weld_GasPreflow>200</Weld_GasPreflow><Weld_GasPostflow>400</Weld_GasPostflow><Weld_Crater>200</Weld_Crater></Host>
 ```
 
 ## KUKA→上位机 报文示例
 
 ```xml
-<Kuka><Heartbeat>1</Heartbeat><CmdAckSeq>0</CmdAckSeq><Phase>4</Phase><OpMode>3</OpMode><ProActive>1</ProActive><DrivesOn>1</DrivesOn><EStop>0</EStop><MsgId>0</MsgId><SeamId>0</SeamId><Layer>0</Layer><PassSeq>0</PassSeq><TrajIndex>0</TrajIndex><Tcp><X>0</X><Y>0</Y><Z>0</Z><A>0</A><B>0</B><C>0</C><E1>0</E1></Tcp><ActSpeedMmS>0</ActSpeedMmS><ArcOn>0</ArcOn><Collision>0</Collision><DownloadOk>1</DownloadOk><JobDone>0</JobDone><ProgressPct>0</ProgressPct></Kuka>
+<Kuka><Kuka_Heartbeat>1</Kuka_Heartbeat><Kuka_CmdAck>0</Kuka_CmdAck><Kuka_Phase>4</Kuka_Phase><Kuka_OpMode>3</Kuka_OpMode><Kuka_ProActive>1</Kuka_ProActive><Kuka_DrivesOn>1</Kuka_DrivesOn><Kuka_EStop>0</Kuka_EStop><Kuka_MsgId>0</Kuka_MsgId><Kuka_SeamId>0</Kuka_SeamId><Kuka_Layer>0</Kuka_Layer><Kuka_PassSeq>0</Kuka_PassSeq><Kuka_TrajIndex>0</Kuka_TrajIndex><Act_Extern_Speed>0</Act_Extern_Speed><Act_Extern_Acc>0</Act_Extern_Acc><Act_Robot_Speed>0</Act_Robot_Speed><Act_Robot_Acc>0</Act_Robot_Acc><Act_Extern_E1>0</Act_Extern_E1><Act_Extern_E2>0</Act_Extern_E2><Act_Extern_E3>0</Act_Extern_E3><Act_Robot_X>0</Act_Robot_X><Act_Robot_Y>0</Act_Robot_Y><Act_Robot_Z>0</Act_Robot_Z><Act_Robot_A>0</Act_Robot_A><Act_Robot_B>0</Act_Robot_B><Act_Robot_C>0</Act_Robot_C><Act_Robot_J1>0</Act_Robot_J1><Act_Robot_J2>0</Act_Robot_J2><Act_Robot_J3>0</Act_Robot_J3><Act_Robot_J4>0</Act_Robot_J4><Act_Robot_J5>0</Act_Robot_J5><Act_Robot_J6>0</Act_Robot_J6><Kuka_ArcOn>0</Kuka_ArcOn><Kuka_Collision>0</Kuka_Collision><Kuka_DownloadOk>1</Kuka_DownloadOk><Kuka_JobDone>0</Kuka_JobDone><Kuka_Progress>0</Kuka_Progress></Kuka>
 ```

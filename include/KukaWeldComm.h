@@ -101,6 +101,29 @@ struct KukaPose {
     float e1 = 0.f;  ///< mm，外部轴/地轨
 };
 
+/// 与 PLC/示教器通讯表一致的运动字：外部轴速度加速度、机器人速度加速度、E1–E3、XYZABC、J1–J6。
+struct MotionBlock {
+    float extern_speed = 0.f;
+    float extern_acc = 0.f;
+    float robot_speed = 0.f;
+    float robot_acc = 0.f;
+    float e1 = 0.f;
+    float e2 = 0.f;
+    float e3 = 0.f;
+    float x = 0.f;
+    float y = 0.f;
+    float z = 0.f;
+    float a = 0.f;
+    float b = 0.f;
+    float c = 0.f;
+    float j1 = 0.f;
+    float j2 = 0.f;
+    float j3 = 0.f;
+    float j4 = 0.f;
+    float j5 = 0.f;
+    float j6 = 0.f;
+};
+
 struct HostJobHeader {
     int32_t job_id = 0;
     int32_t seam_count = 0;
@@ -166,6 +189,7 @@ struct HostCyclic {
     HostCmd cmd = HostCmd::Idle;
     int32_t cmd_seq = 0;
     HostJobHeader job;
+    MotionBlock motion;
     SeamRecipe seam;
     PassRecipe pass;
     TrajPoint traj;
@@ -185,8 +209,7 @@ struct KukaCyclic {
     int32_t layer = 0;
     int32_t pass_seq = 0;
     int32_t traj_index = 0;
-    KukaPose tcp;
-    float act_speed_mm_s = 0.f;
+    MotionBlock motion;
     int32_t arc_on = 0;
     int32_t collision = 0;
     int32_t download_ok = 0;
@@ -200,16 +223,9 @@ struct KukaCyclic {
 
 struct CommSignal {
     int index;                 ///< 序号
-    const char* group;         ///< 分组
-    const char* name;          ///< 信号名
-    const char* xpath;         ///< Ethernet KRL XPath
+    const char* type;          ///< FLOAT32 / INT32 / BOOL
+    const char* name;          ///< 如 Extern_Speed、Robot_X
     CommDirection direction;
-    const char* krl_type;      ///< INT / REAL / BOOL
-    int size_bytes;
-    const char* unit;
-    const char* range;
-    const char* process_step;  ///< 对应焊接流程
-    const char* description;
 };
 
 const std::vector<CommSignal>& kukaWeldCommSignals();

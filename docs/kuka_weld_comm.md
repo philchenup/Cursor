@@ -1,100 +1,91 @@
-# 上位机 ↔ KUKA 焊接通讯规范
+# 上位机 ↔ KUKA 焊接通讯数据表
 
-上位机按焊缝工艺表规划轨迹，通过 **KUKA.Ethernet KRL (EKI)** 与 KR C 控制器交换作业、工艺和状态。机器人作为 TCP **Client** 连接上位机 Server，报文为嵌套 XML，XPath 与通讯表一致。
+表格式与 PLC/示教器映射一致：两列 **数据类型**、**信号名**。运动区前 19 项与现场表相同（`Extern_Speed` … `Robot_J6`），其后为焊接工艺字。
 
-完整 101 行信号表见 [`kuka_weld_comm_table.csv`](kuka_weld_comm_table.csv)，EKI 配置见 [`../kuka/EthernetKRL/WeldHost.xml`](../kuka/EthernetKRL/WeldHost.xml)。C++ 结构在 `include/KukaWeldComm.h`。
+- Markdown：[`kuka_weld_comm_table.md`](kuka_weld_comm_table.md)
+- CSV：[`kuka_weld_comm_table.csv`](kuka_weld_comm_table.csv)
+- EKI：[`../kuka/EthernetKRL/WeldHost.xml`](../kuka/EthernetKRL/WeldHost.xml)
 
-## 1. 焊接流程与通讯阶段
+数据类型：`FLOAT32` / `INT32` / `BOOL`。单位：mm、deg、mm/s、A、V、m/min、ms。
 
-与现有工艺一致：焊缝表给出起终点、内缩、速度、摆动（正弦/三角、幅度、弦长）、多层多道（板厚、坡口角、装配间隙、熔深）；V 坡口规划展开为层/道；运动为地轨对齐焊点 Y → 接近 → 焊接 → 回撤 → 回 Home。
+## 上位机 → KUKA
 
-```
-上位机                              KUKA (EXT)
-  |  心跳 Heartbeat / Heartbeat        |
-  |  DownloadJob → CmdAckSeq           |
-  |  DownloadSeam（工艺表一行）        |
-  |  DownloadPass（层/道，多层时）     |
-  |  DownloadTraj（摆动插值点）        |
-  |  Start                             |
-  |                    RailMove 只动 E1
-  |                    Approach 沿 TCP-Z
-  |                    AtStart 内缩后起点
-  |                    GasPreflow
-  |                    ArcStarting / ArcOn=1
-  |                    Welding 直线或摆动
-  |                    Crater → GasPostflow
-  |                    Retract
-  |                    BetweenPass 下一道/层
-  |                    ReturnHome
-  |                    JobDone=1
-```
-
-异常：`Stop` 立即停运动；`ArcOff` 先收弧再停；急停/碰撞时 `Phase=EStop/Fault`，上位机发 `AckFault` 后才能继续。
-
-## 2. 链路与帧格式
-
-| 项 | 约定 |
-| --- | --- |
-| 物理/协议 | 以太网 TCP，KUKA.Ethernet KRL |
-| 角色 | 上位机 Server `192.168.1.100:54600`，KUKA Client |
-| 循环周期 | 状态/命令 20–50 ms；轨迹可在 Start 前一次性下载 |
-| 单位 | mm、deg（KUKA ABC）、mm/s、A、V、m/min、ms |
-| 位姿 | `E6POS`：X Y Z A B C + 地轨 E1 |
-| 轨迹 CSV | 组内 `,` 组间 `;` 结尾 `.`，每点 `X,Y,Z,A,B,C,E1,Speed,Flag` |
-
-命令靠 **CmdSeq 边沿** 触发，避免心跳刷新导致重复执行。KUKA 用 `CmdAckSeq` 回显已接受序号。
-
-### 命令字 `Host/Cmd`
-
-| 值 | 名称 | 含义 |
+| 数据类型 | 信号名 | 工艺含义 |
 | --- | --- | --- |
-| 0 | Idle | 无新命令 |
-| 1 | Reset | 清作业缓冲、关弧、回 Idle |
-| 2 | DownloadJob | 写入作业头（焊缝数、焊道数、TOOL/BASE、接近/回撤） |
-| 3 | DownloadSeam | 写入当前焊缝工艺（对应工艺表一行） |
-| 4 | DownloadPass | 写入当前焊道（层、道、打底/填充/盖面） |
-| 5 | DownloadTraj | 写入当前轨迹点（或配合 CSV 批量） |
-| 6 | Start | 从当前作业第一条未焊焊缝开始 |
-| 7 | Pause | 暂停插补，电弧策略由安全规程决定 |
-| 8 | Resume | 继续 |
-| 9 | Stop | 停止运动 |
-| 10 | ArcOff | 强制收弧 |
-| 11 | GoHome | 回 Home（先手臂后地轨） |
-| 12 | AckFault | 上位机确认故障已处理 |
+| FLOAT32 | Extern_Speed | 外部轴（地轨）速度 |
+| FLOAT32 | Extern_Acc | 外部轴加速度 |
+| FLOAT32 | Robot_Speed | 机器人速度（焊接时即焊速指令） |
+| FLOAT32 | Robot_Acc | 机器人加速度 |
+| FLOAT32 | Extern_E1 | 外部轴 E1 位置 |
+| FLOAT32 | Extern_E2 | 外部轴 E2 |
+| FLOAT32 | Extern_E3 | 外部轴 E3 |
+| FLOAT32 | Robot_X | TCP X |
+| FLOAT32 | Robot_Y | TCP Y |
+| FLOAT32 | Robot_Z | TCP Z |
+| FLOAT32 | Robot_A | 姿态 A |
+| FLOAT32 | Robot_B | 姿态 B |
+| FLOAT32 | Robot_C | 姿态 C |
+| FLOAT32 | Robot_J1 | 关节 1 |
+| FLOAT32 | Robot_J2 | 关节 2 |
+| FLOAT32 | Robot_J3 | 关节 3 |
+| FLOAT32 | Robot_J4 | 关节 4 |
+| FLOAT32 | Robot_J5 | 关节 5 |
+| FLOAT32 | Robot_J6 | 关节 6 |
+| INT32 | Host_Heartbeat | 上位机心跳 |
+| INT32 | Host_Cmd | 命令字 |
+| INT32 | Host_CmdSeq | 命令序号（边沿触发） |
+| INT32 | Job_Id | 作业号 |
+| INT32 | Job_SeamCount | 焊缝条数 |
+| INT32 | Job_PassCount | 焊道总数 |
+| INT32 | Job_ToolNo | $TOOL |
+| INT32 | Job_BaseNo | $BASE |
+| FLOAT32 | Job_Override | 速度倍率 % |
+| FLOAT32 | Job_Approach | 接近高度 |
+| FLOAT32 | Job_Retract | 回撤高度 |
+| INT32 | Seam_Id | 焊缝序号 |
+| FLOAT32 | Seam_StartX … Seam_StartC | 工艺表起点（内缩前） |
+| FLOAT32 | Seam_EndX … Seam_EndC | 工艺表终点 |
+| FLOAT32 | Seam_Inset | 内缩 |
+| FLOAT32 | Seam_WeldSpeed | 焊接速度 |
+| INT32 | Seam_WeaveMode | 0 直线焊 / 1 摆动焊 |
+| INT32 | Seam_WeaveType | 0 正弦 / 1 三角 |
+| FLOAT32 | Seam_Amplitude | 摆动幅度 |
+| FLOAT32 | Seam_Chord | 摆动弦长 |
+| INT32 | Seam_MultiMode | 0 单层单道 / 1 多层多道 |
+| FLOAT32 | Seam_Thickness | 板厚 |
+| FLOAT32 | Seam_Groove | 坡口角度 |
+| FLOAT32 | Seam_FitUpGap | 装配间隙 |
+| FLOAT32 | Seam_Penetration | 熔深 |
+| INT32 | Pass_SeamId / Layer / Local / Seq / Kind | 焊道：所属焊缝、层、道、顺序、0打底1填充2盖面 |
+| FLOAT32 | Pass_StartX … Pass_EndC | 本焊道起终点 |
+| FLOAT32 | Pass_Speed | 本焊道速度 |
+| INT32 | Traj_Index / Traj_Count / Traj_Flag | 轨迹点序号、总数、起弧/收弧标志 |
+| FLOAT32 | Traj_Speed | 该点进给 |
+| BOOL | Weld_ArcEnable / Weld_GasEnable | 允许起弧 / 送气 |
+| FLOAT32 | Weld_Current / Weld_Voltage / Weld_WireSpeed | 电流、电压、送丝 |
+| INT32 | Weld_GasPreflow / Weld_GasPostflow / Weld_Crater | 预吹、滞后、填弧坑 ms |
 
-### 工艺阶段 `Kuka/Phase`
+完整逐行表见 Markdown/CSV（含 `Seam_StartX` 等到每一个 FLOAT32）。
 
-Disconnected → Connected → Idle → Downloading → Ready → RailMove → Approach → AtStart → GasPreflow → ArcStarting → Welding → Crater → GasPostflow → Retract → BetweenPass（循环）→ ReturnHome → JobDone。Fault / EStop 可从任意阶段进入。
+## KUKA → 上位机
 
-## 3. 与焊缝工艺表的字段映射
+实际运动字与指令区同布局，名称加 `Act_` 前缀，避免与指令区重名。
 
-| 工艺表列 | 通讯信号 | 默认 |
+| 数据类型 | 信号名 | 工艺含义 |
 | --- | --- | --- |
-| 序号 | `Host/Seam/Id` | — |
-| 起点 | `Host/Seam/Start/{X,Y,Z,A,B,C,E1}` | 内缩前原始点 |
-| 终点 | `Host/Seam/End/{X,Y,Z,A,B,C,E1}` | 内缩前原始点 |
-| 内缩 | `Host/Seam/InsetMm` | 0 mm，沿焊缝两端各收回 |
-| 焊接速度 | `Host/Seam/SpeedMmS` | 10 mm/s |
-| 摆动方式 | `Host/Seam/WeaveMode` | 0 直线焊 / 1 摆动焊 |
-| 摆动类型 | `Host/Seam/WeaveType` | 0 正弦 / 1 三角 |
-| 幅度 | `Host/Seam/AmplitudeMm` | 5 mm |
-| 弦长 | `Host/Seam/ChordMm` | 20 mm（一个摆动周期沿焊缝长度） |
-| 多层多道 | `Host/Seam/MultiMode` | 0 单层单道 / 1 多层多道 |
-| 板厚 | `Host/Seam/ThicknessMm` | 规划层数用 |
-| 坡口角度 | `Host/Seam/GrooveDeg` | 0–90° |
-| 装配间隙 | `Host/Seam/FitUpGapMm` | — |
-| 熔深 | `Host/Seam/PenetrationMm` | — |
+| INT32 | Kuka_Heartbeat | 机器人心跳 |
+| INT32 | Kuka_CmdAck | 已接受命令序号 |
+| INT32 | Kuka_Phase | 工艺阶段（地轨/接近/焊接/收弧/回Home/故障） |
+| INT32 | Kuka_OpMode | 0T1 1T2 2AUT 3EXT |
+| BOOL | Kuka_ProActive / DrivesOn / EStop | 程序运行、使能、急停 |
+| INT32 | Kuka_MsgId | 报警号 |
+| INT32 | Kuka_SeamId / Layer / PassSeq / TrajIndex | 当前焊缝/层/道/轨迹点 |
+| FLOAT32 | Act_Extern_Speed … Act_Robot_J6 | 实际速度、外部轴、TCP、关节（19 字，同指令区） |
+| BOOL | Kuka_ArcOn / Collision / DownloadOk / JobDone | 起弧反馈、碰撞、下载完成、作业完成 |
+| FLOAT32 | Kuka_Progress | 进度 % |
 
-单层单道：一条焊缝对应一条焊道，轨迹由起终点（内缩后）直线或摆动插值。多层多道：上位机按板厚/坡口/间隙/熔深展开焊道，再逐条 `DownloadPass` + 轨迹。
+## 流程
 
-`TrajFlag`：bit0 起弧点，bit1 收弧点，bit2 本焊道末点。
+下载作业/焊缝/焊道 → `Host_Cmd=Start` → 写 `Extern_E1` 地轨对齐 → `Robot_X…C` 接近与焊接 → `Weld_ArcEnable` 起弧 → 沿轨迹更新 `Robot_*` → 收弧回撤 → `Kuka_JobDone`。
 
-## 4. 数据结构（C++）
-
-循环报文打包为 `HostCyclic` / `KukaCyclic`，内含作业头、当前焊缝、当前焊道、当前轨迹点、焊机规范。下载阶段通过切换 `Cmd` 与对应子结构刷新同一 XML 骨架，避免 EKI 多套配置。
-
-焊机电流/电压/送丝经 KUKA 数字量/模拟量转发焊机；上位机只写设定，起弧成功看 `Kuka/ArcOn`。
-
-## 5. 完整通讯表
-
-见 [`kuka_weld_comm_table.md`](kuka_weld_comm_table.md)（Markdown）或 [`kuka_weld_comm_table.csv`](kuka_weld_comm_table.csv)（Excel）。信号分为六组：**握手控制、焊缝工艺、焊道、轨迹、焊机、状态回传**。
+`Host_Cmd`：0 Idle，1 Reset，2–5 Download*，6 Start，7 Pause，8 Resume，9 Stop，10 ArcOff，11 GoHome，12 AckFault。

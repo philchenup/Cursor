@@ -50,6 +50,12 @@ int main(int argc, char** argv)
     demo.seam.speed_mm_s = 10.f;
     demo.seam.weave_mode = WeaveMode::Weave;
     demo.seam.weave_type = WeaveType::Sine;
+    demo.motion.robot_speed = 10.f;
+    demo.motion.x = 0.f;
+    demo.motion.y = 0.f;
+    demo.motion.z = 0.f;
+    demo.motion.b = 90.f;
+    demo.motion.c = 180.f;
     demo.pass.seam_id = 1;
     demo.pass.sequence = 1;
     demo.traj.count = 2;
