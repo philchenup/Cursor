@@ -19,7 +19,7 @@ FLOAT32,Robot_J4,关节 4 角度指令 deg,上位机→KUKA
 FLOAT32,Robot_J5,关节 5 角度指令 deg,上位机→KUKA
 FLOAT32,Robot_J6,关节 6 角度指令 deg,上位机→KUKA
 INT32,Host_Heartbeat,上位机心跳，周期递增,上位机→KUKA
-INT32,Host_Cmd,命令字：0空闲 1复位 2-5下载 6启动 7暂停 8继续 9停止 10收弧 11回Home 12故障确认,上位机→KUKA
+INT32,Host_Cmd,命令字：0空闲 1复位 2-5下载 6自动全流程 7暂停 8继续 9停止 10收弧 11回Home 12故障确认 13寻起点 14TCP到找到的起点 15寻终点 16焊/移动到找到的终点,上位机→KUKA
 INT32,Host_CmdSeq,命令序号，KUKA 仅在变化时执行一次,上位机→KUKA
 INT32,Job_Id,焊接作业号,上位机→KUKA
 INT32,Job_SeamCount,本作业焊缝条数,上位机→KUKA
@@ -30,18 +30,18 @@ FLOAT32,Job_Override,建议速度倍率 %,上位机→KUKA
 FLOAT32,Job_Approach,接近高度 mm（沿 TCP -Z）,上位机→KUKA
 FLOAT32,Job_Retract,收弧后回撤高度 mm,上位机→KUKA
 INT32,Seam_Id,焊缝序号，对应工艺表序号,上位机→KUKA
-FLOAT32,Seam_StartX,焊缝原始起点 X mm（内缩前）,上位机→KUKA
-FLOAT32,Seam_StartY,焊缝原始起点 Y mm,上位机→KUKA
-FLOAT32,Seam_StartZ,焊缝原始起点 Z mm,上位机→KUKA
-FLOAT32,Seam_StartA,焊缝起点姿态 A deg,上位机→KUKA
-FLOAT32,Seam_StartB,焊缝起点姿态 B deg,上位机→KUKA
-FLOAT32,Seam_StartC,焊缝起点姿态 C deg,上位机→KUKA
-FLOAT32,Seam_EndX,焊缝原始终点 X mm（内缩前）,上位机→KUKA
-FLOAT32,Seam_EndY,焊缝原始终点 Y mm,上位机→KUKA
-FLOAT32,Seam_EndZ,焊缝原始终点 Z mm,上位机→KUKA
-FLOAT32,Seam_EndA,焊缝终点姿态 A deg,上位机→KUKA
-FLOAT32,Seam_EndB,焊缝终点姿态 B deg,上位机→KUKA
-FLOAT32,Seam_EndC,焊缝终点姿态 C deg,上位机→KUKA
+FLOAT32,Seam_StartX,焊缝参考起点 X mm（内缩前，寻缝搜索中心）,上位机→KUKA
+FLOAT32,Seam_StartY,焊缝参考起点 Y mm,上位机→KUKA
+FLOAT32,Seam_StartZ,焊缝参考起点 Z mm,上位机→KUKA
+FLOAT32,Seam_StartA,焊缝参考起点姿态 A deg,上位机→KUKA
+FLOAT32,Seam_StartB,焊缝参考起点姿态 B deg,上位机→KUKA
+FLOAT32,Seam_StartC,焊缝参考起点姿态 C deg,上位机→KUKA
+FLOAT32,Seam_EndX,焊缝参考终点 X mm（内缩前，寻缝搜索中心）,上位机→KUKA
+FLOAT32,Seam_EndY,焊缝参考终点 Y mm,上位机→KUKA
+FLOAT32,Seam_EndZ,焊缝参考终点 Z mm,上位机→KUKA
+FLOAT32,Seam_EndA,焊缝参考终点姿态 A deg,上位机→KUKA
+FLOAT32,Seam_EndB,焊缝参考终点姿态 B deg,上位机→KUKA
+FLOAT32,Seam_EndC,焊缝参考终点姿态 C deg,上位机→KUKA
 FLOAT32,Seam_Inset,内缩 mm，沿焊缝从起终点各收回,上位机→KUKA
 FLOAT32,Seam_WeldSpeed,焊接速度 mm/s，对应工艺表焊接速度,上位机→KUKA
 INT32,Seam_WeaveMode,摆动方式：0 直线焊  1 摆动焊,上位机→KUKA
@@ -83,9 +83,19 @@ FLOAT32,Weld_WireSpeed,送丝速度 m/min,上位机→KUKA
 INT32,Weld_GasPreflow,起弧前气体预吹时间 ms,上位机→KUKA
 INT32,Weld_GasPostflow,收弧后气体滞后时间 ms,上位机→KUKA
 INT32,Weld_Crater,填弧坑时间 ms,上位机→KUKA
+FLOAT32,Torch_A,焊枪姿态 A deg；寻到焊缝点后按此姿态 TCP 到位,上位机→KUKA
+FLOAT32,Torch_B,焊枪姿态 B deg,上位机→KUKA
+FLOAT32,Torch_C,焊枪姿态 C deg,上位机→KUKA
+INT32,Laser_Mode,0 不用激光按参考点焊  1 寻缝后到位  2 寻缝+焊中RSI跟踪,上位机→KUKA
+BOOL,Laser_FindEnable,允许激光寻缝（起点/终点）,上位机→KUKA
+BOOL,Laser_TrackEnable,允许焊中 RSI 纠偏（纠偏闭环不走本表）,上位机→KUKA
+FLOAT32,Laser_LookAhead,激光超前距 mm（焊枪前方寻缝）,上位机→KUKA
+FLOAT32,Laser_SearchRadius,相对参考点的寻缝范围 mm,上位机→KUKA
+FLOAT32,Laser_SearchSpeed,寻缝移动速度 mm/s,上位机→KUKA
+INT32,Laser_Timeout,单次寻缝超时 ms,上位机→KUKA
 INT32,Kuka_Heartbeat,机器人心跳,KUKA→上位机
 INT32,Kuka_CmdAck,已接受的命令序号,KUKA→上位机
-INT32,Kuka_Phase,工艺阶段：地轨/接近/到位/预吹/起弧/焊接/收弧/回撤/回Home/故障,KUKA→上位机
+INT32,Kuka_Phase,工艺阶段：地轨/接近/寻缝/找到起点/TCP到位/寻终点/焊接到终点/收弧/回Home/故障,KUKA→上位机
 INT32,Kuka_OpMode,运行模式：0 T1  1 T2  2 AUT  3 EXT,KUKA→上位机
 BOOL,Kuka_ProActive,解释器程序正在运行,KUKA→上位机
 BOOL,Kuka_DrivesOn,驱动已使能,KUKA→上位机
@@ -119,3 +129,23 @@ BOOL,Kuka_Collision,碰撞或力矩超限,KUKA→上位机
 BOOL,Kuka_DownloadOk,作业/焊缝/焊道/轨迹下载完成,KUKA→上位机
 BOOL,Kuka_JobDone,全部焊缝焊完并已回 Home,KUKA→上位机
 FLOAT32,Kuka_Progress,当前作业进度 %,KUKA→上位机
+BOOL,Laser_Ready,激光寻缝器就绪,KUKA→上位机
+BOOL,Laser_Finding,正在寻缝,KUKA→上位机
+BOOL,Laser_StartValid,已找到焊缝起点，Found_Start* 有效,KUKA→上位机
+BOOL,Laser_EndValid,已找到焊缝终点，Found_End* 有效,KUKA→上位机
+BOOL,Laser_Lost,寻缝丢失或跟踪丢失,KUKA→上位机
+INT32,Laser_ErrId,激光故障码，0 表示正常,KUKA→上位机
+FLOAT32,Found_StartX,激光找到的焊缝起点 X mm,KUKA→上位机
+FLOAT32,Found_StartY,激光找到的焊缝起点 Y mm,KUKA→上位机
+FLOAT32,Found_StartZ,激光找到的焊缝起点 Z mm,KUKA→上位机
+FLOAT32,Found_StartA,到位用焊枪姿态 A（通常回传 Torch_A）,KUKA→上位机
+FLOAT32,Found_StartB,到位用焊枪姿态 B,KUKA→上位机
+FLOAT32,Found_StartC,到位用焊枪姿态 C,KUKA→上位机
+FLOAT32,Found_EndX,激光找到的焊缝终点 X mm,KUKA→上位机
+FLOAT32,Found_EndY,激光找到的焊缝终点 Y mm,KUKA→上位机
+FLOAT32,Found_EndZ,激光找到的焊缝终点 Z mm,KUKA→上位机
+FLOAT32,Found_EndA,终点焊枪姿态 A,KUKA→上位机
+FLOAT32,Found_EndB,终点焊枪姿态 B,KUKA→上位机
+FLOAT32,Found_EndC,终点焊枪姿态 C,KUKA→上位机
+FLOAT32,Laser_dY,RSI 横向纠偏监视值 mm（闭环不走本表）,KUKA→上位机
+FLOAT32,Laser_dZ,RSI 高度纠偏监视值 mm（闭环不走本表）,KUKA→上位机

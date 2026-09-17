@@ -8,8 +8,8 @@
 /**
  * 上位机 ↔ KUKA 焊接通讯数据模型。
  *
- * 字段与焊缝工艺表（起点/终点/内缩/焊接速度/摆动/多层多道）以及
- * V 坡口多层多道焊道规划对齐，供 Ethernet KRL XML 与 CSV 通讯表使用。
+ * 上位机编排寻缝与焊接：参考起终点、焊枪姿态、焊速、摆动；
+ * 激光经 RSI 找点后 TCP 到位并焊到找到的终点。纠偏闭环不走 EKI。
  */
 
 // ---------------------------------------------------------------------------
@@ -23,13 +23,17 @@ enum class HostCmd : int32_t {
     DownloadSeam = 3,
     DownloadPass = 4,
     DownloadTraj = 5,
-    Start = 6,
+    Start = 6,              ///< 自动：寻起点→TCP到位→寻终点→焊到终点
     Pause = 7,
     Resume = 8,
     Stop = 9,
     ArcOff = 10,
     GoHome = 11,
-    AckFault = 12
+    AckFault = 12,
+    FindStart = 13,         ///< 激光在焊枪前方寻焊缝起点
+    MoveToFoundStart = 14,  ///< TCP 直线移动到已找到的起点
+    FindEnd = 15,           ///< 激光寻焊缝终点
+    WeldToFoundEnd = 16     ///< 从当前点插补到已找到的终点（Weld_ArcEnable=1 则焊接）
 };
 
 enum class KukaPhase : int32_t {
@@ -51,7 +55,20 @@ enum class KukaPhase : int32_t {
     ReturnHome = 15,
     JobDone = 16,
     Fault = 17,
-    EStop = 18
+    EStop = 18,
+    SearchApproach = 19,     ///< 到寻缝位（激光超前对准参考起点）
+    FindingStart = 20,       ///< 正在寻起点
+    FoundStart = 21,         ///< 起点已找到
+    MoveToFoundStart = 22,   ///< TCP 正在去找到的起点
+    FindingEnd = 23,         ///< 正在寻终点
+    FoundEnd = 24,           ///< 终点已找到
+    WeldToFoundEnd = 25      ///< 正在焊/移动到找到的终点
+};
+
+enum class LaserMode : int32_t {
+    Off = 0,           ///< 不用激光，按参考起终点焊
+    Find = 1,          ///< 寻缝：找到起点后到位，再找到终点后过去
+    FindAndTrack = 2   ///< 寻缝 + 焊中 RSI 纠偏
 };
 
 enum class WeaveMode : int32_t {
@@ -135,11 +152,14 @@ struct HostJobHeader {
     float retract_mm = 50.f;
 };
 
-/// 与焊缝工艺表一行对应：序号、起点、终点、内缩、速度、摆动、多层多道。
+/// 与焊缝工艺表一行对应：参考起终点、焊枪姿态、内缩、速度、摆动、多层多道。
 struct SeamRecipe {
     int32_t seam_id = 0;
-    KukaPose start;
-    KukaPose end;
+    KukaPose start;            ///< 参考起点（内缩前）
+    KukaPose end;              ///< 参考终点
+    float torch_a = 0.f;       ///< 焊枪姿态 A deg，寻到点后按此姿态到位
+    float torch_b = 90.f;
+    float torch_c = 180.f;
     float inset_mm = 0.f;
     float speed_mm_s = 10.f;
     WeaveMode weave_mode = WeaveMode::Straight;
@@ -151,6 +171,31 @@ struct SeamRecipe {
     float groove_deg = 0.f;
     float fitup_gap_mm = 0.f;
     float penetration_mm = 0.f;
+};
+
+/// 激光寻缝（EKI 下发）与 RSI 跟踪使能；纠偏闭环不走本表。
+struct LaserRecipe {
+    LaserMode mode = LaserMode::Find;
+    int32_t find_enable = 0;
+    int32_t track_enable = 0;
+    float look_ahead_mm = 30.f;
+    float search_radius_mm = 20.f;
+    float search_speed_mm_s = 20.f;
+    int32_t timeout_ms = 5000;
+};
+
+/// 激光寻缝结果回传（RSI 纠偏量仅监视）。
+struct LaserFeedback {
+    int32_t ready = 0;
+    int32_t finding = 0;
+    int32_t start_valid = 0;
+    int32_t end_valid = 0;
+    int32_t lost = 0;
+    int32_t err_id = 0;
+    KukaPose found_start;
+    KukaPose found_end;
+    float dy = 0.f;
+    float dz = 0.f;
 };
 
 /// V 坡口规划出的一条焊道（层/道序/打底填充盖面）。
@@ -194,6 +239,7 @@ struct HostCyclic {
     PassRecipe pass;
     TrajPoint traj;
     WelderRecipe welder;
+    LaserRecipe laser;
 };
 
 struct KukaCyclic {
@@ -215,6 +261,7 @@ struct KukaCyclic {
     int32_t download_ok = 0;
     int32_t job_done = 0;
     float progress_pct = 0.f;
+    LaserFeedback laser;
 };
 
 // ---------------------------------------------------------------------------

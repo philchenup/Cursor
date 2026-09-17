@@ -16,7 +16,7 @@ Handle(AIS_Shape) scaledHandle = ScaleAISShapeBy1000(ais);
 
 ## 上位机 ↔ KUKA 焊接通讯表
 
-通讯表为三列：**数据类型**（FLOAT32 / INT32 / BOOL）、**信号名**（如 `Extern_Speed`、`Robot_X`）、**含义**。前 19 项为运动字，其后为焊接工艺字，共 120 项。
+通讯表为三列：**数据类型**、**信号名**、**含义**。上位机编排寻缝→TCP 到找到的起点→焊到激光终点；焊中纠偏走 RSI。共 150 项。
 
 - 规范：[`docs/kuka_weld_comm.md`](docs/kuka_weld_comm.md)
 - 通讯表：[`docs/kuka_weld_comm_table.md`](docs/kuka_weld_comm_table.md) / [`.csv`](docs/kuka_weld_comm_table.csv)

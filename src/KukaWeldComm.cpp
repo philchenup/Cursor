@@ -196,7 +196,7 @@ const std::vector<CommSignal>& kukaWeldCommSignals()
         {19, "FLOAT32", "Robot_J6", CommDirection::HostToKuka, "关节 6 角度指令 deg"},
 
         {20, "INT32", "Host_Heartbeat", CommDirection::HostToKuka, "上位机心跳，周期递增"},
-        {21, "INT32", "Host_Cmd", CommDirection::HostToKuka, "命令字：0空闲 1复位 2-5下载 6启动 7暂停 8继续 9停止 10收弧 11回Home 12故障确认"},
+        {21, "INT32", "Host_Cmd", CommDirection::HostToKuka, "命令字：0空闲 1复位 2-5下载 6自动全流程 7暂停 8继续 9停止 10收弧 11回Home 12故障确认 13寻起点 14TCP到找到的起点 15寻终点 16焊/移动到找到的终点"},
         {22, "INT32", "Host_CmdSeq", CommDirection::HostToKuka, "命令序号，KUKA 仅在变化时执行一次"},
         {23, "INT32", "Job_Id", CommDirection::HostToKuka, "焊接作业号"},
         {24, "INT32", "Job_SeamCount", CommDirection::HostToKuka, "本作业焊缝条数"},
@@ -208,18 +208,18 @@ const std::vector<CommSignal>& kukaWeldCommSignals()
         {30, "FLOAT32", "Job_Retract", CommDirection::HostToKuka, "收弧后回撤高度 mm"},
 
         {31, "INT32", "Seam_Id", CommDirection::HostToKuka, "焊缝序号，对应工艺表序号"},
-        {32, "FLOAT32", "Seam_StartX", CommDirection::HostToKuka, "焊缝原始起点 X mm（内缩前）"},
-        {33, "FLOAT32", "Seam_StartY", CommDirection::HostToKuka, "焊缝原始起点 Y mm"},
-        {34, "FLOAT32", "Seam_StartZ", CommDirection::HostToKuka, "焊缝原始起点 Z mm"},
-        {35, "FLOAT32", "Seam_StartA", CommDirection::HostToKuka, "焊缝起点姿态 A deg"},
-        {36, "FLOAT32", "Seam_StartB", CommDirection::HostToKuka, "焊缝起点姿态 B deg"},
-        {37, "FLOAT32", "Seam_StartC", CommDirection::HostToKuka, "焊缝起点姿态 C deg"},
-        {38, "FLOAT32", "Seam_EndX", CommDirection::HostToKuka, "焊缝原始终点 X mm（内缩前）"},
-        {39, "FLOAT32", "Seam_EndY", CommDirection::HostToKuka, "焊缝原始终点 Y mm"},
-        {40, "FLOAT32", "Seam_EndZ", CommDirection::HostToKuka, "焊缝原始终点 Z mm"},
-        {41, "FLOAT32", "Seam_EndA", CommDirection::HostToKuka, "焊缝终点姿态 A deg"},
-        {42, "FLOAT32", "Seam_EndB", CommDirection::HostToKuka, "焊缝终点姿态 B deg"},
-        {43, "FLOAT32", "Seam_EndC", CommDirection::HostToKuka, "焊缝终点姿态 C deg"},
+        {32, "FLOAT32", "Seam_StartX", CommDirection::HostToKuka, "焊缝参考起点 X mm（内缩前，寻缝搜索中心）"},
+        {33, "FLOAT32", "Seam_StartY", CommDirection::HostToKuka, "焊缝参考起点 Y mm"},
+        {34, "FLOAT32", "Seam_StartZ", CommDirection::HostToKuka, "焊缝参考起点 Z mm"},
+        {35, "FLOAT32", "Seam_StartA", CommDirection::HostToKuka, "焊缝参考起点姿态 A deg"},
+        {36, "FLOAT32", "Seam_StartB", CommDirection::HostToKuka, "焊缝参考起点姿态 B deg"},
+        {37, "FLOAT32", "Seam_StartC", CommDirection::HostToKuka, "焊缝参考起点姿态 C deg"},
+        {38, "FLOAT32", "Seam_EndX", CommDirection::HostToKuka, "焊缝参考终点 X mm（内缩前，寻缝搜索中心）"},
+        {39, "FLOAT32", "Seam_EndY", CommDirection::HostToKuka, "焊缝参考终点 Y mm"},
+        {40, "FLOAT32", "Seam_EndZ", CommDirection::HostToKuka, "焊缝参考终点 Z mm"},
+        {41, "FLOAT32", "Seam_EndA", CommDirection::HostToKuka, "焊缝参考终点姿态 A deg"},
+        {42, "FLOAT32", "Seam_EndB", CommDirection::HostToKuka, "焊缝参考终点姿态 B deg"},
+        {43, "FLOAT32", "Seam_EndC", CommDirection::HostToKuka, "焊缝参考终点姿态 C deg"},
         {44, "FLOAT32", "Seam_Inset", CommDirection::HostToKuka, "内缩 mm，沿焊缝从起终点各收回"},
         {45, "FLOAT32", "Seam_WeldSpeed", CommDirection::HostToKuka, "焊接速度 mm/s，对应工艺表焊接速度"},
         {46, "INT32", "Seam_WeaveMode", CommDirection::HostToKuka, "摆动方式：0 直线焊  1 摆动焊"},
@@ -264,43 +264,73 @@ const std::vector<CommSignal>& kukaWeldCommSignals()
         {82, "INT32", "Weld_GasPreflow", CommDirection::HostToKuka, "起弧前气体预吹时间 ms"},
         {83, "INT32", "Weld_GasPostflow", CommDirection::HostToKuka, "收弧后气体滞后时间 ms"},
         {84, "INT32", "Weld_Crater", CommDirection::HostToKuka, "填弧坑时间 ms"},
+        {85, "FLOAT32", "Torch_A", CommDirection::HostToKuka, "焊枪姿态 A deg；寻到焊缝点后按此姿态 TCP 到位"},
+        {86, "FLOAT32", "Torch_B", CommDirection::HostToKuka, "焊枪姿态 B deg"},
+        {87, "FLOAT32", "Torch_C", CommDirection::HostToKuka, "焊枪姿态 C deg"},
+        {88, "INT32", "Laser_Mode", CommDirection::HostToKuka, "0 不用激光按参考点焊  1 寻缝后到位  2 寻缝+焊中RSI跟踪"},
+        {89, "BOOL", "Laser_FindEnable", CommDirection::HostToKuka, "允许激光寻缝（起点/终点）"},
+        {90, "BOOL", "Laser_TrackEnable", CommDirection::HostToKuka, "允许焊中 RSI 纠偏（纠偏闭环不走本表）"},
+        {91, "FLOAT32", "Laser_LookAhead", CommDirection::HostToKuka, "激光超前距 mm（焊枪前方寻缝）"},
+        {92, "FLOAT32", "Laser_SearchRadius", CommDirection::HostToKuka, "相对参考点的寻缝范围 mm"},
+        {93, "FLOAT32", "Laser_SearchSpeed", CommDirection::HostToKuka, "寻缝移动速度 mm/s"},
+        {94, "INT32", "Laser_Timeout", CommDirection::HostToKuka, "单次寻缝超时 ms"},
 
-        {85, "INT32", "Kuka_Heartbeat", CommDirection::KukaToHost, "机器人心跳"},
-        {86, "INT32", "Kuka_CmdAck", CommDirection::KukaToHost, "已接受的命令序号"},
-        {87, "INT32", "Kuka_Phase", CommDirection::KukaToHost, "工艺阶段：地轨/接近/到位/预吹/起弧/焊接/收弧/回撤/回Home/故障"},
-        {88, "INT32", "Kuka_OpMode", CommDirection::KukaToHost, "运行模式：0 T1  1 T2  2 AUT  3 EXT"},
-        {89, "BOOL", "Kuka_ProActive", CommDirection::KukaToHost, "解释器程序正在运行"},
-        {90, "BOOL", "Kuka_DrivesOn", CommDirection::KukaToHost, "驱动已使能"},
-        {91, "BOOL", "Kuka_EStop", CommDirection::KukaToHost, "急停"},
-        {92, "INT32", "Kuka_MsgId", CommDirection::KukaToHost, "报警号，0 表示无报警"},
-        {93, "INT32", "Kuka_SeamId", CommDirection::KukaToHost, "当前焊缝号"},
-        {94, "INT32", "Kuka_Layer", CommDirection::KukaToHost, "当前层号"},
-        {95, "INT32", "Kuka_PassSeq", CommDirection::KukaToHost, "当前焊道全局序号"},
-        {96, "INT32", "Kuka_TrajIndex", CommDirection::KukaToHost, "当前轨迹点序号"},
-        {97, "FLOAT32", "Act_Extern_Speed", CommDirection::KukaToHost, "外部轴实际速度 mm/s"},
-        {98, "FLOAT32", "Act_Extern_Acc", CommDirection::KukaToHost, "外部轴实际加速度"},
-        {99, "FLOAT32", "Act_Robot_Speed", CommDirection::KukaToHost, "机器人实际速度 mm/s"},
-        {100, "FLOAT32", "Act_Robot_Acc", CommDirection::KukaToHost, "机器人实际加速度"},
-        {101, "FLOAT32", "Act_Extern_E1", CommDirection::KukaToHost, "外部轴 E1 实际位置 mm"},
-        {102, "FLOAT32", "Act_Extern_E2", CommDirection::KukaToHost, "外部轴 E2 实际位置 mm"},
-        {103, "FLOAT32", "Act_Extern_E3", CommDirection::KukaToHost, "外部轴 E3 实际位置 mm"},
-        {104, "FLOAT32", "Act_Robot_X", CommDirection::KukaToHost, "TCP 实际 X mm"},
-        {105, "FLOAT32", "Act_Robot_Y", CommDirection::KukaToHost, "TCP 实际 Y mm"},
-        {106, "FLOAT32", "Act_Robot_Z", CommDirection::KukaToHost, "TCP 实际 Z mm"},
-        {107, "FLOAT32", "Act_Robot_A", CommDirection::KukaToHost, "TCP 实际姿态 A deg"},
-        {108, "FLOAT32", "Act_Robot_B", CommDirection::KukaToHost, "TCP 实际姿态 B deg"},
-        {109, "FLOAT32", "Act_Robot_C", CommDirection::KukaToHost, "TCP 实际姿态 C deg"},
-        {110, "FLOAT32", "Act_Robot_J1", CommDirection::KukaToHost, "关节 1 实际角度 deg"},
-        {111, "FLOAT32", "Act_Robot_J2", CommDirection::KukaToHost, "关节 2 实际角度 deg"},
-        {112, "FLOAT32", "Act_Robot_J3", CommDirection::KukaToHost, "关节 3 实际角度 deg"},
-        {113, "FLOAT32", "Act_Robot_J4", CommDirection::KukaToHost, "关节 4 实际角度 deg"},
-        {114, "FLOAT32", "Act_Robot_J5", CommDirection::KukaToHost, "关节 5 实际角度 deg"},
-        {115, "FLOAT32", "Act_Robot_J6", CommDirection::KukaToHost, "关节 6 实际角度 deg"},
-        {116, "BOOL", "Kuka_ArcOn", CommDirection::KukaToHost, "焊机起弧成功反馈"},
-        {117, "BOOL", "Kuka_Collision", CommDirection::KukaToHost, "碰撞或力矩超限"},
-        {118, "BOOL", "Kuka_DownloadOk", CommDirection::KukaToHost, "作业/焊缝/焊道/轨迹下载完成"},
-        {119, "BOOL", "Kuka_JobDone", CommDirection::KukaToHost, "全部焊缝焊完并已回 Home"},
-        {120, "FLOAT32", "Kuka_Progress", CommDirection::KukaToHost, "当前作业进度 %"},
+        {95, "INT32", "Kuka_Heartbeat", CommDirection::KukaToHost, "机器人心跳"},
+        {96, "INT32", "Kuka_CmdAck", CommDirection::KukaToHost, "已接受的命令序号"},
+        {97, "INT32", "Kuka_Phase", CommDirection::KukaToHost, "工艺阶段：地轨/接近/寻缝/找到起点/TCP到位/寻终点/焊接到终点/收弧/回Home/故障"},
+        {98, "INT32", "Kuka_OpMode", CommDirection::KukaToHost, "运行模式：0 T1  1 T2  2 AUT  3 EXT"},
+        {99, "BOOL", "Kuka_ProActive", CommDirection::KukaToHost, "解释器程序正在运行"},
+        {100, "BOOL", "Kuka_DrivesOn", CommDirection::KukaToHost, "驱动已使能"},
+        {101, "BOOL", "Kuka_EStop", CommDirection::KukaToHost, "急停"},
+        {102, "INT32", "Kuka_MsgId", CommDirection::KukaToHost, "报警号，0 表示无报警"},
+        {103, "INT32", "Kuka_SeamId", CommDirection::KukaToHost, "当前焊缝号"},
+        {104, "INT32", "Kuka_Layer", CommDirection::KukaToHost, "当前层号"},
+        {105, "INT32", "Kuka_PassSeq", CommDirection::KukaToHost, "当前焊道全局序号"},
+        {106, "INT32", "Kuka_TrajIndex", CommDirection::KukaToHost, "当前轨迹点序号"},
+        {107, "FLOAT32", "Act_Extern_Speed", CommDirection::KukaToHost, "外部轴实际速度 mm/s"},
+        {108, "FLOAT32", "Act_Extern_Acc", CommDirection::KukaToHost, "外部轴实际加速度"},
+        {109, "FLOAT32", "Act_Robot_Speed", CommDirection::KukaToHost, "机器人实际速度 mm/s"},
+        {110, "FLOAT32", "Act_Robot_Acc", CommDirection::KukaToHost, "机器人实际加速度"},
+        {111, "FLOAT32", "Act_Extern_E1", CommDirection::KukaToHost, "外部轴 E1 实际位置 mm"},
+        {112, "FLOAT32", "Act_Extern_E2", CommDirection::KukaToHost, "外部轴 E2 实际位置 mm"},
+        {113, "FLOAT32", "Act_Extern_E3", CommDirection::KukaToHost, "外部轴 E3 实际位置 mm"},
+        {114, "FLOAT32", "Act_Robot_X", CommDirection::KukaToHost, "TCP 实际 X mm"},
+        {115, "FLOAT32", "Act_Robot_Y", CommDirection::KukaToHost, "TCP 实际 Y mm"},
+        {116, "FLOAT32", "Act_Robot_Z", CommDirection::KukaToHost, "TCP 实际 Z mm"},
+        {117, "FLOAT32", "Act_Robot_A", CommDirection::KukaToHost, "TCP 实际姿态 A deg"},
+        {118, "FLOAT32", "Act_Robot_B", CommDirection::KukaToHost, "TCP 实际姿态 B deg"},
+        {119, "FLOAT32", "Act_Robot_C", CommDirection::KukaToHost, "TCP 实际姿态 C deg"},
+        {120, "FLOAT32", "Act_Robot_J1", CommDirection::KukaToHost, "关节 1 实际角度 deg"},
+        {121, "FLOAT32", "Act_Robot_J2", CommDirection::KukaToHost, "关节 2 实际角度 deg"},
+        {122, "FLOAT32", "Act_Robot_J3", CommDirection::KukaToHost, "关节 3 实际角度 deg"},
+        {123, "FLOAT32", "Act_Robot_J4", CommDirection::KukaToHost, "关节 4 实际角度 deg"},
+        {124, "FLOAT32", "Act_Robot_J5", CommDirection::KukaToHost, "关节 5 实际角度 deg"},
+        {125, "FLOAT32", "Act_Robot_J6", CommDirection::KukaToHost, "关节 6 实际角度 deg"},
+        {126, "BOOL", "Kuka_ArcOn", CommDirection::KukaToHost, "焊机起弧成功反馈"},
+        {127, "BOOL", "Kuka_Collision", CommDirection::KukaToHost, "碰撞或力矩超限"},
+        {128, "BOOL", "Kuka_DownloadOk", CommDirection::KukaToHost, "作业/焊缝/焊道/轨迹下载完成"},
+        {129, "BOOL", "Kuka_JobDone", CommDirection::KukaToHost, "全部焊缝焊完并已回 Home"},
+        {130, "FLOAT32", "Kuka_Progress", CommDirection::KukaToHost, "当前作业进度 %"},
+        {131, "BOOL", "Laser_Ready", CommDirection::KukaToHost, "激光寻缝器就绪"},
+        {132, "BOOL", "Laser_Finding", CommDirection::KukaToHost, "正在寻缝"},
+        {133, "BOOL", "Laser_StartValid", CommDirection::KukaToHost, "已找到焊缝起点，Found_Start* 有效"},
+        {134, "BOOL", "Laser_EndValid", CommDirection::KukaToHost, "已找到焊缝终点，Found_End* 有效"},
+        {135, "BOOL", "Laser_Lost", CommDirection::KukaToHost, "寻缝丢失或跟踪丢失"},
+        {136, "INT32", "Laser_ErrId", CommDirection::KukaToHost, "激光故障码，0 表示正常"},
+        {137, "FLOAT32", "Found_StartX", CommDirection::KukaToHost, "激光找到的焊缝起点 X mm"},
+        {138, "FLOAT32", "Found_StartY", CommDirection::KukaToHost, "激光找到的焊缝起点 Y mm"},
+        {139, "FLOAT32", "Found_StartZ", CommDirection::KukaToHost, "激光找到的焊缝起点 Z mm"},
+        {140, "FLOAT32", "Found_StartA", CommDirection::KukaToHost, "到位用焊枪姿态 A（通常回传 Torch_A）"},
+        {141, "FLOAT32", "Found_StartB", CommDirection::KukaToHost, "到位用焊枪姿态 B"},
+        {142, "FLOAT32", "Found_StartC", CommDirection::KukaToHost, "到位用焊枪姿态 C"},
+        {143, "FLOAT32", "Found_EndX", CommDirection::KukaToHost, "激光找到的焊缝终点 X mm"},
+        {144, "FLOAT32", "Found_EndY", CommDirection::KukaToHost, "激光找到的焊缝终点 Y mm"},
+        {145, "FLOAT32", "Found_EndZ", CommDirection::KukaToHost, "激光找到的焊缝终点 Z mm"},
+        {146, "FLOAT32", "Found_EndA", CommDirection::KukaToHost, "终点焊枪姿态 A"},
+        {147, "FLOAT32", "Found_EndB", CommDirection::KukaToHost, "终点焊枪姿态 B"},
+        {148, "FLOAT32", "Found_EndC", CommDirection::KukaToHost, "终点焊枪姿态 C"},
+        {149, "FLOAT32", "Laser_dY", CommDirection::KukaToHost, "RSI 横向纠偏监视值 mm（闭环不走本表）"},
+        {150, "FLOAT32", "Laser_dZ", CommDirection::KukaToHost, "RSI 高度纠偏监视值 mm（闭环不走本表）"},
     };
     return kSignals;
 }
@@ -326,6 +356,10 @@ std::string hostCmdName(HostCmd cmd)
     case HostCmd::ArcOff: return "ArcOff";
     case HostCmd::GoHome: return "GoHome";
     case HostCmd::AckFault: return "AckFault";
+    case HostCmd::FindStart: return "FindStart";
+    case HostCmd::MoveToFoundStart: return "MoveToFoundStart";
+    case HostCmd::FindEnd: return "FindEnd";
+    case HostCmd::WeldToFoundEnd: return "WeldToFoundEnd";
     }
     return "Unknown";
 }
@@ -352,6 +386,13 @@ std::string kukaPhaseName(KukaPhase phase)
     case KukaPhase::JobDone: return "JobDone";
     case KukaPhase::Fault: return "Fault";
     case KukaPhase::EStop: return "EStop";
+    case KukaPhase::SearchApproach: return "SearchApproach";
+    case KukaPhase::FindingStart: return "FindingStart";
+    case KukaPhase::FoundStart: return "FoundStart";
+    case KukaPhase::MoveToFoundStart: return "MoveToFoundStart";
+    case KukaPhase::FindingEnd: return "FindingEnd";
+    case KukaPhase::FoundEnd: return "FoundEnd";
+    case KukaPhase::WeldToFoundEnd: return "WeldToFoundEnd";
     }
     return "Unknown";
 }
@@ -435,6 +476,9 @@ std::string encodeHostCyclicXml(const HostCyclic& msg)
     oss << xmlInt("Seam_Id", msg.seam.seam_id);
     appendNamedPose(oss, "Seam_Start", msg.seam.start);
     appendNamedPose(oss, "Seam_End", msg.seam.end);
+    oss << xmlReal("Torch_A", msg.seam.torch_a);
+    oss << xmlReal("Torch_B", msg.seam.torch_b);
+    oss << xmlReal("Torch_C", msg.seam.torch_c);
     oss << xmlReal("Seam_Inset", msg.seam.inset_mm);
     oss << xmlReal("Seam_WeldSpeed", msg.seam.speed_mm_s);
     oss << xmlInt("Seam_WeaveMode", static_cast<int32_t>(msg.seam.weave_mode));
@@ -466,6 +510,13 @@ std::string encodeHostCyclicXml(const HostCyclic& msg)
     oss << xmlInt("Weld_GasPreflow", msg.welder.gas_preflow_ms);
     oss << xmlInt("Weld_GasPostflow", msg.welder.gas_postflow_ms);
     oss << xmlInt("Weld_Crater", msg.welder.crater_ms);
+    oss << xmlInt("Laser_Mode", static_cast<int32_t>(msg.laser.mode));
+    oss << xmlInt("Laser_FindEnable", msg.laser.find_enable);
+    oss << xmlInt("Laser_TrackEnable", msg.laser.track_enable);
+    oss << xmlReal("Laser_LookAhead", msg.laser.look_ahead_mm);
+    oss << xmlReal("Laser_SearchRadius", msg.laser.search_radius_mm);
+    oss << xmlReal("Laser_SearchSpeed", msg.laser.search_speed_mm_s);
+    oss << xmlInt("Laser_Timeout", msg.laser.timeout_ms);
     oss << "</Host>";
     return oss.str();
 }
@@ -510,6 +561,16 @@ std::string encodeKukaCyclicXml(const KukaCyclic& msg)
     oss << xmlInt("Kuka_DownloadOk", msg.download_ok);
     oss << xmlInt("Kuka_JobDone", msg.job_done);
     oss << xmlReal("Kuka_Progress", msg.progress_pct);
+    oss << xmlInt("Laser_Ready", msg.laser.ready);
+    oss << xmlInt("Laser_Finding", msg.laser.finding);
+    oss << xmlInt("Laser_StartValid", msg.laser.start_valid);
+    oss << xmlInt("Laser_EndValid", msg.laser.end_valid);
+    oss << xmlInt("Laser_Lost", msg.laser.lost);
+    oss << xmlInt("Laser_ErrId", msg.laser.err_id);
+    appendNamedPose(oss, "Found_Start", msg.laser.found_start);
+    appendNamedPose(oss, "Found_End", msg.laser.found_end);
+    oss << xmlReal("Laser_dY", msg.laser.dy);
+    oss << xmlReal("Laser_dZ", msg.laser.dz);
     oss << "</Kuka>";
     return oss.str();
 }
@@ -525,6 +586,7 @@ bool decodeHostCyclicXml(const std::string& xml, HostCyclic* msg)
     int32_t weave_type = 0;
     int32_t multi_mode = 0;
     int32_t kind = 0;
+    int32_t laser_mode = 0;
     if (!(readMotion(xml, &out.motion)
           && extractInt(xml, "Host_Heartbeat", &out.heartbeat)
           && extractInt(xml, "Host_Cmd", &cmd)
@@ -540,6 +602,9 @@ bool decodeHostCyclicXml(const std::string& xml, HostCyclic* msg)
           && extractInt(xml, "Seam_Id", &out.seam.seam_id)
           && readNamedPose(xml, "Seam_Start", &out.seam.start)
           && readNamedPose(xml, "Seam_End", &out.seam.end)
+          && extractReal(xml, "Torch_A", &out.seam.torch_a)
+          && extractReal(xml, "Torch_B", &out.seam.torch_b)
+          && extractReal(xml, "Torch_C", &out.seam.torch_c)
           && extractReal(xml, "Seam_Inset", &out.seam.inset_mm)
           && extractReal(xml, "Seam_WeldSpeed", &out.seam.speed_mm_s)
           && extractInt(xml, "Seam_WeaveMode", &weave_mode)
@@ -570,7 +635,14 @@ bool decodeHostCyclicXml(const std::string& xml, HostCyclic* msg)
           && extractReal(xml, "Weld_WireSpeed", &out.welder.wire_m_min)
           && extractInt(xml, "Weld_GasPreflow", &out.welder.gas_preflow_ms)
           && extractInt(xml, "Weld_GasPostflow", &out.welder.gas_postflow_ms)
-          && extractInt(xml, "Weld_Crater", &out.welder.crater_ms))) {
+          && extractInt(xml, "Weld_Crater", &out.welder.crater_ms)
+          && extractInt(xml, "Laser_Mode", &laser_mode)
+          && extractInt(xml, "Laser_FindEnable", &out.laser.find_enable)
+          && extractInt(xml, "Laser_TrackEnable", &out.laser.track_enable)
+          && extractReal(xml, "Laser_LookAhead", &out.laser.look_ahead_mm)
+          && extractReal(xml, "Laser_SearchRadius", &out.laser.search_radius_mm)
+          && extractReal(xml, "Laser_SearchSpeed", &out.laser.search_speed_mm_s)
+          && extractInt(xml, "Laser_Timeout", &out.laser.timeout_ms))) {
         return false;
     }
     out.cmd = static_cast<HostCmd>(cmd);
@@ -578,6 +650,7 @@ bool decodeHostCyclicXml(const std::string& xml, HostCyclic* msg)
     out.seam.weave_type = static_cast<WeaveType>(weave_type);
     out.seam.multi_mode = static_cast<MultiMode>(multi_mode);
     out.pass.kind = static_cast<PassKind>(kind);
+    out.laser.mode = static_cast<LaserMode>(laser_mode);
     *msg = out;
     return true;
 }
@@ -625,7 +698,17 @@ bool decodeKukaCyclicXml(const std::string& xml, KukaCyclic* msg)
           && extractInt(xml, "Kuka_Collision", &out.collision)
           && extractInt(xml, "Kuka_DownloadOk", &out.download_ok)
           && extractInt(xml, "Kuka_JobDone", &out.job_done)
-          && extractReal(xml, "Kuka_Progress", &out.progress_pct))) {
+          && extractReal(xml, "Kuka_Progress", &out.progress_pct)
+          && extractInt(xml, "Laser_Ready", &out.laser.ready)
+          && extractInt(xml, "Laser_Finding", &out.laser.finding)
+          && extractInt(xml, "Laser_StartValid", &out.laser.start_valid)
+          && extractInt(xml, "Laser_EndValid", &out.laser.end_valid)
+          && extractInt(xml, "Laser_Lost", &out.laser.lost)
+          && extractInt(xml, "Laser_ErrId", &out.laser.err_id)
+          && readNamedPose(xml, "Found_Start", &out.laser.found_start)
+          && readNamedPose(xml, "Found_End", &out.laser.found_end)
+          && extractReal(xml, "Laser_dY", &out.laser.dy)
+          && extractReal(xml, "Laser_dZ", &out.laser.dz))) {
         return false;
     }
     out.phase = static_cast<KukaPhase>(phase);
