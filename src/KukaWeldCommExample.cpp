@@ -31,47 +31,26 @@ int main(int argc, char** argv)
     }
 
     std::cout << "# 上位机 ↔ KUKA 焊接通讯数据结构表\n\n";
-    std::cout << "共 " << kukaWeldCommSignals().size() << " 个信号。"
-              << "命令 Start=" << static_cast<int>(HostCmd::Start)
-              << "，阶段 Welding=" << static_cast<int>(KukaPhase::Welding)
-              << "。\n\n";
+    std::cout << "共 " << kukaWeldCommSignals().size() << " 个信号，仅含总流程必要项。\n\n";
     std::cout << commTableMarkdown() << '\n';
 
     HostCyclic demo;
     demo.heartbeat = 1;
-    demo.cmd = HostCmd::DownloadSeam;
+    demo.cmd = HostCmd::FindStart;
     demo.cmd_seq = 1;
-    demo.job.job_id = 1;
-    demo.job.seam_count = 1;
-    demo.job.pass_count = 1;
-    demo.seam.seam_id = 1;
-    demo.seam.start = {0.f, 0.f, 0.f, 0.f, 90.f, 180.f, 0.f};
-    demo.seam.end = {100.f, 0.f, 0.f, 0.f, 90.f, 180.f, 0.f};
-    demo.seam.speed_mm_s = 10.f;
-    demo.seam.weave_mode = WeaveMode::Weave;
-    demo.seam.weave_type = WeaveType::Sine;
-    demo.motion.robot_speed = 10.f;
-    demo.motion.x = 0.f;
-    demo.motion.y = 0.f;
-    demo.motion.z = 0.f;
-    demo.motion.b = 90.f;
-    demo.motion.c = 180.f;
-    demo.pass.seam_id = 1;
-    demo.pass.sequence = 1;
-    demo.traj.count = 2;
-    demo.traj.flag = 1;
-    demo.welder.arc_enable = 1;
-    demo.welder.gas_enable = 1;
+    demo.seam_id = 1;
+    demo.ref_end = {100.f, 0.f, 0.f};
+    demo.weld_speed_mm_s = 10.f;
+    demo.weave_mode = WeaveMode::Weave;
+    demo.laser_mode = LaserMode::Find;
+    demo.arc_enable = 1;
     std::cout << "## 上位机→KUKA 报文示例\n\n```xml\n"
               << encodeHostCyclicXml(demo) << "\n```\n\n";
 
     KukaCyclic fb;
     fb.heartbeat = 1;
     fb.phase = KukaPhase::Ready;
-    fb.op_mode = KukaOpMode::Ext;
-    fb.pro_active = 1;
-    fb.drives_on = 1;
-    fb.download_ok = 1;
+    fb.laser_ready = 1;
     std::cout << "## KUKA→上位机 报文示例\n\n```xml\n"
               << encodeKukaCyclicXml(fb) << "\n```\n";
 

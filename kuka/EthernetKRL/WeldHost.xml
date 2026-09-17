@@ -14,100 +14,29 @@
   </CONFIGURATION>
   <RECEIVE>
     <XML>
-      <ELEMENT Tag="Extern_Speed" Type="REAL"/>
-      <ELEMENT Tag="Extern_Acc" Type="REAL"/>
-      <ELEMENT Tag="Robot_Speed" Type="REAL"/>
-      <ELEMENT Tag="Robot_Acc" Type="REAL"/>
-      <ELEMENT Tag="Extern_E1" Type="REAL"/>
-      <ELEMENT Tag="Extern_E2" Type="REAL"/>
-      <ELEMENT Tag="Extern_E3" Type="REAL"/>
-      <ELEMENT Tag="Robot_X" Type="REAL"/>
-      <ELEMENT Tag="Robot_Y" Type="REAL"/>
-      <ELEMENT Tag="Robot_Z" Type="REAL"/>
-      <ELEMENT Tag="Robot_A" Type="REAL"/>
-      <ELEMENT Tag="Robot_B" Type="REAL"/>
-      <ELEMENT Tag="Robot_C" Type="REAL"/>
-      <ELEMENT Tag="Robot_J1" Type="REAL"/>
-      <ELEMENT Tag="Robot_J2" Type="REAL"/>
-      <ELEMENT Tag="Robot_J3" Type="REAL"/>
-      <ELEMENT Tag="Robot_J4" Type="REAL"/>
-      <ELEMENT Tag="Robot_J5" Type="REAL"/>
-      <ELEMENT Tag="Robot_J6" Type="REAL"/>
       <ELEMENT Tag="Host_Heartbeat" Type="INT"/>
       <ELEMENT Tag="Host_Cmd" Type="INT"/>
       <ELEMENT Tag="Host_CmdSeq" Type="INT"/>
-      <ELEMENT Tag="Job_Id" Type="INT"/>
-      <ELEMENT Tag="Job_SeamCount" Type="INT"/>
-      <ELEMENT Tag="Job_PassCount" Type="INT"/>
-      <ELEMENT Tag="Job_ToolNo" Type="INT"/>
-      <ELEMENT Tag="Job_BaseNo" Type="INT"/>
-      <ELEMENT Tag="Job_Override" Type="REAL"/>
-      <ELEMENT Tag="Job_Approach" Type="REAL"/>
-      <ELEMENT Tag="Job_Retract" Type="REAL"/>
       <ELEMENT Tag="Seam_Id" Type="INT"/>
       <ELEMENT Tag="Seam_StartX" Type="REAL"/>
       <ELEMENT Tag="Seam_StartY" Type="REAL"/>
       <ELEMENT Tag="Seam_StartZ" Type="REAL"/>
-      <ELEMENT Tag="Seam_StartA" Type="REAL"/>
-      <ELEMENT Tag="Seam_StartB" Type="REAL"/>
-      <ELEMENT Tag="Seam_StartC" Type="REAL"/>
       <ELEMENT Tag="Seam_EndX" Type="REAL"/>
       <ELEMENT Tag="Seam_EndY" Type="REAL"/>
       <ELEMENT Tag="Seam_EndZ" Type="REAL"/>
-      <ELEMENT Tag="Seam_EndA" Type="REAL"/>
-      <ELEMENT Tag="Seam_EndB" Type="REAL"/>
-      <ELEMENT Tag="Seam_EndC" Type="REAL"/>
-      <ELEMENT Tag="Seam_Inset" Type="REAL"/>
+      <ELEMENT Tag="Torch_A" Type="REAL"/>
+      <ELEMENT Tag="Torch_B" Type="REAL"/>
+      <ELEMENT Tag="Torch_C" Type="REAL"/>
       <ELEMENT Tag="Seam_WeldSpeed" Type="REAL"/>
       <ELEMENT Tag="Seam_WeaveMode" Type="INT"/>
       <ELEMENT Tag="Seam_WeaveType" Type="INT"/>
       <ELEMENT Tag="Seam_Amplitude" Type="REAL"/>
       <ELEMENT Tag="Seam_Chord" Type="REAL"/>
-      <ELEMENT Tag="Seam_MultiMode" Type="INT"/>
-      <ELEMENT Tag="Seam_Thickness" Type="REAL"/>
-      <ELEMENT Tag="Seam_Groove" Type="REAL"/>
-      <ELEMENT Tag="Seam_FitUpGap" Type="REAL"/>
-      <ELEMENT Tag="Seam_Penetration" Type="REAL"/>
-      <ELEMENT Tag="Pass_SeamId" Type="INT"/>
-      <ELEMENT Tag="Pass_Layer" Type="INT"/>
-      <ELEMENT Tag="Pass_Local" Type="INT"/>
-      <ELEMENT Tag="Pass_Seq" Type="INT"/>
-      <ELEMENT Tag="Pass_Kind" Type="INT"/>
-      <ELEMENT Tag="Pass_StartX" Type="REAL"/>
-      <ELEMENT Tag="Pass_StartY" Type="REAL"/>
-      <ELEMENT Tag="Pass_StartZ" Type="REAL"/>
-      <ELEMENT Tag="Pass_StartA" Type="REAL"/>
-      <ELEMENT Tag="Pass_StartB" Type="REAL"/>
-      <ELEMENT Tag="Pass_StartC" Type="REAL"/>
-      <ELEMENT Tag="Pass_EndX" Type="REAL"/>
-      <ELEMENT Tag="Pass_EndY" Type="REAL"/>
-      <ELEMENT Tag="Pass_EndZ" Type="REAL"/>
-      <ELEMENT Tag="Pass_EndA" Type="REAL"/>
-      <ELEMENT Tag="Pass_EndB" Type="REAL"/>
-      <ELEMENT Tag="Pass_EndC" Type="REAL"/>
-      <ELEMENT Tag="Pass_Speed" Type="REAL"/>
-      <ELEMENT Tag="Traj_Index" Type="INT"/>
-      <ELEMENT Tag="Traj_Count" Type="INT"/>
-      <ELEMENT Tag="Traj_Speed" Type="REAL"/>
-      <ELEMENT Tag="Traj_Flag" Type="INT"/>
-      <ELEMENT Tag="Weld_ArcEnable" Type="INT"/>
-      <ELEMENT Tag="Weld_GasEnable" Type="INT"/>
-      <ELEMENT Tag="Weld_Current" Type="REAL"/>
-      <ELEMENT Tag="Weld_Voltage" Type="REAL"/>
-      <ELEMENT Tag="Weld_WireSpeed" Type="REAL"/>
-      <ELEMENT Tag="Weld_GasPreflow" Type="INT"/>
-      <ELEMENT Tag="Weld_GasPostflow" Type="INT"/>
-      <ELEMENT Tag="Weld_Crater" Type="INT"/>
-      <ELEMENT Tag="Torch_A" Type="REAL"/>
-      <ELEMENT Tag="Torch_B" Type="REAL"/>
-      <ELEMENT Tag="Torch_C" Type="REAL"/>
       <ELEMENT Tag="Laser_Mode" Type="INT"/>
-      <ELEMENT Tag="Laser_FindEnable" Type="INT"/>
-      <ELEMENT Tag="Laser_TrackEnable" Type="INT"/>
       <ELEMENT Tag="Laser_LookAhead" Type="REAL"/>
       <ELEMENT Tag="Laser_SearchRadius" Type="REAL"/>
-      <ELEMENT Tag="Laser_SearchSpeed" Type="REAL"/>
       <ELEMENT Tag="Laser_Timeout" Type="INT"/>
+      <ELEMENT Tag="Weld_ArcEnable" Type="INT"/>
     </XML>
   </RECEIVE>
   <SEND>
@@ -115,59 +44,19 @@
       <ELEMENT Tag="Kuka_Heartbeat" Type="INT"/>
       <ELEMENT Tag="Kuka_CmdAck" Type="INT"/>
       <ELEMENT Tag="Kuka_Phase" Type="INT"/>
-      <ELEMENT Tag="Kuka_OpMode" Type="INT"/>
-      <ELEMENT Tag="Kuka_ProActive" Type="INT"/>
-      <ELEMENT Tag="Kuka_DrivesOn" Type="INT"/>
       <ELEMENT Tag="Kuka_EStop" Type="INT"/>
       <ELEMENT Tag="Kuka_MsgId" Type="INT"/>
-      <ELEMENT Tag="Kuka_SeamId" Type="INT"/>
-      <ELEMENT Tag="Kuka_Layer" Type="INT"/>
-      <ELEMENT Tag="Kuka_PassSeq" Type="INT"/>
-      <ELEMENT Tag="Kuka_TrajIndex" Type="INT"/>
-      <ELEMENT Tag="Act_Extern_Speed" Type="REAL"/>
-      <ELEMENT Tag="Act_Extern_Acc" Type="REAL"/>
-      <ELEMENT Tag="Act_Robot_Speed" Type="REAL"/>
-      <ELEMENT Tag="Act_Robot_Acc" Type="REAL"/>
-      <ELEMENT Tag="Act_Extern_E1" Type="REAL"/>
-      <ELEMENT Tag="Act_Extern_E2" Type="REAL"/>
-      <ELEMENT Tag="Act_Extern_E3" Type="REAL"/>
-      <ELEMENT Tag="Act_Robot_X" Type="REAL"/>
-      <ELEMENT Tag="Act_Robot_Y" Type="REAL"/>
-      <ELEMENT Tag="Act_Robot_Z" Type="REAL"/>
-      <ELEMENT Tag="Act_Robot_A" Type="REAL"/>
-      <ELEMENT Tag="Act_Robot_B" Type="REAL"/>
-      <ELEMENT Tag="Act_Robot_C" Type="REAL"/>
-      <ELEMENT Tag="Act_Robot_J1" Type="REAL"/>
-      <ELEMENT Tag="Act_Robot_J2" Type="REAL"/>
-      <ELEMENT Tag="Act_Robot_J3" Type="REAL"/>
-      <ELEMENT Tag="Act_Robot_J4" Type="REAL"/>
-      <ELEMENT Tag="Act_Robot_J5" Type="REAL"/>
-      <ELEMENT Tag="Act_Robot_J6" Type="REAL"/>
-      <ELEMENT Tag="Kuka_ArcOn" Type="INT"/>
-      <ELEMENT Tag="Kuka_Collision" Type="INT"/>
-      <ELEMENT Tag="Kuka_DownloadOk" Type="INT"/>
-      <ELEMENT Tag="Kuka_JobDone" Type="INT"/>
-      <ELEMENT Tag="Kuka_Progress" Type="REAL"/>
       <ELEMENT Tag="Laser_Ready" Type="INT"/>
-      <ELEMENT Tag="Laser_Finding" Type="INT"/>
       <ELEMENT Tag="Laser_StartValid" Type="INT"/>
       <ELEMENT Tag="Laser_EndValid" Type="INT"/>
       <ELEMENT Tag="Laser_Lost" Type="INT"/>
-      <ELEMENT Tag="Laser_ErrId" Type="INT"/>
       <ELEMENT Tag="Found_StartX" Type="REAL"/>
       <ELEMENT Tag="Found_StartY" Type="REAL"/>
       <ELEMENT Tag="Found_StartZ" Type="REAL"/>
-      <ELEMENT Tag="Found_StartA" Type="REAL"/>
-      <ELEMENT Tag="Found_StartB" Type="REAL"/>
-      <ELEMENT Tag="Found_StartC" Type="REAL"/>
       <ELEMENT Tag="Found_EndX" Type="REAL"/>
       <ELEMENT Tag="Found_EndY" Type="REAL"/>
       <ELEMENT Tag="Found_EndZ" Type="REAL"/>
-      <ELEMENT Tag="Found_EndA" Type="REAL"/>
-      <ELEMENT Tag="Found_EndB" Type="REAL"/>
-      <ELEMENT Tag="Found_EndC" Type="REAL"/>
-      <ELEMENT Tag="Laser_dY" Type="REAL"/>
-      <ELEMENT Tag="Laser_dZ" Type="REAL"/>
+      <ELEMENT Tag="Kuka_JobDone" Type="INT"/>
     </XML>
   </SEND>
 </ETHERNETKRL>

@@ -4,7 +4,6 @@
 #include <iostream>
 #include <set>
 #include <string>
-#include <vector>
 
 namespace {
 
@@ -23,36 +22,17 @@ bool near(float a, float b, float eps = 1e-4f)
     return std::fabs(a - b) <= eps;
 }
 
-bool poseEq(const KukaPose& a, const KukaPose& b)
+bool xyzEq(const Xyz& a, const Xyz& b)
 {
-    return near(a.x, b.x) && near(a.y, b.y) && near(a.z, b.z)
-        && near(a.a, b.a) && near(a.b, b.b) && near(a.c, b.c);
+    return near(a.x, b.x) && near(a.y, b.y) && near(a.z, b.z);
 }
-
-bool motionEq(const MotionBlock& a, const MotionBlock& b)
-{
-    return near(a.extern_speed, b.extern_speed) && near(a.extern_acc, b.extern_acc)
-        && near(a.robot_speed, b.robot_speed) && near(a.robot_acc, b.robot_acc)
-        && near(a.e1, b.e1) && near(a.e2, b.e2) && near(a.e3, b.e3)
-        && near(a.x, b.x) && near(a.y, b.y) && near(a.z, b.z)
-        && near(a.a, b.a) && near(a.b, b.b) && near(a.c, b.c)
-        && near(a.j1, b.j1) && near(a.j2, b.j2) && near(a.j3, b.j3)
-        && near(a.j4, b.j4) && near(a.j5, b.j5) && near(a.j6, b.j6);
-}
-
-const char* kScreenshotNames[] = {
-    "Extern_Speed", "Extern_Acc", "Robot_Speed", "Robot_Acc",
-    "Extern_E1", "Extern_E2", "Extern_E3",
-    "Robot_X", "Robot_Y", "Robot_Z", "Robot_A", "Robot_B", "Robot_C",
-    "Robot_J1", "Robot_J2", "Robot_J3", "Robot_J4", "Robot_J5", "Robot_J6",
-};
 
 }  // namespace
 
 int main()
 {
     const std::vector<CommSignal>& signals = kukaWeldCommSignals();
-    expect(signals.size() == 150, "signal count is 150");
+    expect(signals.size() == 39, "signal count is 39");
 
     std::set<int> indices;
     std::set<std::string> names;
@@ -61,202 +41,82 @@ int main()
     for (const CommSignal& s : signals) {
         expect(s.index > 0, "positive index");
         expect(indices.insert(s.index).second, "unique index");
-        expect(names.insert(s.name).second, "unique signal name");
-        const std::string t = s.type;
-        expect(s.meaning != nullptr && s.meaning[0] != '\0', "meaning present");
+        expect(names.insert(s.name).second, "unique name");
+        expect(s.meaning != nullptr && s.meaning[0] != '\0', "meaning");
         if (s.direction == CommDirection::HostToKuka) {
             ++host_n;
         } else {
             ++kuka_n;
         }
     }
-    expect(host_n == 94, "94 host-to-kuka signals");
-    expect(kuka_n == 56, "56 kuka-to-host signals");
-
-    for (int i = 0; i < 19; ++i) {
-        expect(std::string(signals[static_cast<size_t>(i)].type) == "FLOAT32", "motion FLOAT32");
-        expect(std::string(signals[static_cast<size_t>(i)].name) == kScreenshotNames[i],
-               "screenshot motion name order");
-        expect(signals[static_cast<size_t>(i)].direction == CommDirection::HostToKuka,
-               "screenshot block is host to kuka");
-    }
-
-    bool found_inset = false;
-    bool found_weave = false;
-    bool found_multi = false;
-    for (const CommSignal& s : signals) {
-        found_inset = found_inset || std::string(s.name) == "Seam_Inset";
-        found_weave = found_weave || std::string(s.name) == "Seam_WeaveType";
-        found_multi = found_multi || std::string(s.name) == "Seam_Thickness";
-    }
-    expect(found_inset && found_weave && found_multi, "weld-list columns mapped");
-    bool found_laser = false;
-    bool found_start = false;
-    for (const CommSignal& s : signals) {
-        found_laser = found_laser || std::string(s.name) == "Laser_FindEnable";
-        found_start = found_start || std::string(s.name) == "Found_StartX";
-    }
-    expect(found_laser && found_start, "laser find signals present");
+    expect(host_n == 23, "23 host signals");
+    expect(kuka_n == 16, "16 kuka signals");
+    expect(names.count("Extern_Speed") == 0, "no extra motion words");
+    expect(names.count("Robot_J1") == 0, "no joint streaming");
+    expect(names.count("Pass_Layer") == 0, "no multi-pass extras");
+    expect(names.count("Traj_Index") == 0, "no traj streaming");
+    expect(names.count("Laser_FindEnable") == 0, "no duplicate laser enable");
+    expect(names.count("Laser_TrackEnable") == 0, "no duplicate track enable");
+    expect(names.count("Laser_Finding") == 0, "finding is Kuka_Phase");
+    expect(names.count("Seam_StartX") == 1 && names.count("Found_StartX") == 1, "ref and found start");
+    expect(names.count("Torch_A") == 1 && names.count("Seam_WeldSpeed") == 1, "torch and speed");
+    expect(names.count("Seam_WeaveMode") == 1 && names.count("Seam_Chord") == 1, "weave");
 
     HostCyclic host;
-    host.heartbeat = 42;
-    host.cmd = HostCmd::Start;
-    host.cmd_seq = 7;
-    host.job.job_id = 1001;
-    host.job.seam_count = 2;
-    host.job.pass_count = 5;
-    host.job.tool_no = 1;
-    host.job.base_no = 2;
-    host.job.override_pct = 80.f;
-    host.job.approach_mm = 40.f;
-    host.job.retract_mm = 60.f;
-    host.motion.extern_speed = 200.f;
-    host.motion.extern_acc = 50.f;
-    host.motion.robot_speed = 12.5f;
-    host.motion.robot_acc = 8.f;
-    host.motion.e1 = 100.f;
-    host.motion.e2 = 0.f;
-    host.motion.e3 = 0.f;
-    host.motion.x = 15.f;
-    host.motion.y = 22.f;
-    host.motion.z = 30.f;
-    host.motion.a = 0.f;
-    host.motion.b = 90.f;
-    host.motion.c = 180.f;
-    host.motion.j1 = 1.f;
-    host.motion.j2 = 2.f;
-    host.motion.j3 = 3.f;
-    host.motion.j4 = 4.f;
-    host.motion.j5 = 5.f;
-    host.motion.j6 = 6.f;
-    host.seam.seam_id = 1;
-    host.seam.start = {10.f, 20.f, 30.f, 0.f, 90.f, 180.f, 100.f};
-    host.seam.end = {110.f, 20.f, 30.f, 0.f, 90.f, 180.f, 100.f};
-    host.seam.inset_mm = 2.5f;
-    host.seam.speed_mm_s = 12.5f;
-    host.seam.weave_mode = WeaveMode::Weave;
-    host.seam.weave_type = WeaveType::Triangle;
-    host.seam.amplitude_mm = 5.f;
-    host.seam.chord_mm = 20.f;
-    host.seam.multi_mode = MultiMode::Multi;
-    host.seam.thickness_mm = 16.f;
-    host.seam.groove_deg = 30.f;
-    host.seam.fitup_gap_mm = 1.f;
-    host.seam.penetration_mm = 2.f;
-    host.seam.torch_a = 0.f;
-    host.seam.torch_b = 90.f;
-    host.seam.torch_c = 180.f;
-    host.laser.mode = LaserMode::FindAndTrack;
-    host.laser.find_enable = 1;
-    host.laser.track_enable = 1;
-    host.laser.look_ahead_mm = 35.f;
-    host.laser.search_radius_mm = 15.f;
-    host.laser.search_speed_mm_s = 18.f;
-    host.laser.timeout_ms = 4000;
-    host.pass.seam_id = 1;
-    host.pass.layer = 2;
-    host.pass.local_index = 3;
-    host.pass.sequence = 4;
-    host.pass.kind = PassKind::Fill;
-    host.pass.start = {12.f, 20.f, 31.f, 1.f, 89.f, 179.f, 100.f};
-    host.pass.end = {108.f, 20.f, 31.f, 1.f, 89.f, 179.f, 100.f};
-    host.pass.speed_mm_s = 8.f;
-    host.traj.index = 3;
-    host.traj.count = 40;
-    host.traj.speed_mm_s = 9.f;
-    host.traj.flag = 1;
-    host.welder.arc_enable = 1;
-    host.welder.gas_enable = 1;
-    host.welder.current_a = 180.f;
-    host.welder.voltage_v = 22.5f;
-    host.welder.wire_m_min = 6.2f;
-    host.welder.gas_preflow_ms = 250;
-    host.welder.gas_postflow_ms = 400;
-    host.welder.crater_ms = 150;
-
-    const std::string host_xml = encodeHostCyclicXml(host);
-    expect(host_xml.find("<Extern_Speed>") != std::string::npos, "host xml motion");
-    expect(host_xml.find("<Robot_J6>") != std::string::npos, "host xml joints");
-    expect(host_xml.find("<Seam_Inset>") != std::string::npos, "host xml inset");
+    host.heartbeat = 3;
+    host.cmd = HostCmd::FindStart;
+    host.cmd_seq = 8;
+    host.seam_id = 2;
+    host.ref_start = {10.f, 20.f, 30.f};
+    host.ref_end = {110.f, 20.f, 30.f};
+    host.torch_a = 0.f;
+    host.torch_b = 90.f;
+    host.torch_c = 180.f;
+    host.weld_speed_mm_s = 12.f;
+    host.weave_mode = WeaveMode::Weave;
+    host.weave_type = WeaveType::Triangle;
+    host.amplitude_mm = 4.f;
+    host.chord_mm = 18.f;
+    host.laser_mode = LaserMode::FindAndTrack;
+    host.laser_look_ahead_mm = 35.f;
+    host.laser_search_radius_mm = 15.f;
+    host.laser_timeout_ms = 4000;
+    host.arc_enable = 1;
 
     HostCyclic host2;
-    expect(decodeHostCyclicXml(host_xml, &host2), "decode host xml");
-    expect(host2.heartbeat == 42 && host2.cmd == HostCmd::Start, "host cmd");
-    expect(motionEq(host2.motion, host.motion), "host motion");
-    expect(poseEq(host2.seam.start, host.seam.start), "seam start");
-    expect(near(host2.seam.inset_mm, 2.5f), "inset");
-    expect(host2.seam.weave_type == WeaveType::Triangle, "weave type");
-    expect(near(host2.pass.speed_mm_s, 8.f), "pass speed");
-    expect(near(host2.welder.current_a, 180.f), "welder current");
-    expect(near(host2.motion.j6, 6.f), "joint 6");
-    expect(host2.laser.mode == LaserMode::FindAndTrack, "laser mode");
-    expect(host2.laser.find_enable == 1 && near(host2.laser.look_ahead_mm, 35.f), "laser find");
-    expect(near(host2.seam.torch_b, 90.f), "torch pose");
-    expect(!decodeHostCyclicXml(host_xml, nullptr), "null host decode");
-    expect(!decodeHostCyclicXml("<Host></Host>", &host2), "empty host xml");
+    const std::string host_xml = encodeHostCyclicXml(host);
+    expect(decodeHostCyclicXml(host_xml, &host2), "decode host");
+    expect(host2.cmd == HostCmd::FindStart && host2.seam_id == 2, "host cmd");
+    expect(xyzEq(host2.ref_start, host.ref_start) && xyzEq(host2.ref_end, host.ref_end), "ref xyz");
+    expect(near(host2.torch_b, 90.f) && host2.weave_type == WeaveType::Triangle, "torch weave");
+    expect(host2.laser_mode == LaserMode::FindAndTrack && host2.arc_enable == 1, "laser arc");
+    expect(!decodeHostCyclicXml(host_xml, nullptr), "null host");
+    expect(!decodeHostCyclicXml("<Host></Host>", &host2), "empty host");
 
     KukaCyclic kuka;
-    kuka.heartbeat = 9;
-    kuka.cmd_ack_seq = 7;
+    kuka.heartbeat = 4;
+    kuka.cmd_ack_seq = 8;
     kuka.phase = KukaPhase::FoundStart;
-    kuka.op_mode = KukaOpMode::Ext;
-    kuka.pro_active = 1;
-    kuka.drives_on = 1;
-    kuka.seam_id = 1;
-    kuka.layer = 2;
-    kuka.pass_seq = 4;
-    kuka.traj_index = 3;
-    kuka.motion = host.motion;
-    kuka.arc_on = 1;
-    kuka.progress_pct = 33.5f;
-    kuka.laser.ready = 1;
-    kuka.laser.start_valid = 1;
-    kuka.laser.found_start = {11.f, 21.f, 31.f, 0.f, 90.f, 180.f, 0.f};
-    kuka.laser.dy = 0.4f;
-    kuka.laser.dz = -0.2f;
-    const std::string kuka_xml = encodeKukaCyclicXml(kuka);
-    expect(kuka_xml.find("<Act_Robot_X>") != std::string::npos, "kuka actual pose");
+    kuka.laser_ready = 1;
+    kuka.laser_start_valid = 1;
+    kuka.found_start = {11.f, 21.f, 31.f};
+    kuka.found_end = {109.f, 21.f, 31.f};
     KukaCyclic kuka2;
-    expect(decodeKukaCyclicXml(kuka_xml, &kuka2), "decode kuka xml");
+    expect(decodeKukaCyclicXml(encodeKukaCyclicXml(kuka), &kuka2), "decode kuka");
     expect(kuka2.phase == KukaPhase::FoundStart, "phase");
-    expect(kuka2.laser.start_valid == 1, "found start valid");
-    expect(near(kuka2.laser.found_start.x, 11.f) && near(kuka2.laser.dy, 0.4f), "found start");
-    expect(hostCmdName(HostCmd::FindStart) == "FindStart", "find start cmd name");
-    expect(kukaPhaseName(KukaPhase::WeldToFoundEnd) == "WeldToFoundEnd", "weld to end phase");
-    expect(motionEq(kuka2.motion, kuka.motion), "kuka motion");
-    expect(near(kuka2.progress_pct, 33.5f), "progress");
-
-    const KukaPose inset_s = insetPose(host.seam.start, host.seam.end, 10.f, true);
-    const KukaPose inset_e = insetPose(host.seam.start, host.seam.end, 10.f, false);
-    expect(near(inset_s.x, 20.f) && near(inset_e.x, 100.f), "inset along seam X");
-
-    std::vector<TrajPoint> traj(2);
-    traj[0].pose = {1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f};
-    traj[0].speed_mm_s = 10.f;
-    traj[0].flag = 1;
-    traj[1].pose = {8.f, 9.f, 10.f, 11.f, 12.f, 13.f, 14.f};
-    traj[1].speed_mm_s = 11.f;
-    traj[1].flag = 2;
-    const std::string csv = formatTrajCsv(traj);
-    expect(csv.find("1,2,3,4,5,6,7,10,1;") == 0, "traj csv first group");
+    expect(xyzEq(kuka2.found_start, kuka.found_start), "found start");
+    expect(hostCmdName(HostCmd::MoveToFoundStart) == "MoveToFoundStart", "cmd name");
+    expect(kukaPhaseName(KukaPhase::WeldToFoundEnd) == "WeldToFoundEnd", "phase name");
 
     const std::string md = commTableMarkdown();
-    expect(md.find("| 数据类型 | 信号名 | 含义 |") != std::string::npos, "three-column header");
-    expect(md.find("| FLOAT32 | Extern_Speed | 外部轴速度指令 mm/s |") != std::string::npos,
-           "screenshot first row with meaning");
-    expect(md.find("| FLOAT32 | Robot_J6 | 关节 6 角度指令 deg |") != std::string::npos,
-           "screenshot last joint with meaning");
-    expect(md.find("| BOOL | Laser_FindEnable |") != std::string::npos, "laser enable row");
-    expect(md.find("| FLOAT32 | Found_StartX |") != std::string::npos, "found start row");
-    const std::string table_csv = commTableCsv();
-    expect(table_csv.find("数据类型,信号名,含义,方向") == 0, "csv header");
-    expect(table_csv.find("FLOAT32,Extern_Speed,外部轴速度指令 mm/s,") != std::string::npos,
-           "csv motion meaning");
-
-    const std::string eki = ekiConfigXml("10.0.0.8", 54600);
-    expect(eki.find("Tag=\"Extern_Speed\" Type=\"REAL\"") != std::string::npos, "eki motion tag");
-    expect(eki.find("Tag=\"Seam_Inset\"") != std::string::npos, "eki seam");
-    expect(eki.find("Tag=\"Act_Robot_J6\"") != std::string::npos, "eki actual joints");
+    expect(md.find("| 数据类型 | 信号名 | 含义 |") != std::string::npos, "header");
+    expect(md.find("| FLOAT32 | Seam_StartX |") != std::string::npos, "ref start");
+    expect(md.find("| FLOAT32 | Found_EndZ |") != std::string::npos, "found end");
+    expect(md.find("Extern_Speed") == std::string::npos, "md has no extras");
+    const std::string csv = commTableCsv();
+    expect(csv.find("数据类型,信号名,含义,方向") == 0, "csv");
+    expect(ekiConfigXml("10.0.0.8", 54600).find("Tag=\"Laser_LookAhead\"") != std::string::npos,
+           "eki laser");
 
     if (g_failed != 0) {
         std::cerr << g_failed << " assertion(s) failed\n";
