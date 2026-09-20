@@ -24,22 +24,36 @@
  *   列表 / 表头行高      : 24px
  *   QStackedWidget 幅度  : 边距（margin / padding / contentsMargins）为 0
  *                          border-radius 仍为 3px
+ *
+ * 贴边按钮点不中（最大化后）：
+ *   禁止 * { color } 和 QWidget { background-color }。
+ *   全量 QWidget 底色会让 Qt 走 styled frame，Windows 最大化后仍保留
+ *   约 8px 非客户区，贴边点击变成 HTLEFT/HTTOP，QWidget::nativeEvent
+ *   收不到该消息。配合 resources/windows_maximized_edge_click.h 使用。
  * ============================================================ */
 
 /* ---------- 全局 ---------- */
 * {
     font: 11pt "微软雅黑";
-    color: #DCDCDC;
 }
 
 QWidget {
-    background-color: #2D2D30;
     color: #DCDCDC;
+    background-color: transparent;
 }
 
 QMainWindow {
     font: 11pt "微软雅黑";
     background-color: #2D2D30;
+    color: #DCDCDC;
+    margin: 0px;
+    padding: 0px;
+    border: none;
+}
+
+QDockWidget, QMdiArea, QWizard, QWizardPage {
+    background-color: #2D2D30;
+    color: #DCDCDC;
 }
 
 QDialog {
