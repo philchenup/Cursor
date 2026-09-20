@@ -22,7 +22,8 @@
  *   间距 / 内边距 / 圆角 : 3 / 6 / 9 / 12
  *   控件内容最小高度     : 24px
  *   列表 / 表头行高      : 24px
- *   QStackedWidget 幅度  : margin / padding / border-radius 均为 3px
+ *   QStackedWidget 幅度  : 边距（margin / padding / contentsMargins）为 0
+ *                          border-radius 仍为 3px
  * ============================================================ */
 
 /* ---------- 全局 ---------- */
@@ -48,13 +49,13 @@ QDialog {
     padding: 9px;
 }
 
-/* ---------- 堆叠窗口（幅度一律 3） ---------- */
+/* ---------- 堆叠窗口（边距一律 0） ---------- */
 QStackedWidget {
     background-color: #2D2D30;
     color: #DCDCDC;
     border: none;
-    margin: 3px;
-    padding: 3px;
+    margin: 0px;
+    padding: 0px;
     border-radius: 3px;
 }
 
@@ -625,8 +626,8 @@ QTabWidget::pane {
     background-color: #2D2D30;
     border: 1px solid #555558;
     border-radius: 3px;
-    margin: 3px;
-    padding: 3px;
+    margin: 0px;
+    padding: 0px;
     top: -1px;
 }
 
