@@ -22,8 +22,11 @@
  *   间距 / 内边距 / 圆角 : 3 / 6 / 9 / 12
  *   控件内容最小高度     : 24px
  *   列表 / 表头行高      : 24px
- *   QStackedWidget 幅度  : 边距（margin / padding / contentsMargins）为 0
- *                          border-radius 仍为 3px
+ *   QStackedWidget 幅度  : 边距（margin / padding）为 0；不要 border-radius，
+ *                          避免 QFrame 走 styled frame 后顶部多一圈内缩。
+ *                          与上方控件之间的空隙主要来自父布局 spacing /
+ *                          contentsMargins，QSS 改不了，需配合
+ *                          resources/reduce_stacked_widget_top_gap.h。
  *
  * 贴边按钮点不中（最大化后）：
  *   禁止 * { color } 和 QWidget { background-color }。
@@ -63,14 +66,25 @@ QDialog {
     padding: 9px;
 }
 
-/* ---------- 堆叠窗口（边距一律 0） ---------- */
+/* ---------- 堆叠窗口（与上方控件贴齐） ----------
+ * QSS 只能清掉自身 box model。父 QVBoxLayout 默认 spacing 约 6px、
+ * contentsMargins 约 9px，叠在一起就是「上方控件 ↔ 堆叠页」那条空带。
+ * 不要给 QStackedWidget（QFrame 子类）加 border-radius / 边框，
+ * 否则会变成 styled frame，顶部再内缩一圈。
+ */
 QStackedWidget {
     background-color: #2D2D30;
     color: #DCDCDC;
     border: none;
     margin: 0px;
     padding: 0px;
-    border-radius: 3px;
+}
+
+QStackedWidget > QWidget {
+    background-color: transparent;
+    border: none;
+    margin: 0px;
+    padding: 0px;
 }
 
 /* ---------- 工具栏 / 菜单栏 ---------- */
@@ -79,7 +93,8 @@ QToolBar {
     border: none;
     background-color: #3F3F46;
     spacing: 3px;
-    padding: 3px;
+    margin: 0px;
+    padding: 3px 3px 0px 3px;
     min-height: 36px;
 }
 
@@ -630,23 +645,30 @@ QToolBox::tab:hover {
     background-color: #4A4A52;
 }
 
-/* ---------- 选项卡 ---------- */
+/* ---------- 选项卡 ----------
+ * QTabWidget 内部就是 QTabBar + QStackedWidget。pane 的圆角和 padding
+ * 会在页签与堆叠页之间留空。documentMode 去掉 3D 框，pane 上移贴住页签。
+ */
 QTabWidget {
     background-color: #2D2D30;
     color: #DCDCDC;
+    margin: 0px;
+    padding: 0px;
+    qproperty-documentMode: 1;
 }
 
 QTabWidget::pane {
     background-color: #2D2D30;
     border: 1px solid #555558;
-    border-radius: 3px;
+    border-top: 1px solid #555558;
+    border-radius: 0px;
     margin: 0px;
     padding: 0px;
     top: -1px;
 }
 
 QTabWidget::tab-bar {
-    left: 3px;
+    left: 0px;
     alignment: left;
 }
 
