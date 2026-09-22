@@ -7,6 +7,7 @@
 #include <limits>
 #include <numeric>
 #include <random>
+#include <string>
 #include <utility>
 
 namespace {
@@ -485,9 +486,10 @@ cv::Mat visualizeWhiteRegionGridSample(const cv::Mat& image,
         cv::line(canvas, a->point, b->point, cv::Scalar(255, 0, 255), 1, cv::LINE_AA);
         const cv::Point2f mid = (a->point + b->point) * 0.5f;
         const int d = static_cast<int>(std::lround(cv::norm(a->point - b->point)));
-        cv::putText(canvas, std::to_string(d),
-                    cv::Point(static_cast<int>(mid.x) - 14, static_cast<int>(mid.y) - 4),
-                    cv::FONT_HERSHEY_SIMPLEX, 0.35, cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
+        const std::string label = std::to_string(d);
+        const cv::Point org(static_cast<int>(mid.x) - 16, static_cast<int>(mid.y) - 4);
+        cv::putText(canvas, label, org, cv::FONT_HERSHEY_SIMPLEX, 0.42, cv::Scalar(0, 0, 0), 2, cv::LINE_AA);
+        cv::putText(canvas, label, org, cv::FONT_HERSHEY_SIMPLEX, 0.42, cv::Scalar(40, 40, 200), 1, cv::LINE_AA);
     };
 
     for (int r = 0; r < rows; ++r) {
