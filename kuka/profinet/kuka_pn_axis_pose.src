@@ -1,0 +1,48 @@
+&ACCESS RVP
+&REL 1
+DEF kuka_pn_axis_pose ( )
+DECL E6AXIS ax
+DECL E6POS pos
+DECL REAL cmd_e1, cmd_e2, cmd_e3
+DECL REAL cmd_a1, cmd_a2, cmd_a3, cmd_a4, cmd_a5, cmd_a6
+DECL REAL cmd_x, cmd_y, cmd_z, cmd_a, cmd_b, cmd_c
+
+; 读当前轴/位姿，CAST_TO 成 32 位 INTEGER 放到 $OUT，供 CIFX IORead
+ax = $AXIS_ACT
+pos = $POS_ACT
+
+PN_OUT_E1 = CAST_TO(ax.E1)
+PN_OUT_E2 = CAST_TO(ax.E2)
+PN_OUT_E3 = CAST_TO(ax.E3)
+PN_OUT_A1 = CAST_TO(ax.A1)
+PN_OUT_A2 = CAST_TO(ax.A2)
+PN_OUT_A3 = CAST_TO(ax.A3)
+PN_OUT_A4 = CAST_TO(ax.A4)
+PN_OUT_A5 = CAST_TO(ax.A5)
+PN_OUT_A6 = CAST_TO(ax.A6)
+PN_OUT_X  = CAST_TO(pos.X)
+PN_OUT_Y  = CAST_TO(pos.Y)
+PN_OUT_Z  = CAST_TO(pos.Z)
+PN_OUT_A  = CAST_TO(pos.A)
+PN_OUT_B  = CAST_TO(pos.B)
+PN_OUT_C  = CAST_TO(pos.C)
+
+; 写下发目标：CIFX IOWrite → $IN → CAST_FROM 还原 REAL
+; 实际运动请在机器人程序里用这些 cmd_* 做 PTP/LIN，不要在 Submit 里直接 PTP
+cmd_e1 = CAST_FROM(PN_IN_E1)
+cmd_e2 = CAST_FROM(PN_IN_E2)
+cmd_e3 = CAST_FROM(PN_IN_E3)
+cmd_a1 = CAST_FROM(PN_IN_A1)
+cmd_a2 = CAST_FROM(PN_IN_A2)
+cmd_a3 = CAST_FROM(PN_IN_A3)
+cmd_a4 = CAST_FROM(PN_IN_A4)
+cmd_a5 = CAST_FROM(PN_IN_A5)
+cmd_a6 = CAST_FROM(PN_IN_A6)
+cmd_x  = CAST_FROM(PN_IN_X)
+cmd_y  = CAST_FROM(PN_IN_Y)
+cmd_z  = CAST_FROM(PN_IN_Z)
+cmd_a  = CAST_FROM(PN_IN_A)
+cmd_b  = CAST_FROM(PN_IN_B)
+cmd_c  = CAST_FROM(PN_IN_C)
+
+END

@@ -22,6 +22,14 @@ Handle(AIS_Shape) scaledHandle = ScaleAISShapeBy1000(ais);
 - 通讯表：[`docs/kuka_weld_comm_table.md`](docs/kuka_weld_comm_table.md) / [`.csv`](docs/kuka_weld_comm_table.csv)
 - EKI：[`kuka/EthernetKRL/WeldHost.xml`](kuka/EthernetKRL/WeldHost.xml)
 
+## PROFINET 读写外部轴 / 关节 / TCP
+
+CIFX `xChannelIORead` / `xChannelIOWrite` 按 64 字节帧交换过程数据。有效载荷 60 字节：E1–E3、A1–A6、TCP XYZABC，各 FLOAT32。
+
+- 规范与 CIFX 改法：[`docs/kuka_profinet_io.md`](docs/kuka_profinet_io.md)
+- 地址表：[`docs/kuka_profinet_io_map.csv`](docs/kuka_profinet_io_map.csv)
+- KRL：[`kuka/profinet/kuka_pn_axis_pose.src`](kuka/profinet/kuka_pn_axis_pose.src)
+
 ```bash
 make test
 make docs

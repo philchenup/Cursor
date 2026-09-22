@@ -17,6 +17,8 @@ INT32 / FLOAT32 / BOOL 均按 4 字节对齐（对应 EKI 的 INT/REAL；BOOL �
 
 EKI 线上仍是 XML 文本，长度随数值变化；socket 接收缓冲建议 ≥ 4096。现有运动通道 `kukasend` 回传 13 个 REAL（E2 + J1–J6 + XYZABC）为 52 字节，与本焊接流程表不是同一帧。
 
+用 CIFX PROFINET 读 3 个外部轴 + 6 关节 + 6 TCP 位姿时，过程数据同样放入 64 字节 IO 帧，布局见 [`kuka_profinet_io.md`](kuka_profinet_io.md)（前 60 字节为 15×FLOAT32）。
+
 ## 流程
 
 1. 下发参考起点/终点、`Torch_A/B/C`、焊速、摆动，`Laser_Mode=1`（或 `2` 含焊中跟踪）
