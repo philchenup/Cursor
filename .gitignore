@@ -1,0 +1,4 @@
+build/
+*.o
+*.a
+white_region_samples.png
