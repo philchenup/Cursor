@@ -31,7 +31,10 @@ int main(int argc, char** argv)
     }
 
     std::cout << "# 上位机 ↔ KUKA 焊接通讯数据结构表\n\n";
-    std::cout << "共 " << kukaWeldCommSignals().size() << " 个信号，仅含总流程必要项。\n\n";
+    std::cout << "共 " << kukaWeldCommSignals().size() << " 个信号，仅含总流程必要项。\n";
+    std::cout << "读取数据（KUKA→上位机）打包 **" << kukaWeldPackedBytes(CommDirection::KukaToHost)
+              << "** 字节；下发数据（上位机→KUKA）打包 "
+              << kukaWeldPackedBytes(CommDirection::HostToKuka) << " 字节。\n\n";
     std::cout << commTableMarkdown() << '\n';
 
     HostCyclic demo;

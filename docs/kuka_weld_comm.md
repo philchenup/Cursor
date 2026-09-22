@@ -4,6 +4,19 @@
 
 完整表：[`kuka_weld_comm_table.md`](kuka_weld_comm_table.md)
 
+## 打包字节数
+
+INT32 / FLOAT32 / BOOL 均按 4 字节对齐（对应 EKI 的 INT/REAL；BOOL 以 INT 传输）。
+
+| 方向 | 信号数 | 打包字节数 |
+| --- | --- | --- |
+| 上位机→KUKA（下发） | 23 | 92 |
+| KUKA→上位机（读取） | 16 | **64** |
+
+上位机配置通讯 **读取数据字节大小** 时填 **64**。C++ 结构 `sizeof(KukaCyclic)` 同为 64。
+
+EKI 线上仍是 XML 文本，长度随数值变化；socket 接收缓冲建议 ≥ 4096。现有运动通道 `kukasend` 回传 13 个 REAL（E2 + J1–J6 + XYZABC）为 52 字节，与本焊接流程表不是同一帧。
+
 ## 流程
 
 1. 下发参考起点/终点、`Torch_A/B/C`、焊速、摆动，`Laser_Mode=1`（或 `2` 含焊中跟踪）

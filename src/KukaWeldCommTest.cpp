@@ -51,6 +51,24 @@ int main()
     }
     expect(host_n == 23, "23 host signals");
     expect(kuka_n == 16, "16 kuka signals");
+    expect(kukaWeldPackedBytes(CommDirection::KukaToHost) == kKukaToHostPackedBytes,
+           "kuka read packed bytes is 64");
+    expect(kukaWeldPackedBytes(CommDirection::HostToKuka) == kHostToKukaPackedBytes,
+           "host write packed bytes is 92");
+    expect(static_cast<int>(sizeof(KukaCyclic)) == kKukaToHostPackedBytes, "sizeof KukaCyclic");
+    expect(static_cast<int>(sizeof(HostCyclic)) == kHostToKukaPackedBytes, "sizeof HostCyclic");
+    expect(commSignalPackedBytes("INT32") == 4 && commSignalPackedBytes("BOOL") == 4
+               && commSignalPackedBytes("FLOAT32") == 4,
+           "word size 4");
+    expect(commSignalPackedBytes(nullptr) == 0, "null type");
+
+    const CommSignal& first_kuka = signals[static_cast<std::size_t>(host_n)];
+    const CommSignal& last_kuka = signals.back();
+    expect(first_kuka.direction == CommDirection::KukaToHost, "first kuka signal");
+    expect(kukaWeldPackedOffset(first_kuka) == 0, "kuka frame starts at 0");
+    expect(kukaWeldPackedOffset(last_kuka) + commSignalPackedBytes(last_kuka.type)
+               == kKukaToHostPackedBytes,
+           "last kuka signal ends at 64");
     expect(names.count("Extern_Speed") == 0, "no extra motion words");
     expect(names.count("Robot_J1") == 0, "no joint streaming");
     expect(names.count("Pass_Layer") == 0, "no multi-pass extras");
@@ -109,12 +127,14 @@ int main()
     expect(kukaPhaseName(KukaPhase::WeldToFoundEnd) == "WeldToFoundEnd", "phase name");
 
     const std::string md = commTableMarkdown();
-    expect(md.find("| 数据类型 | 信号名 | 含义 |") != std::string::npos, "header");
+    expect(md.find("| 字节偏移 | 字节数 | 数据类型 | 信号名 | 含义 |") != std::string::npos, "header");
     expect(md.find("| FLOAT32 | Seam_StartX |") != std::string::npos, "ref start");
     expect(md.find("| FLOAT32 | Found_EndZ |") != std::string::npos, "found end");
+    expect(md.find("读取数据字节大小") != std::string::npos, "read size note");
+    expect(md.find("**64**") != std::string::npos, "64 bytes");
     expect(md.find("Extern_Speed") == std::string::npos, "md has no extras");
     const std::string csv = commTableCsv();
-    expect(csv.find("数据类型,信号名,含义,方向") == 0, "csv");
+    expect(csv.find("字节偏移,字节数,数据类型,信号名,含义,方向") == 0, "csv");
     expect(ekiConfigXml("10.0.0.8", 54600).find("Tag=\"Laser_LookAhead\"") != std::string::npos,
            "eki laser");
 

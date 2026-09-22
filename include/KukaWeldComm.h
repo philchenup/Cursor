@@ -119,7 +119,30 @@ struct CommSignal {
     const char* meaning;
 };
 
+/** 每个信号按 EKI INT/REAL 对齐；BOOL 也按 INT 占 4 字节。 */
+constexpr int kCommPackedWordBytes = 4;
+
+/** 上位机→KUKA 下发打包字节数：23 信号 × 4 = 92。 */
+constexpr int kHostToKukaPackedBytes = 92;
+
+/** KUKA→上位机 读取打包字节数：16 信号 × 4 = 64。 */
+constexpr int kKukaToHostPackedBytes = 64;
+
+static_assert(sizeof(HostCyclic) == kHostToKukaPackedBytes,
+              "HostCyclic packed size must stay 92 bytes");
+static_assert(sizeof(KukaCyclic) == kKukaToHostPackedBytes,
+              "KukaCyclic packed size must stay 64 bytes");
+
 const std::vector<CommSignal>& kukaWeldCommSignals();
+
+/** INT32 / FLOAT32 / BOOL 均为 4 字节。 */
+int commSignalPackedBytes(const char* type);
+
+/** 该方向整帧打包字节数。读取数据（KukaToHost）为 64。 */
+int kukaWeldPackedBytes(CommDirection dir);
+
+/** 信号在该方向帧内的字节偏移，找不到返回 -1。 */
+int kukaWeldPackedOffset(const CommSignal& signal);
 
 std::string commDirectionName(CommDirection dir);
 std::string hostCmdName(HostCmd cmd);

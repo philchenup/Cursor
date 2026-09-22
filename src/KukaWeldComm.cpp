@@ -95,15 +95,54 @@ std::string csvEscape(const std::string& s)
 
 void appendTable(std::ostringstream& oss, CommDirection dir)
 {
-    oss << "| 数据类型 | 信号名 | 含义 |\n| --- | --- | --- |\n";
+    oss << "| 字节偏移 | 字节数 | 数据类型 | 信号名 | 含义 |\n| --- | --- | --- | --- | --- |\n";
+    int offset = 0;
     for (const CommSignal& s : kukaWeldCommSignals()) {
-        if (s.direction == dir) {
-            oss << "| " << s.type << " | " << s.name << " | " << s.meaning << " |\n";
+        if (s.direction != dir) {
+            continue;
         }
+        const int n = commSignalPackedBytes(s.type);
+        oss << "| " << offset << " | " << n << " | " << s.type << " | " << s.name
+            << " | " << s.meaning << " |\n";
+        offset += n;
     }
 }
 
 }  // namespace
+
+int commSignalPackedBytes(const char* type)
+{
+    if (type == nullptr || type[0] == '\0') {
+        return 0;
+    }
+    return kCommPackedWordBytes;
+}
+
+int kukaWeldPackedBytes(CommDirection dir)
+{
+    int n = 0;
+    for (const CommSignal& s : kukaWeldCommSignals()) {
+        if (s.direction == dir) {
+            n += commSignalPackedBytes(s.type);
+        }
+    }
+    return n;
+}
+
+int kukaWeldPackedOffset(const CommSignal& signal)
+{
+    int offset = 0;
+    for (const CommSignal& s : kukaWeldCommSignals()) {
+        if (s.direction != signal.direction) {
+            continue;
+        }
+        if (s.index == signal.index) {
+            return offset;
+        }
+        offset += commSignalPackedBytes(s.type);
+    }
+    return -1;
+}
 
 const std::vector<CommSignal>& kukaWeldCommSignals()
 {
@@ -202,9 +241,15 @@ std::string kukaPhaseName(KukaPhase phase)
 std::string commTableMarkdown()
 {
     std::ostringstream oss;
-    oss << "## 上位机 → KUKA\n\n";
+    oss << "INT32 / FLOAT32 / BOOL 均按 4 字节对齐（EKI INT/REAL；BOOL 以 INT 传输）。\n\n"
+        << "| 方向 | 信号数 | 打包字节数 |\n| --- | --- | --- |\n"
+        << "| 上位机→KUKA（下发） | 23 | " << kHostToKukaPackedBytes << " |\n"
+        << "| KUKA→上位机（读取） | 16 | **" << kKukaToHostPackedBytes << "** |\n\n"
+        << "配置通讯“读取数据字节大小”时填 **" << kKukaToHostPackedBytes
+        << "**。EKI XML 线上是变长文本，socket 接收缓冲建议 ≥ 4096。\n\n";
+    oss << "## 上位机 → KUKA（92 字节）\n\n";
     appendTable(oss, CommDirection::HostToKuka);
-    oss << "\n## KUKA → 上位机\n\n";
+    oss << "\n## KUKA → 上位机（读取，64 字节）\n\n";
     appendTable(oss, CommDirection::KukaToHost);
     return oss.str();
 }
@@ -212,10 +257,16 @@ std::string commTableMarkdown()
 std::string commTableCsv()
 {
     std::ostringstream oss;
-    oss << "数据类型,信号名,含义,方向\n";
+    oss << "字节偏移,字节数,数据类型,信号名,含义,方向\n";
+    int host_off = 0;
+    int kuka_off = 0;
     for (const CommSignal& s : kukaWeldCommSignals()) {
-        oss << s.type << ',' << s.name << ',' << csvEscape(s.meaning) << ','
-            << csvEscape(commDirectionName(s.direction)) << '\n';
+        const int n = commSignalPackedBytes(s.type);
+        int& off = (s.direction == CommDirection::HostToKuka) ? host_off : kuka_off;
+        oss << off << ',' << n << ',' << s.type << ',' << s.name << ','
+            << csvEscape(s.meaning) << ',' << csvEscape(commDirectionName(s.direction))
+            << '\n';
+        off += n;
     }
     return oss.str();
 }

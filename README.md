@@ -16,7 +16,7 @@ Handle(AIS_Shape) scaledHandle = ScaleAISShapeBy1000(ais);
 
 ## 上位机 ↔ KUKA 焊接通讯表
 
-通讯表仅含焊接总流程必要项（参考起终点、焊枪姿态、焊速、摆动、寻缝命令与找到的点），共 39 项。焊中纠偏走 RSI。
+通讯表仅含焊接总流程必要项（参考起终点、焊枪姿态、焊速、摆动、寻缝命令与找到的点），共 39 项。焊中纠偏走 RSI。KUKA→上位机读取数据打包 **64** 字节，上位机→KUKA 下发 92 字节。
 
 - 规范：[`docs/kuka_weld_comm.md`](docs/kuka_weld_comm.md)
 - 通讯表：[`docs/kuka_weld_comm_table.md`](docs/kuka_weld_comm_table.md) / [`.csv`](docs/kuka_weld_comm_table.csv)
