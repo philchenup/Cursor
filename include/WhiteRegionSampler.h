@@ -39,8 +39,11 @@ struct WhiteRegionGridSampleResult {
  *  - Each point is drawn uniformly in the *interior* of the disk centered
  *    at its cell, with radius `innerCircleScale * min(cellW, cellH) / 2`.
  *    Points are not forced onto the circle boundary.
- *  - Every pair of samples has Euclidean distance strictly greater than
- *    `minPairDistance` pixels (default 200).
+ *  - The sampler tries to keep every pair farther than `minPairDistance`
+ *    (default 200). On a 2x8 split of a ~1400px-wide region this is not
+ *    always feasible: 7 horizontal gaps of 200 need 1400px plus slack.
+ *    In that case points stay uniformly inside their disks and the
+ *    configuration with the largest minimum pairwise distance is kept.
  *  - Samples stay on white pixels of the mask.
  *
  * @param image  BGR / BGRA / gray image. White (high intensity) is the region.

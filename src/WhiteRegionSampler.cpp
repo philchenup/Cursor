@@ -240,57 +240,6 @@ float minPairwiseDistance(const std::vector<cv::Point2f>& pts)
     return best;
 }
 
-void separateClosePairs(std::vector<cv::Point2f>& pts,
-                        const std::vector<CellGeom>& cells,
-                        const cv::Mat& mask,
-                        float minDist,
-                        std::mt19937& rng)
-{
-    const int n = static_cast<int>(pts.size());
-    for (int iter = 0; iter < 80; ++iter) {
-        int a = -1;
-        int b = -1;
-        float closest = minDist;
-        for (int i = 0; i < n; ++i) {
-            for (int j = i + 1; j < n; ++j) {
-                const float d = static_cast<float>(cv::norm(pts[static_cast<size_t>(i)] -
-                                                            pts[static_cast<size_t>(j)]));
-                if (d <= closest) {
-                    closest = d;
-                    a = i;
-                    b = j;
-                }
-            }
-        }
-        if (a < 0 || closest > minDist) {
-            return;
-        }
-
-        cv::Point2f dir = pts[static_cast<size_t>(a)] - pts[static_cast<size_t>(b)];
-        const float nrm = static_cast<float>(cv::norm(dir));
-        if (nrm < 1e-3f) {
-            dir = cv::Point2f(1.f, 0.f);
-        } else {
-            dir *= 1.f / nrm;
-        }
-        const float push = 0.5f * (minDist + 1.5f - closest);
-        cv::Point2f pa = clampToDisk(cells[static_cast<size_t>(a)].center,
-                                    pts[static_cast<size_t>(a)] + dir * push,
-                                    cells[static_cast<size_t>(a)].radius);
-        cv::Point2f pb = clampToDisk(cells[static_cast<size_t>(b)].center,
-                                    pts[static_cast<size_t>(b)] - dir * push,
-                                    cells[static_cast<size_t>(b)].radius);
-        if (!onWhite(mask, pa)) {
-            sampleInDiskOnMask(rng, cells[static_cast<size_t>(a)], mask, pa, 16);
-        }
-        if (!onWhite(mask, pb)) {
-            sampleInDiskOnMask(rng, cells[static_cast<size_t>(b)], mask, pb, 16);
-        }
-        pts[static_cast<size_t>(a)] = pa;
-        pts[static_cast<size_t>(b)] = pb;
-    }
-}
-
 std::vector<cv::Point2f> sampleWithMinDistance(const std::vector<CellGeom>& cells,
                                                const cv::Mat& mask,
                                                float minDist,
@@ -301,8 +250,8 @@ std::vector<cv::Point2f> sampleWithMinDistance(const std::vector<CellGeom>& cell
     std::vector<cv::Point2f> best(static_cast<size_t>(n));
     float bestMin = -1.f;
 
-    const int restarts = 120;
-    const int triesPerCell = 96;
+    const int restarts = 200;
+    const int triesPerCell = 64;
 
     for (int restart = 0; restart < restarts; ++restart) {
         std::vector<cv::Point2f> pts(static_cast<size_t>(n));
@@ -325,36 +274,24 @@ std::vector<cv::Point2f> sampleWithMinDistance(const std::vector<CellGeom>& cell
                 break;
             }
         }
-        if (ok) {
-            return pts;
-        }
 
-        if (!pts.empty()) {
+        if (!ok) {
+            // Keep a fully-initialized interior sample as fallback.
             for (int i = 0; i < n; ++i) {
-                if (pts[static_cast<size_t>(i)] == cv::Point2f() &&
-                    !sampleInDiskOnMask(rng, cells[static_cast<size_t>(i)], mask, pts[static_cast<size_t>(i)])) {
+                if (!sampleInDiskOnMask(rng, cells[static_cast<size_t>(i)], mask, pts[static_cast<size_t>(i)])) {
                     pts[static_cast<size_t>(i)] = cells[static_cast<size_t>(i)].center;
                 }
             }
-            separateClosePairs(pts, cells, mask, minDist, rng);
-            const float m = minPairwiseDistance(pts);
-            if (m > bestMin) {
-                bestMin = m;
-                best = pts;
-                if (m > minDist) {
-                    return best;
-                }
-            }
         }
-    }
 
-    if (bestMin < 0.f) {
-        for (int i = 0; i < n; ++i) {
-            if (!sampleInDiskOnMask(rng, cells[static_cast<size_t>(i)], mask, best[static_cast<size_t>(i)])) {
-                best[static_cast<size_t>(i)] = cells[static_cast<size_t>(i)].center;
-            }
+        const float m = minPairwiseDistance(pts);
+        if (m > bestMin) {
+            bestMin = m;
+            best = pts;
         }
-        separateClosePairs(best, cells, mask, minDist, rng);
+        if (ok && m > minDist) {
+            return pts;
+        }
     }
     return best;
 }
