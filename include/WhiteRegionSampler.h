@@ -12,7 +12,7 @@
 struct WhiteRegionSample {
     cv::Point2f point;       ///< Sampled pixel coordinate (image space)
     cv::Point2f cellCenter;  ///< Center of this cell
-    float sampleRadius{0.f}; ///< 0.7 * cell inscribed-circle radius
+    float sampleRadius{0.f}; ///< Allowed radius: 0.7 * cell inscribed-circle radius
     int row{0};
     int col{0};
 };
@@ -21,12 +21,12 @@ struct WhiteRegionSample {
  * Result of inscribed-rectangle extraction, grid split and sampling.
  */
 struct WhiteRegionGridSampleResult {
-    cv::RotatedRect inscribedRect;           ///< Largest rectangle inside the white blob
+    cv::RotatedRect inscribedRect;             ///< Largest rectangle inside the white blob
     std::vector<cv::Point2f> inscribedCorners; ///< TL, TR, BR, BL (along long / short axes)
-    std::vector<WhiteRegionSample> samples;  ///< gridRows * gridCols points
+    std::vector<WhiteRegionSample> samples;    ///< gridRows * gridCols points
     int gridRows{2};
     int gridCols{8};
-    float targetNeighborDistance{250.f};
+    float minPairDistance{200.f};              ///< Required pairwise Euclidean distance
     float innerCircleScale{0.7f};
 };
 
@@ -36,20 +36,18 @@ struct WhiteRegionGridSampleResult {
  * randomly sample one point per cell.
  *
  * Sampling constraints:
- *  - Each point lies in the disk centered at its cell, with radius
- *    `innerCircleScale` times the cell's inscribed-circle radius
- *    (min(cellW, cellH) / 2).
- *  - Neighboring cells (4-connected) have their samples pulled toward
- *    a Euclidean distance of `targetNeighborDistance` pixels. The target
- *    is best-effort: it is only reachable when it falls inside the two
- *    sampling disks. Distant non-neighbors are not forced to 250 px.
+ *  - Each point is drawn uniformly in the *interior* of the disk centered
+ *    at its cell, with radius `innerCircleScale * min(cellW, cellH) / 2`.
+ *    Points are not forced onto the circle boundary.
+ *  - Every pair of samples has Euclidean distance strictly greater than
+ *    `minPairDistance` pixels (default 200).
  *  - Samples stay on white pixels of the mask.
  *
  * @param image  BGR / BGRA / gray image. White (high intensity) is the region.
  * @param result Output geometry and the 16 sample points.
  * @param gridRows Number of cells along the short axis (default 2).
  * @param gridCols Number of cells along the long axis (default 8).
- * @param targetNeighborDistance Desired 4-neighbor sample spacing in pixels.
+ * @param minPairDistance Minimum allowed distance between any two samples.
  * @param innerCircleScale Fraction of the cell inscribed-circle radius.
  * @param seed RNG seed for reproducible sampling.
  * @return true on success.
@@ -58,7 +56,7 @@ bool sampleWhiteRegionGrid(const cv::Mat& image,
                            WhiteRegionGridSampleResult& result,
                            int gridRows = 2,
                            int gridCols = 8,
-                           float targetNeighborDistance = 250.f,
+                           float minPairDistance = 200.f,
                            float innerCircleScale = 0.7f,
                            uint64_t seed = 1);
 
