@@ -4,11 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
-#include <numeric>
-#include <random>
 #include <string>
-#include <utility>
 
 namespace {
 
@@ -40,10 +36,7 @@ cv::Mat makeWhiteMask(const cv::Mat& image)
     }
     cv::Mat mask;
     cv::threshold(gray, mask, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
-    // Keep the larger polarity as the "white" foreground.
-    if (cv::countNonZero(mask) * 2 < mask.rows * mask.cols) {
-        // already the smaller blob — typical white-on-black
-    } else {
+    if (cv::countNonZero(mask) * 2 >= mask.rows * mask.cols) {
         cv::bitwise_not(mask, mask);
     }
     cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5));
@@ -68,18 +61,17 @@ bool largestContour(const cv::Mat& mask, std::vector<cv::Point>& contour)
 
 void orderQuad(const cv::Point2f src[4], cv::Point2f dst[4])
 {
-    // TL has min x+y, BR has max x+y, TR has min y-x among remaining, etc.
     int idx[4] = {0, 1, 2, 3};
     std::sort(idx, idx + 4, [&](int i, int j) {
         return src[i].x + src[i].y < src[j].x + src[j].y;
     });
-    dst[0] = src[idx[0]]; // TL
-    dst[2] = src[idx[3]]; // BR
+    dst[0] = src[idx[0]];
+    dst[2] = src[idx[3]];
     cv::Point2f a = src[idx[1]];
     cv::Point2f b = src[idx[2]];
     if (a.x > b.x) {
-        dst[1] = a; // TR
-        dst[3] = b; // BL
+        dst[1] = a;
+        dst[3] = b;
     } else {
         dst[1] = b;
         dst[3] = a;
@@ -135,165 +127,12 @@ cv::Point2f bilinear(const cv::Point2f& tl, const cv::Point2f& tr,
     return lerp2(top, bot, v);
 }
 
-bool onWhite(const cv::Mat& mask, const cv::Point2f& p)
+int countAlongAxis(float length, float minSize)
 {
-    const int x = static_cast<int>(std::lround(p.x));
-    const int y = static_cast<int>(std::lround(p.y));
-    if (x < 0 || y < 0 || x >= mask.cols || y >= mask.rows) {
-        return false;
+    if (length <= 0.f || minSize <= 0.f) {
+        return 1;
     }
-    return mask.at<uchar>(y, x) != 0;
-}
-
-cv::Point2f clampToDisk(const cv::Point2f& center, const cv::Point2f& p, float radius)
-{
-    const cv::Point2f d = p - center;
-    const float n = std::sqrt(d.x * d.x + d.y * d.y);
-    if (n <= radius || n < 1e-6f) {
-        return p;
-    }
-    return center + d * (radius / n);
-}
-
-struct CellGeom {
-    cv::Point2f center;
-    float radius; // allowed sample radius
-    int row;
-    int col;
-};
-
-std::vector<CellGeom> buildCells(const cv::Point2f& tl, const cv::Point2f& tr,
-                                 const cv::Point2f& br, const cv::Point2f& bl,
-                                 int rows, int cols, float innerCircleScale)
-{
-    const float width = static_cast<float>(cv::norm(tr - tl));
-    const float height = static_cast<float>(cv::norm(bl - tl));
-    const float cellW = width / static_cast<float>(cols);
-    const float cellH = height / static_cast<float>(rows);
-    const float inscribedR = 0.5f * std::min(cellW, cellH);
-    const float sampleR = innerCircleScale * inscribedR;
-
-    std::vector<CellGeom> cells;
-    cells.reserve(static_cast<size_t>(rows * cols));
-    for (int r = 0; r < rows; ++r) {
-        for (int c = 0; c < cols; ++c) {
-            const float u = (static_cast<float>(c) + 0.5f) / static_cast<float>(cols);
-            const float v = (static_cast<float>(r) + 0.5f) / static_cast<float>(rows);
-            CellGeom cell;
-            cell.center = bilinear(tl, tr, br, bl, u, v);
-            cell.radius = sampleR;
-            cell.row = r;
-            cell.col = c;
-            cells.push_back(cell);
-        }
-    }
-    return cells;
-}
-
-cv::Point2f randomInDisk(std::mt19937& rng, const CellGeom& cell)
-{
-    // Uniform in the open disk: radius uses sqrt(u) so points fill the interior
-    // and are not biased onto the circumference.
-    std::uniform_real_distribution<float> u01(0.f, 1.f);
-    const float ang = u01(rng) * 2.f * kPi;
-    const float rad = cell.radius * std::sqrt(u01(rng));
-    return cell.center + cv::Point2f(std::cos(ang) * rad, std::sin(ang) * rad);
-}
-
-bool sampleInDiskOnMask(std::mt19937& rng, const CellGeom& cell, const cv::Mat& mask,
-                        cv::Point2f& out, int attempts = 48)
-{
-    for (int i = 0; i < attempts; ++i) {
-        cv::Point2f p = randomInDisk(rng, cell);
-        p = clampToDisk(cell.center, p, cell.radius);
-        if (onWhite(mask, p)) {
-            out = p;
-            return true;
-        }
-    }
-    if (onWhite(mask, cell.center)) {
-        out = cell.center;
-        return true;
-    }
-    return false;
-}
-
-bool farFromPlaced(const cv::Point2f& p, const std::vector<cv::Point2f>& pts,
-                   int count, float minDist)
-{
-    for (int i = 0; i < count; ++i) {
-        if (static_cast<float>(cv::norm(p - pts[static_cast<size_t>(i)])) <= minDist) {
-            return false;
-        }
-    }
-    return true;
-}
-
-float minPairwiseDistance(const std::vector<cv::Point2f>& pts)
-{
-    float best = std::numeric_limits<float>::infinity();
-    for (size_t i = 0; i < pts.size(); ++i) {
-        for (size_t j = i + 1; j < pts.size(); ++j) {
-            best = std::min(best, static_cast<float>(cv::norm(pts[i] - pts[j])));
-        }
-    }
-    return best;
-}
-
-std::vector<cv::Point2f> sampleWithMinDistance(const std::vector<CellGeom>& cells,
-                                               const cv::Mat& mask,
-                                               float minDist,
-                                               uint64_t seed)
-{
-    std::mt19937 rng(static_cast<uint32_t>(seed ^ (seed >> 32)));
-    const int n = static_cast<int>(cells.size());
-    std::vector<cv::Point2f> best(static_cast<size_t>(n));
-    float bestMin = -1.f;
-
-    const int restarts = 200;
-    const int triesPerCell = 64;
-
-    for (int restart = 0; restart < restarts; ++restart) {
-        std::vector<cv::Point2f> pts(static_cast<size_t>(n));
-        bool ok = true;
-        for (int i = 0; i < n; ++i) {
-            bool found = false;
-            for (int t = 0; t < triesPerCell; ++t) {
-                cv::Point2f cand;
-                if (!sampleInDiskOnMask(rng, cells[static_cast<size_t>(i)], mask, cand, 8)) {
-                    continue;
-                }
-                if (farFromPlaced(cand, pts, i, minDist)) {
-                    pts[static_cast<size_t>(i)] = cand;
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                ok = false;
-                break;
-            }
-        }
-
-        if (!ok) {
-            // Keep a fully-initialized interior sample as fallback.
-            for (int i = 0; i < n; ++i) {
-                if (!sampleInDiskOnMask(rng, cells[static_cast<size_t>(i)], mask, pts[static_cast<size_t>(i)])) {
-                    pts[static_cast<size_t>(i)] = cells[static_cast<size_t>(i)].center;
-                }
-            }
-        }
-
-        const float m = minPairwiseDistance(pts);
-        if (m > bestMin) {
-            bestMin = m;
-            best = pts;
-        }
-        if (ok && m > minDist) {
-            return pts;
-        }
-    }
-    return best;
+    return std::max(1, static_cast<int>(std::floor(length / minSize)));
 }
 
 cv::RotatedRect rectFromCorners(const cv::Point2f& tl, const cv::Point2f& tr,
@@ -303,7 +142,7 @@ cv::RotatedRect rectFromCorners(const cv::Point2f& tl, const cv::Point2f& tr,
     const float width = static_cast<float>(cv::norm(tr - tl));
     const float height = static_cast<float>(cv::norm(bl - tl));
     const cv::Point2f vx = tr - tl;
-    float angle = std::atan2(vx.y, vx.x) * 180.f / kPi;
+    const float angle = std::atan2(vx.y, vx.x) * 180.f / kPi;
     return cv::RotatedRect(center, cv::Size2f(width, height), angle);
 }
 
@@ -324,19 +163,14 @@ cv::Mat toBgr(const cv::Mat& image)
 
 bool sampleWhiteRegionGrid(const cv::Mat& image,
                            WhiteRegionGridSampleResult& result,
-                           int gridRows,
-                           int gridCols,
-                           float minPairDistance,
-                           float innerCircleScale,
-                           uint64_t seed)
+                           float minCellWidth,
+                           float minCellHeight)
 {
     result = {};
-    result.gridRows = gridRows;
-    result.gridCols = gridCols;
-    result.minPairDistance = minPairDistance;
-    result.innerCircleScale = innerCircleScale;
+    result.minCellWidth = minCellWidth;
+    result.minCellHeight = minCellHeight;
 
-    if (image.empty() || gridRows < 1 || gridCols < 1 || innerCircleScale <= 0.f) {
+    if (image.empty() || minCellWidth <= 0.f || minCellHeight <= 0.f) {
         return false;
     }
 
@@ -358,7 +192,6 @@ bool sampleWhiteRegionGrid(const cv::Mat& image,
 
     float outerW = static_cast<float>(cv::norm(quad[1] - quad[0]));
     float outerH = static_cast<float>(cv::norm(quad[3] - quad[0]));
-    // Long side is columns (8), short side is rows (2).
     if (outerW < outerH) {
         const cv::Point2f tl = quad[3];
         const cv::Point2f tr = quad[0];
@@ -395,36 +228,43 @@ bool sampleWhiteRegionGrid(const cv::Mat& image,
         {static_cast<float>(inner.x + inner.width - 1), static_cast<float>(inner.y + inner.height - 1)},
         {static_cast<float>(inner.x), static_cast<float>(inner.y + inner.height - 1)}};
 
-    cv::Mat Hinv = H.inv();
-    cv::Point2f tl, tr, br, bl;
     std::vector<cv::Point2f> in(innerPts, innerPts + 4);
     std::vector<cv::Point2f> out(4);
-    cv::perspectiveTransform(in, out, Hinv);
-    tl = out[0];
-    tr = out[1];
-    br = out[2];
-    bl = out[3];
+    cv::perspectiveTransform(in, out, H.inv());
+    const cv::Point2f tl = out[0];
+    const cv::Point2f tr = out[1];
+    const cv::Point2f br = out[2];
+    const cv::Point2f bl = out[3];
 
     result.inscribedCorners = {tl, tr, br, bl};
     result.inscribedRect = rectFromCorners(tl, tr, br, bl);
 
-    const std::vector<CellGeom> cells =
-        buildCells(tl, tr, br, bl, gridRows, gridCols, innerCircleScale);
-    const std::vector<cv::Point2f> pts =
-        sampleWithMinDistance(cells, mask, minPairDistance, seed);
-    if (pts.size() != cells.size()) {
-        return false;
-    }
+    const float width = static_cast<float>(cv::norm(tr - tl));
+    const float height = static_cast<float>(cv::norm(bl - tl));
+    const int cols = countAlongAxis(width, minCellWidth);
+    const int rows = countAlongAxis(height, minCellHeight);
+    const float cellW = width / static_cast<float>(cols);
+    const float cellH = height / static_cast<float>(rows);
 
-    result.samples.reserve(cells.size());
-    for (size_t i = 0; i < cells.size(); ++i) {
-        WhiteRegionSample s;
-        s.point = pts[i];
-        s.cellCenter = cells[i].center;
-        s.sampleRadius = cells[i].radius;
-        s.row = cells[i].row;
-        s.col = cells[i].col;
-        result.samples.push_back(s);
+    result.gridRows = rows;
+    result.gridCols = cols;
+    result.cellWidth = cellW;
+    result.cellHeight = cellH;
+    result.samples.reserve(static_cast<size_t>(rows * cols));
+
+    for (int r = 0; r < rows; ++r) {
+        for (int c = 0; c < cols; ++c) {
+            const float u = (static_cast<float>(c) + 0.5f) / static_cast<float>(cols);
+            const float v = (static_cast<float>(r) + 0.5f) / static_cast<float>(rows);
+            WhiteRegionSample s;
+            s.cellCenter = bilinear(tl, tr, br, bl, u, v);
+            s.point = s.cellCenter;
+            s.cellWidth = cellW;
+            s.cellHeight = cellH;
+            s.row = r;
+            s.col = c;
+            result.samples.push_back(s);
+        }
     }
     return true;
 }
@@ -444,8 +284,7 @@ cv::Mat visualizeWhiteRegionGridSample(const cv::Mat& image,
     const int rows = result.gridRows;
     const int cols = result.gridCols;
 
-    const cv::Point pts[4] = {
-        tl, tr, br, bl};
+    const cv::Point pts[4] = {tl, tr, br, bl};
     for (int i = 0; i < 4; ++i) {
         cv::line(canvas, pts[i], pts[(i + 1) % 4], cv::Scalar(0, 220, 0), 2, cv::LINE_AA);
     }
@@ -460,43 +299,24 @@ cv::Mat visualizeWhiteRegionGridSample(const cv::Mat& image,
     }
 
     for (const auto& s : result.samples) {
-        cv::circle(canvas, s.cellCenter, std::max(1, static_cast<int>(std::lround(s.sampleRadius))),
-                   cv::Scalar(0, 255, 255), 1, cv::LINE_AA);
-        cv::circle(canvas, s.cellCenter, 3, cv::Scalar(180, 180, 180), -1, cv::LINE_AA);
         cv::circle(canvas, s.point, 6, cv::Scalar(0, 0, 255), -1, cv::LINE_AA);
         cv::circle(canvas, s.point, 6, cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
+        const std::string tag = std::to_string(s.row) + "," + std::to_string(s.col);
+        cv::putText(canvas, tag,
+                    cv::Point(static_cast<int>(s.point.x) + 8, static_cast<int>(s.point.y) - 8),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(0, 0, 0), 2, cv::LINE_AA);
+        cv::putText(canvas, tag,
+                    cv::Point(static_cast<int>(s.point.x) + 8, static_cast<int>(s.point.y) - 8),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(40, 40, 200), 1, cv::LINE_AA);
     }
 
-    auto indexOf = [&](int r, int c) -> const WhiteRegionSample* {
-        for (const auto& s : result.samples) {
-            if (s.row == r && s.col == c) {
-                return &s;
-            }
-        }
-        return nullptr;
-    };
-
-    auto drawPair = [&](const WhiteRegionSample* a, const WhiteRegionSample* b) {
-        if (!a || !b) {
-            return;
-        }
-        const float dist = static_cast<float>(cv::norm(a->point - b->point));
-        const bool ok = dist > result.minPairDistance;
-        cv::line(canvas, a->point, b->point,
-                 ok ? cv::Scalar(255, 0, 255) : cv::Scalar(0, 0, 255), 1, cv::LINE_AA);
-        const cv::Point2f mid = (a->point + b->point) * 0.5f;
-        const int d = static_cast<int>(std::lround(dist));
-        const std::string label = std::to_string(d);
-        const cv::Point org(static_cast<int>(mid.x) - 16, static_cast<int>(mid.y) - 4);
-        cv::putText(canvas, label, org, cv::FONT_HERSHEY_SIMPLEX, 0.42, cv::Scalar(0, 0, 0), 2, cv::LINE_AA);
-        cv::putText(canvas, label, org, cv::FONT_HERSHEY_SIMPLEX, 0.42, cv::Scalar(40, 40, 200), 1, cv::LINE_AA);
-    };
-
-    for (int r = 0; r < rows; ++r) {
-        for (int c = 0; c < cols; ++c) {
-            drawPair(indexOf(r, c), indexOf(r, c + 1));
-            drawPair(indexOf(r, c), indexOf(r + 1, c));
-        }
-    }
+    const std::string info =
+        std::to_string(rows) + "x" + std::to_string(cols) +
+        "  cell " + std::to_string(static_cast<int>(std::lround(result.cellWidth))) +
+        "x" + std::to_string(static_cast<int>(std::lround(result.cellHeight)));
+    cv::putText(canvas, info, cv::Point(16, 28),
+                cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 0, 0), 3, cv::LINE_AA);
+    cv::putText(canvas, info, cv::Point(16, 28),
+                cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 255), 1, cv::LINE_AA);
     return canvas;
 }
