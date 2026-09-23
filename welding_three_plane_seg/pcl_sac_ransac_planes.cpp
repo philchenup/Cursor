@@ -1,6 +1,5 @@
 #include <pcl/ModelCoefficients.h>
 #include <pcl/PointIndices.h>
-#include <pcl/common/centroid.h>
 #include <pcl/common/io.h>
 #include <pcl/filters/extract_indices.h>
 #include <pcl/filters/passthrough.h>
@@ -21,6 +20,7 @@
 #include <string>
 #include <vector>
 
+// Point cloud unit: millimetre (mm).
 using Cloud = pcl::PointCloud<pcl::PointXYZ>;
 using CloudRGB = pcl::PointCloud<pcl::PointXYZRGB>;
 
@@ -29,13 +29,13 @@ struct Options {
   std::string prefix = "sac_plane";
   int max_planes = 3;
   int max_iterations = 1000;
-  double distance_threshold = 0.0012;  // metres
-  double voxel_leaf = 0.001;
+  double distance_threshold = 1.2;  // mm
+  double voxel_leaf = 1.0;          // mm
   int min_inliers = 200;
   int sor_mean_k = 20;
   double sor_stddev = 1.8;
-  double z_min = -1e9;
-  double z_max = 1e9;
+  double z_min = -1e9;  // mm
+  double z_max = 1e9;   // mm
   bool show = false;
 };
 
@@ -85,7 +85,7 @@ bool extractOnePlane(const Cloud::ConstPtr& cloud,
   seg.setModelType(pcl::SACMODEL_PLANE);
   seg.setMethodType(pcl::SAC_RANSAC);
   seg.setMaxIterations(opt.max_iterations);
-  seg.setDistanceThreshold(opt.distance_threshold);
+  seg.setDistanceThreshold(opt.distance_threshold);  // mm
   seg.setInputCloud(cloud);
   seg.segment(inliers, coeff);
   return !inliers.indices.empty() &&
@@ -138,7 +138,8 @@ void printPlane(int id, const pcl::ModelCoefficients& coeff, std::size_t n) {
   const double d = coeff.values[3];
   const double norm = std::sqrt(nx * nx + ny * ny + nz * nz);
   std::cout << "plane[" << id << "]  " << nx << " x + " << ny << " y + " << nz
-            << " z + " << d << " = 0   |n|=" << norm << "  inliers=" << n << "\n";
+            << " z + " << d << " = 0   |n|=" << norm << "  inliers=" << n
+            << "  (xyz in mm)\n";
 }
 
 int run(const Options& opt) {
@@ -147,7 +148,7 @@ int run(const Options& opt) {
     std::cerr << "failed to load " << opt.input << "\n";
     return 1;
   }
-  std::cout << "loaded " << raw->size() << " points\n";
+  std::cout << "loaded " << raw->size() << " points (unit: mm)\n";
 
   Cloud::Ptr remaining = preprocess(raw, opt);
   std::cout << "after preprocess " << remaining->size() << " points\n";
@@ -202,7 +203,8 @@ int run(const Options& opt) {
         Eigen::Vector3d n2(planes[j].values[0], planes[j].values[1], planes[j].values[2]);
         n1.normalize();
         n2.normalize();
-                const double ang = std::acos(std::min(1.0, std::max(-1.0, std::abs(n1.dot(n2))))) * 180.0 / 3.141592653589793;
+        const double ang =
+            std::acos(std::min(1.0, std::max(-1.0, std::abs(n1.dot(n2))))) * 180.0 / 3.141592653589793;
         const Eigen::Vector3d dir = n1.cross(n2);
         std::cout << "dihedral " << i << "-" << j << " = " << ang << " deg  line_dir=["
                   << dir.transpose() << "]\n";
@@ -211,14 +213,14 @@ int run(const Options& opt) {
   }
   if (planes.size() >= 3) {
     const Eigen::Vector3d corner = planeIntersectionPoint(planes[0], planes[1], planes[2]);
-    std::cout << "three-plane corner = [" << corner.transpose() << "]\n";
+    std::cout << "three-plane corner (mm) = [" << corner.transpose() << "]\n";
   }
 
   if (opt.show) {
-    pcl::visualization::PCLVisualizer vis("SAC_RANSAC planes");
+    pcl::visualization::PCLVisualizer vis("SAC_RANSAC planes (mm)");
     CloudRGB::Ptr labeled_ptr(new CloudRGB(labeled));
     vis.addPointCloud<pcl::PointXYZRGB>(labeled_ptr, "labeled");
-    vis.addCoordinateSystem(0.05);
+    vis.addCoordinateSystem(50.0);  // 50 mm axis
     vis.spin();
   }
   return 0;
@@ -227,13 +229,14 @@ int run(const Options& opt) {
 void usage() {
   std::cout
       << "usage: pcl_sac_ransac_planes --in cloud.ply [options]\n"
+      << "  Point cloud unit MUST be millimetre (mm).\n"
       << "  --prefix NAME          output prefix (default sac_plane)\n"
       << "  --planes N             number of planes (default 3)\n"
-      << "  --dist M               RANSAC distance threshold in metres (default 0.0012)\n"
+      << "  --dist MM              RANSAC distance threshold in mm (default 1.2)\n"
       << "  --iters N              max iterations (default 1000)\n"
       << "  --min-inliers N        reject smaller planes (default 200)\n"
-      << "  --voxel M              voxel leaf, 0 to disable (default 0.001)\n"
-      << "  --zmin M --zmax M      height ROI\n"
+      << "  --voxel MM             voxel leaf in mm, 0 to disable (default 1.0)\n"
+      << "  --zmin MM --zmax MM    height ROI in mm\n"
       << "  --show                 open PCL visualizer\n";
 }
 
