@@ -1,6 +1,8 @@
 #include <pcl/ModelCoefficients.h>
 #include <pcl/PointIndices.h>
+#include <pcl/common/centroid.h>
 #include <pcl/common/io.h>
+#include <pcl/features/normal_3d.h>
 #include <pcl/filters/extract_indices.h>
 #include <pcl/filters/passthrough.h>
 #include <pcl/filters/statistical_outlier_removal.h>
@@ -11,6 +13,9 @@
 #include <pcl/point_types.h>
 #include <pcl/sample_consensus/method_types.h>
 #include <pcl/sample_consensus/model_types.h>
+#include <pcl/kdtree/kdtree_flann.h>
+#include <pcl/search/kdtree.h>
+#include <pcl/segmentation/extract_clusters.h>
 #include <pcl/segmentation/sac_segmentation.h>
 #include <pcl/visualization/pcl_visualizer.h>
 
@@ -36,6 +41,9 @@ struct Options {
   double sor_stddev = 1.8;
   double z_min = -1e9;  // mm
   double z_max = 1e9;   // mm
+  double normal_th = 0.88;   // min |n·n_plane|, 0.88 ≈ 28 deg
+  double band = 1.0;         // mm, points near two planes stay unlabeled
+  double cluster_tol = 3.0;  // mm, drop isolated strips
   bool show = false;
 };
 
@@ -46,6 +54,8 @@ bool loadCloud(const std::string& path, Cloud::Ptr cloud) {
   }
   return pcl::io::loadPLYFile(path, *cloud) >= 0;
 }
+
+void normalizePlane(pcl::ModelCoefficients& coeff);
 
 Cloud::Ptr preprocess(const Cloud::ConstPtr& in, const Options& opt) {
   Cloud::Ptr z_filtered(new Cloud);
@@ -88,8 +98,229 @@ bool extractOnePlane(const Cloud::ConstPtr& cloud,
   seg.setDistanceThreshold(opt.distance_threshold);  // mm
   seg.setInputCloud(cloud);
   seg.segment(inliers, coeff);
-  return !inliers.indices.empty() &&
-         static_cast<int>(inliers.indices.size()) >= opt.min_inliers;
+  if (inliers.indices.empty() || static_cast<int>(inliers.indices.size()) < opt.min_inliers) {
+    return false;
+  }
+  normalizePlane(coeff);
+  return true;
+}
+
+void normalizePlane(pcl::ModelCoefficients& coeff) {
+  Eigen::Vector3d n(coeff.values[0], coeff.values[1], coeff.values[2]);
+  const double len = n.norm();
+  if (len < 1e-12) {
+    return;
+  }
+  coeff.values[0] = n.x() / len;
+  coeff.values[1] = n.y() / len;
+  coeff.values[2] = n.z() / len;
+  coeff.values[3] /= len;
+}
+
+double pointPlaneAbsDist(const pcl::PointXYZ& p, const pcl::ModelCoefficients& c) {
+  return std::abs(c.values[0] * p.x + c.values[1] * p.y + c.values[2] * p.z + c.values[3]);
+}
+
+void estimateNormals(const Cloud::ConstPtr& cloud, double radius_mm, pcl::PointCloud<pcl::Normal>::Ptr normals) {
+  pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne;
+  ne.setInputCloud(cloud);
+  pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
+  ne.setSearchMethod(tree);
+  ne.setRadiusSearch(radius_mm);
+  ne.compute(*normals);
+}
+
+void refinePlaneSvd(const Cloud::ConstPtr& cloud, pcl::ModelCoefficients& coeff) {
+  if (cloud->size() < 3) {
+    return;
+  }
+  Eigen::Vector4f centroid;
+  pcl::compute3DCentroid(*cloud, centroid);
+  Eigen::Matrix3f cov;
+  pcl::computeCovarianceMatrixNormalized(*cloud, centroid, cov);
+  Eigen::SelfAdjointEigenSolver<Eigen::Matrix3f> solver(cov);
+  const Eigen::Vector3f n = solver.eigenvectors().col(0);
+  coeff.values[0] = n.x();
+  coeff.values[1] = n.y();
+  coeff.values[2] = n.z();
+  coeff.values[3] = -n.dot(centroid.head<3>());
+  normalizePlane(coeff);
+}
+
+int pickPlaneForPoint(const pcl::PointXYZ& p,
+                      const Eigen::Vector3d& pn,
+                      bool has_n,
+                      const std::vector<pcl::ModelCoefficients>& planes,
+                      const Options& opt) {
+  int best = -1;
+  double best_align = -1.0;
+  double best_d = 1e9;
+  int second = -1;
+  double second_align = -1.0;
+  double second_d = 1e9;
+  for (std::size_t k = 0; k < planes.size(); ++k) {
+    const auto& c = planes[k];
+    const double d = pointPlaneAbsDist(p, c);
+    if (d > opt.distance_threshold) {
+      continue;
+    }
+    const Eigen::Vector3d npl(c.values[0], c.values[1], c.values[2]);
+    const double align = (has_n && pn.squaredNorm() > 0.0) ? std::abs(pn.dot(npl)) : 1.0;
+    if (has_n && align < opt.normal_th) {
+      continue;
+    }
+    const bool better =
+        (align > best_align + 0.04) || (std::abs(align - best_align) <= 0.04 && d < best_d);
+    if (better) {
+      second = best;
+      second_align = best_align;
+      second_d = best_d;
+      best = static_cast<int>(k);
+      best_align = align;
+      best_d = d;
+    } else if (align > second_align || (std::abs(align - second_align) <= 0.04 && d < second_d)) {
+      second = static_cast<int>(k);
+      second_align = align;
+      second_d = d;
+    }
+  }
+  // Only the exact crease stays unlabeled: both faces fit equally well.
+  if (best >= 0 && second >= 0 && std::abs(best_align - second_align) < 0.08 && best_d < opt.band &&
+      second_d < opt.band) {
+    return -1;
+  }
+  return best;
+}
+
+void smoothLabels(const Cloud::ConstPtr& cloud, std::vector<int>& labels, int n_planes, int k) {
+  if (cloud->empty() || n_planes <= 0) {
+    return;
+  }
+  pcl::KdTreeFLANN<pcl::PointXYZ> tree;
+  tree.setInputCloud(cloud);
+  std::vector<int> next = labels;
+  for (std::size_t i = 0; i < cloud->size(); ++i) {
+    std::vector<int> nn;
+    std::vector<float> dist;
+    if (tree.nearestKSearch(cloud->points[i], k, nn, dist) < 3) {
+      continue;
+    }
+    std::vector<int> hist(n_planes, 0);
+    int valid = 0;
+    for (int j : nn) {
+      if (j >= 0 && labels[static_cast<std::size_t>(j)] >= 0) {
+        hist[labels[static_cast<std::size_t>(j)]]++;
+        valid++;
+      }
+    }
+    if (valid < 3) {
+      continue;
+    }
+    int maj = 0;
+    for (int p = 1; p < n_planes; ++p) {
+      if (hist[p] > hist[maj]) {
+        maj = p;
+      }
+    }
+    if (hist[maj] * 2 > valid) {
+      next[i] = maj;
+    }
+  }
+  labels.swap(next);
+}
+
+void keepLargestClusterLabels(const Cloud::ConstPtr& cloud,
+                              std::vector<int>& labels,
+                              int plane_id,
+                              double tol_mm) {
+  Cloud::Ptr subset(new Cloud);
+  std::vector<int> map;
+  for (std::size_t i = 0; i < labels.size(); ++i) {
+    if (labels[i] == plane_id) {
+      subset->push_back(cloud->points[i]);
+      map.push_back(static_cast<int>(i));
+    }
+  }
+  if (subset->size() < 20) {
+    return;
+  }
+  pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
+  tree->setInputCloud(subset);
+  std::vector<pcl::PointIndices> clusters;
+  pcl::EuclideanClusterExtraction<pcl::PointXYZ> ec;
+  ec.setClusterTolerance(tol_mm);
+  ec.setMinClusterSize(20);
+  ec.setSearchMethod(tree);
+  ec.setInputCloud(subset);
+  ec.extract(clusters);
+  if (clusters.empty()) {
+    return;
+  }
+  std::size_t best = 0;
+  for (std::size_t i = 1; i < clusters.size(); ++i) {
+    if (clusters[i].indices.size() > clusters[best].indices.size()) {
+      best = i;
+    }
+  }
+  std::vector<char> keep(subset->size(), 0);
+  for (int idx : clusters[best].indices) {
+    keep[static_cast<std::size_t>(idx)] = 1;
+  }
+  for (std::size_t i = 0; i < map.size(); ++i) {
+    if (!keep[i]) {
+      labels[static_cast<std::size_t>(map[i])] = -1;
+    }
+  }
+}
+
+// Sequential RANSAC lets the first plane keep a ridge strip that belongs on
+// the next face. Re-label every point, then majority-vote the neighborhood so
+// a thin red band sitting on the blue face flips back to blue.
+void reassignPoints(const Cloud::ConstPtr& cloud,
+                    const pcl::PointCloud<pcl::Normal>::ConstPtr& normals,
+                    std::vector<pcl::ModelCoefficients>& planes,
+                    const Options& opt,
+                    std::vector<Cloud::Ptr>& plane_clouds,
+                    Cloud::Ptr rest) {
+  std::vector<int> labels(cloud->size(), -1);
+  for (std::size_t i = 0; i < cloud->size(); ++i) {
+    Eigen::Vector3d pn(0, 0, 0);
+    bool has_n = normals && i < normals->size() && std::isfinite(normals->points[i].normal_x);
+    if (has_n) {
+      pn = Eigen::Vector3d(normals->points[i].normal_x, normals->points[i].normal_y,
+                           normals->points[i].normal_z);
+      if (pn.norm() > 1e-6) {
+        pn.normalize();
+      } else {
+        has_n = false;
+      }
+    }
+    labels[i] = pickPlaneForPoint(cloud->points[i], pn, has_n, planes, opt);
+  }
+
+  smoothLabels(cloud, labels, static_cast<int>(planes.size()), 24);
+  for (int k = 0; k < static_cast<int>(planes.size()); ++k) {
+    keepLargestClusterLabels(cloud, labels, k, opt.cluster_tol);
+  }
+  smoothLabels(cloud, labels, static_cast<int>(planes.size()), 24);
+
+  plane_clouds.assign(planes.size(), Cloud::Ptr());
+  for (auto& pc : plane_clouds) {
+    pc.reset(new Cloud);
+    pc->header = cloud->header;
+  }
+  rest->clear();
+  rest->header = cloud->header;
+  for (std::size_t i = 0; i < cloud->size(); ++i) {
+    if (labels[i] >= 0) {
+      plane_clouds[static_cast<std::size_t>(labels[i])]->push_back(cloud->points[i]);
+    } else {
+      rest->push_back(cloud->points[i]);
+    }
+  }
+  for (std::size_t k = 0; k < planes.size(); ++k) {
+    refinePlaneSvd(plane_clouds[k], planes[k]);
+  }
 }
 
 void splitCloud(const Cloud::ConstPtr& cloud,
@@ -202,12 +433,14 @@ int run(const Options& opt) {
   Cloud::Ptr remaining = preprocess(raw, opt);
   std::cout << "after preprocess " << remaining->size() << " points\n";
 
-  CloudRGB labeled;
-  labeled.header = remaining->header;
+  Cloud::Ptr full(new Cloud(*remaining));
+  pcl::PointCloud<pcl::Normal>::Ptr normals(new pcl::PointCloud<pcl::Normal>);
+  const double n_radius = std::max(3.0 * std::max(opt.voxel_leaf, 0.5), 3.0);
+  estimateNormals(full, n_radius, normals);
+  std::cout << "normals radius=" << n_radius << " mm  normal_th=" << opt.normal_th
+            << "  band=" << opt.band << " mm\n";
 
   std::vector<pcl::ModelCoefficients> planes;
-  std::vector<Cloud::Ptr> plane_clouds;
-
   for (int i = 0; i < opt.max_planes; ++i) {
     if (remaining->size() < static_cast<std::size_t>(opt.min_inliers)) {
       break;
@@ -218,34 +451,43 @@ int run(const Options& opt) {
       std::cerr << "SAC_RANSAC stopped at plane " << i << "\n";
       break;
     }
-
     Cloud::Ptr inlier_cloud(new Cloud);
     Cloud::Ptr outlier_cloud(new Cloud);
     splitCloud(remaining, inliers, inlier_cloud, outlier_cloud);
-
     printPlane(i, coeff, inlier_cloud->size());
     planes.push_back(coeff);
-    plane_clouds.push_back(inlier_cloud);
-
-    const auto& rgb = kPlaneColors[i % 5];
-    appendColored(inlier_cloud, rgb[0], rgb[1], rgb[2], labeled);
-    CloudRGB::Ptr plane_rgb = toColoredCloud(inlier_cloud, rgb[0], rgb[1], rgb[2]);
-
-    const std::string ply = opt.prefix + "_plane" + std::to_string(i) + ".ply";
-    const std::string pcd = opt.prefix + "_plane" + std::to_string(i) + ".pcd";
-    pcl::io::savePLYFileBinary(ply, *plane_rgb);
-    pcl::io::savePCDFileBinary(pcd, *inlier_cloud);
-    std::cout << "  color RGB=(" << static_cast<int>(rgb[0]) << "," << static_cast<int>(rgb[1])
-              << "," << static_cast<int>(rgb[2]) << ")  -> " << ply << "\n";
-
     remaining.swap(outlier_cloud);
   }
 
-  appendColored(remaining, kRestColor[0], kRestColor[1], kRestColor[2], labeled);
+  // Sequential RANSAC assigns a ridge strip to the first plane. Re-label every
+  // point against all fitted planes so the extra red band on the blue face
+  // goes back to blue (or to rest if it sits on both).
+  std::vector<Cloud::Ptr> plane_clouds;
+  Cloud::Ptr rest(new Cloud);
+  reassignPoints(full, normals, planes, opt, plane_clouds, rest);
+  reassignPoints(full, normals, planes, opt, plane_clouds, rest);
+
+  CloudRGB labeled;
+  labeled.header = full->header;
+  for (std::size_t i = 0; i < plane_clouds.size(); ++i) {
+    printPlane(static_cast<int>(i), planes[i], plane_clouds[i]->size());
+    const auto& rgb = kPlaneColors[i % 5];
+    appendColored(plane_clouds[i], rgb[0], rgb[1], rgb[2], labeled);
+    CloudRGB::Ptr plane_rgb = toColoredCloud(plane_clouds[i], rgb[0], rgb[1], rgb[2]);
+    const std::string ply = opt.prefix + "_plane" + std::to_string(i) + ".ply";
+    const std::string pcd = opt.prefix + "_plane" + std::to_string(i) + ".pcd";
+    pcl::io::savePLYFileBinary(ply, *plane_rgb);
+    pcl::io::savePCDFileBinary(pcd, *plane_clouds[i]);
+    std::cout << "  after reassign color RGB=(" << static_cast<int>(rgb[0]) << ","
+              << static_cast<int>(rgb[1]) << "," << static_cast<int>(rgb[2]) << ")  -> " << ply
+              << "\n";
+  }
+
+  appendColored(rest, kRestColor[0], kRestColor[1], kRestColor[2], labeled);
   pcl::io::savePLYFileBinary(opt.prefix + "_labeled.ply", labeled);
-  pcl::io::savePCDFileBinary(opt.prefix + "_rest.pcd", *remaining);
-  std::cout << "rest points=" << remaining->size() << " (gray)  labeled -> "
-            << opt.prefix << "_labeled.ply\n";
+  pcl::io::savePCDFileBinary(opt.prefix + "_rest.pcd", *rest);
+  std::cout << "rest points=" << rest->size() << " (gray)  labeled -> " << opt.prefix
+            << "_labeled.ply\n";
 
   if (planes.size() >= 2) {
     for (std::size_t i = 0; i < planes.size(); ++i) {
@@ -271,7 +513,7 @@ int run(const Options& opt) {
   }
 
   if (opt.show) {
-    showColoredResult(plane_clouds, remaining, corner_ptr);
+    showColoredResult(plane_clouds, rest, corner_ptr);
   }
   return 0;
 }
@@ -287,6 +529,9 @@ void usage() {
       << "  --min-inliers N        reject smaller planes (default 200)\n"
       << "  --voxel MM             voxel leaf in mm, 0 to disable (default 1.0)\n"
       << "  --zmin MM --zmax MM    height ROI in mm\n"
+      << "  --normal T             min |n·n_plane| for assignment (default 0.88)\n"
+      << "  --band MM              intersection dead-band in mm (default 1.0)\n"
+      << "  --cluster MM           drop isolated strips, mm (default 3.0)\n"
       << "  --show                 open PCL visualizer\n";
 }
 
@@ -322,6 +567,12 @@ int main(int argc, char** argv) {
       next(opt.z_min);
     } else if (a == "--zmax") {
       next(opt.z_max);
+    } else if (a == "--normal") {
+      next(opt.normal_th);
+    } else if (a == "--band") {
+      next(opt.band);
+    } else if (a == "--cluster") {
+      next(opt.cluster_tol);
     } else if (a == "--show") {
       opt.show = true;
     } else if (a == "-h" || a == "--help") {
