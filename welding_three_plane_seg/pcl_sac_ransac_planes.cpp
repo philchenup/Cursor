@@ -22,6 +22,7 @@
 #include <Eigen/Dense>
 #include <cmath>
 #include <iostream>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -45,6 +46,14 @@ struct Options {
   double band = 1.0;         // mm, points near two planes stay unlabeled
   double cluster_tol = 3.0;  // mm, drop isolated strips
   bool show = false;
+  bool self_test = false;
+};
+
+struct SegResult {
+  Cloud::Ptr full;
+  std::vector<pcl::ModelCoefficients> planes;
+  std::vector<Cloud::Ptr> plane_clouds;
+  Cloud::Ptr rest;
 };
 
 bool loadCloud(const std::string& path, Cloud::Ptr cloud) {
@@ -422,6 +431,145 @@ void printPlane(int id, const pcl::ModelCoefficients& coeff, std::size_t n) {
             << "  (xyz in mm)\n";
 }
 
+int segmentCloud(const Cloud::ConstPtr& raw, const Options& opt, SegResult& out, bool verbose) {
+  Cloud::Ptr remaining = preprocess(raw, opt);
+  if (verbose) {
+    std::cout << "after preprocess " << remaining->size() << " points\n";
+  }
+
+  out.full.reset(new Cloud(*remaining));
+  pcl::PointCloud<pcl::Normal>::Ptr normals(new pcl::PointCloud<pcl::Normal>);
+  const double n_radius = std::max(3.0 * std::max(opt.voxel_leaf, 0.5), 3.0);
+  estimateNormals(out.full, n_radius, normals);
+  if (verbose) {
+    std::cout << "normals radius=" << n_radius << " mm  normal_th=" << opt.normal_th
+              << "  band=" << opt.band << " mm\n";
+  }
+
+  out.planes.clear();
+  for (int i = 0; i < opt.max_planes; ++i) {
+    if (remaining->size() < static_cast<std::size_t>(opt.min_inliers)) {
+      break;
+    }
+    pcl::ModelCoefficients coeff;
+    pcl::PointIndices inliers;
+    if (!extractOnePlane(remaining, opt, coeff, inliers)) {
+      if (verbose) {
+        std::cerr << "SAC_RANSAC stopped at plane " << i << "\n";
+      }
+      break;
+    }
+    Cloud::Ptr inlier_cloud(new Cloud);
+    Cloud::Ptr outlier_cloud(new Cloud);
+    splitCloud(remaining, inliers, inlier_cloud, outlier_cloud);
+    if (verbose) {
+      printPlane(i, coeff, inlier_cloud->size());
+    }
+    out.planes.push_back(coeff);
+    remaining.swap(outlier_cloud);
+  }
+
+  out.rest.reset(new Cloud);
+  reassignPoints(out.full, normals, out.planes, opt, out.plane_clouds, out.rest);
+  reassignPoints(out.full, normals, out.planes, opt, out.plane_clouds, out.rest);
+  return out.planes.empty() ? 1 : 0;
+}
+
+Cloud::Ptr makeLeakScene() {
+  Cloud::Ptr cloud(new Cloud);
+  std::mt19937 rng(1);
+  std::uniform_real_distribution<float> ux(0.0f, 80.0f);
+  std::uniform_real_distribution<float> uy(0.0f, 60.0f);
+  std::uniform_real_distribution<float> uz(-50.0f, 0.0f);
+  std::normal_distribution<float> n01(0.0f, 0.12f);
+  std::uniform_real_distribution<float> leak_y(4.0f, 56.0f);
+  std::uniform_real_distribution<float> leak_z(-0.70f, -0.15f);
+  auto add = [&](float x, float y, float z) {
+    cloud->push_back(pcl::PointXYZ{x, y, z});
+  };
+  for (int i = 0; i < 5000; ++i) {
+    add(ux(rng), uy(rng), n01(rng));  // red z=0
+  }
+  for (int i = 0; i < 4200; ++i) {
+    add(ux(rng), n01(rng), uz(rng));  // green y=0
+  }
+  for (int i = 0; i < 4200; ++i) {
+    add(80.0f + n01(rng), uy(rng), uz(rng));  // blue x=80
+  }
+  // Strip on the blue face, still within the red-plane distance threshold.
+  for (int i = 0; i < 300; ++i) {
+    add(80.0f + n01(rng) * 0.6f, leak_y(rng), leak_z(rng));
+  }
+  return cloud;
+}
+
+bool isLeakPoint(const pcl::PointXYZ& p) {
+  return std::abs(p.x - 80.0f) < 1.0f && p.z < -0.12f && p.z > -0.85f;
+}
+
+int planeAxis(const pcl::ModelCoefficients& c) {
+  const double ax = std::abs(c.values[0]);
+  const double ay = std::abs(c.values[1]);
+  const double az = std::abs(c.values[2]);
+  if (az >= ax && az >= ay) {
+    return 2;  // red / z
+  }
+  if (ax >= ay) {
+    return 0;  // blue / x
+  }
+  return 1;  // green / y
+}
+
+int selfTest() {
+  Options opt;
+  opt.max_planes = 3;
+  opt.distance_threshold = 1.2;
+  opt.voxel_leaf = 1.0;
+  opt.min_inliers = 200;
+  opt.normal_th = 0.88;
+  opt.band = 1.0;
+  opt.cluster_tol = 3.0;
+
+  Cloud::Ptr raw = makeLeakScene();
+  SegResult seg;
+  if (segmentCloud(raw, opt, seg, false) != 0 || seg.plane_clouds.size() < 3) {
+    std::cerr << "self-test: failed to extract 3 planes\n";
+    return 1;
+  }
+
+  int red_i = -1;
+  int blue_i = -1;
+  for (std::size_t i = 0; i < seg.planes.size(); ++i) {
+    const int axis = planeAxis(seg.planes[i]);
+    if (axis == 2) {
+      red_i = static_cast<int>(i);
+    }
+    if (axis == 0) {
+      blue_i = static_cast<int>(i);
+    }
+  }
+  if (red_i < 0 || blue_i < 0) {
+    std::cerr << "self-test: could not identify red/blue planes\n";
+    return 1;
+  }
+
+  int leak_red = 0;
+  int leak_blue = 0;
+  for (const auto& p : seg.plane_clouds[static_cast<std::size_t>(red_i)]->points) {
+    leak_red += isLeakPoint(p) ? 1 : 0;
+  }
+  for (const auto& p : seg.plane_clouds[static_cast<std::size_t>(blue_i)]->points) {
+    leak_blue += isLeakPoint(p) ? 1 : 0;
+  }
+  std::cout << "self-test leak-like points  red=" << leak_red << "  blue=" << leak_blue << "\n";
+  if (leak_blue < 50 || leak_red * 2 > leak_blue) {
+    std::cerr << "self-test: red still owns the strip that should be blue\n";
+    return 1;
+  }
+  std::cout << "self-test ok\n";
+  return 0;
+}
+
 int run(const Options& opt) {
   Cloud::Ptr raw(new Cloud);
   if (!loadCloud(opt.input, raw) || raw->empty()) {
@@ -430,45 +578,16 @@ int run(const Options& opt) {
   }
   std::cout << "loaded " << raw->size() << " points (unit: mm)\n";
 
-  Cloud::Ptr remaining = preprocess(raw, opt);
-  std::cout << "after preprocess " << remaining->size() << " points\n";
-
-  Cloud::Ptr full(new Cloud(*remaining));
-  pcl::PointCloud<pcl::Normal>::Ptr normals(new pcl::PointCloud<pcl::Normal>);
-  const double n_radius = std::max(3.0 * std::max(opt.voxel_leaf, 0.5), 3.0);
-  estimateNormals(full, n_radius, normals);
-  std::cout << "normals radius=" << n_radius << " mm  normal_th=" << opt.normal_th
-            << "  band=" << opt.band << " mm\n";
-
-  std::vector<pcl::ModelCoefficients> planes;
-  for (int i = 0; i < opt.max_planes; ++i) {
-    if (remaining->size() < static_cast<std::size_t>(opt.min_inliers)) {
-      break;
-    }
-    pcl::ModelCoefficients coeff;
-    pcl::PointIndices inliers;
-    if (!extractOnePlane(remaining, opt, coeff, inliers)) {
-      std::cerr << "SAC_RANSAC stopped at plane " << i << "\n";
-      break;
-    }
-    Cloud::Ptr inlier_cloud(new Cloud);
-    Cloud::Ptr outlier_cloud(new Cloud);
-    splitCloud(remaining, inliers, inlier_cloud, outlier_cloud);
-    printPlane(i, coeff, inlier_cloud->size());
-    planes.push_back(coeff);
-    remaining.swap(outlier_cloud);
+  SegResult seg;
+  if (segmentCloud(raw, opt, seg, true) != 0) {
+    return 1;
   }
-
-  // Sequential RANSAC assigns a ridge strip to the first plane. Re-label every
-  // point against all fitted planes so the extra red band on the blue face
-  // goes back to blue (or to rest if it sits on both).
-  std::vector<Cloud::Ptr> plane_clouds;
-  Cloud::Ptr rest(new Cloud);
-  reassignPoints(full, normals, planes, opt, plane_clouds, rest);
-  reassignPoints(full, normals, planes, opt, plane_clouds, rest);
+  const auto& planes = seg.planes;
+  const auto& plane_clouds = seg.plane_clouds;
+  const auto& rest = seg.rest;
 
   CloudRGB labeled;
-  labeled.header = full->header;
+  labeled.header = seg.full->header;
   for (std::size_t i = 0; i < plane_clouds.size(); ++i) {
     printPlane(static_cast<int>(i), planes[i], plane_clouds[i]->size());
     const auto& rgb = kPlaneColors[i % 5];
@@ -532,7 +651,8 @@ void usage() {
       << "  --normal T             min |n·n_plane| for assignment (default 0.88)\n"
       << "  --band MM              intersection dead-band in mm (default 1.0)\n"
       << "  --cluster MM           drop isolated strips, mm (default 3.0)\n"
-      << "  --show                 open PCL visualizer\n";
+      << "  --show                 open PCL visualizer\n"
+      << "  --self-test            C++ leak-strip regression, no input file\n";
 }
 
 int main(int argc, char** argv) {
@@ -575,10 +695,15 @@ int main(int argc, char** argv) {
       next(opt.cluster_tol);
     } else if (a == "--show") {
       opt.show = true;
+    } else if (a == "--self-test") {
+      opt.self_test = true;
     } else if (a == "-h" || a == "--help") {
       usage();
       return 0;
     }
+  }
+  if (opt.self_test) {
+    return selfTest();
   }
   if (opt.input.empty()) {
     usage();
