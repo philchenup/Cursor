@@ -106,7 +106,12 @@ void splitCloud(const Cloud::ConstPtr& cloud,
   extract.filter(*outlier_cloud);
 }
 
-void paint(const Cloud::ConstPtr& xyz, std::uint8_t r, std::uint8_t g, std::uint8_t b, CloudRGB& out) {
+// plane0 red, plane1 green, plane2 blue, then yellow / magenta; rest gray
+const std::uint8_t kPlaneColors[][3] = {
+    {230, 40, 40}, {40, 190, 50}, {50, 110, 240}, {230, 190, 40}, {180, 70, 210}};
+const std::uint8_t kRestColor[3] = {150, 150, 150};
+
+void appendColored(const Cloud::ConstPtr& xyz, std::uint8_t r, std::uint8_t g, std::uint8_t b, CloudRGB& out) {
   out.reserve(out.size() + xyz->size());
   for (const auto& p : xyz->points) {
     pcl::PointXYZRGB q;
@@ -118,6 +123,50 @@ void paint(const Cloud::ConstPtr& xyz, std::uint8_t r, std::uint8_t g, std::uint
     q.b = b;
     out.push_back(q);
   }
+}
+
+CloudRGB::Ptr toColoredCloud(const Cloud::ConstPtr& xyz, std::uint8_t r, std::uint8_t g, std::uint8_t b) {
+  CloudRGB::Ptr out(new CloudRGB);
+  out->header = xyz->header;
+  appendColored(xyz, r, g, b, *out);
+  return out;
+}
+
+void showColoredResult(const std::vector<Cloud::Ptr>& plane_clouds,
+                       const Cloud::ConstPtr& rest,
+                       const Eigen::Vector3d* corner) {
+  pcl::visualization::PCLVisualizer vis("SAC_RANSAC colored planes (mm)");
+  vis.setBackgroundColor(0.08, 0.08, 0.10);
+  vis.addCoordinateSystem(50.0);
+
+  for (std::size_t i = 0; i < plane_clouds.size(); ++i) {
+    const auto& rgb = kPlaneColors[i % 5];
+    CloudRGB::Ptr colored = toColoredCloud(plane_clouds[i], rgb[0], rgb[1], rgb[2]);
+    const std::string id = "plane" + std::to_string(i);
+    vis.addPointCloud<pcl::PointXYZRGB>(colored, id);
+    vis.setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 3, id);
+    vis.addText("plane" + std::to_string(i), 12, static_cast<int>(80 - 18 * i), 14, rgb[0] / 255.0,
+                rgb[1] / 255.0, rgb[2] / 255.0, "legend" + std::to_string(i));
+  }
+
+  if (rest && !rest->empty()) {
+    CloudRGB::Ptr rest_rgb = toColoredCloud(rest, kRestColor[0], kRestColor[1], kRestColor[2]);
+    vis.addPointCloud<pcl::PointXYZRGB>(rest_rgb, "rest");
+    vis.setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 2, "rest");
+    vis.addText("rest", 12, static_cast<int>(80 - 18 * plane_clouds.size()), 14, 0.6, 0.6, 0.6, "legend_rest");
+  }
+
+  if (corner) {
+    pcl::PointXYZ p;
+    p.x = static_cast<float>(corner->x());
+    p.y = static_cast<float>(corner->y());
+    p.z = static_cast<float>(corner->z());
+    vis.addSphere(p, 3.0, 1.0, 1.0, 0.0, "corner");
+    vis.addText3D("corner", p, 6.0, 1.0, 1.0, 0.0, "corner_txt");
+  }
+
+  vis.resetCamera();
+  vis.spin();
 }
 
 Eigen::Vector3d planeIntersectionPoint(const pcl::ModelCoefficients& a,
@@ -153,8 +202,6 @@ int run(const Options& opt) {
   Cloud::Ptr remaining = preprocess(raw, opt);
   std::cout << "after preprocess " << remaining->size() << " points\n";
 
-  const std::uint8_t colors[][3] = {
-      {230, 40, 40}, {40, 190, 50}, {40, 90, 230}, {220, 180, 40}, {160, 80, 200}};
   CloudRGB labeled;
   labeled.header = remaining->header;
 
@@ -180,21 +227,25 @@ int run(const Options& opt) {
     planes.push_back(coeff);
     plane_clouds.push_back(inlier_cloud);
 
-    const auto& c = colors[i % 5];
-    paint(inlier_cloud, c[0], c[1], c[2], labeled);
+    const auto& rgb = kPlaneColors[i % 5];
+    appendColored(inlier_cloud, rgb[0], rgb[1], rgb[2], labeled);
+    CloudRGB::Ptr plane_rgb = toColoredCloud(inlier_cloud, rgb[0], rgb[1], rgb[2]);
 
     const std::string ply = opt.prefix + "_plane" + std::to_string(i) + ".ply";
     const std::string pcd = opt.prefix + "_plane" + std::to_string(i) + ".pcd";
-    pcl::io::savePLYFileBinary(ply, *inlier_cloud);
+    pcl::io::savePLYFileBinary(ply, *plane_rgb);
     pcl::io::savePCDFileBinary(pcd, *inlier_cloud);
+    std::cout << "  color RGB=(" << static_cast<int>(rgb[0]) << "," << static_cast<int>(rgb[1])
+              << "," << static_cast<int>(rgb[2]) << ")  -> " << ply << "\n";
 
     remaining.swap(outlier_cloud);
   }
 
-  paint(remaining, 140, 140, 140, labeled);
+  appendColored(remaining, kRestColor[0], kRestColor[1], kRestColor[2], labeled);
   pcl::io::savePLYFileBinary(opt.prefix + "_labeled.ply", labeled);
   pcl::io::savePCDFileBinary(opt.prefix + "_rest.pcd", *remaining);
-  std::cout << "rest points=" << remaining->size() << "\n";
+  std::cout << "rest points=" << remaining->size() << " (gray)  labeled -> "
+            << opt.prefix << "_labeled.ply\n";
 
   if (planes.size() >= 2) {
     for (std::size_t i = 0; i < planes.size(); ++i) {
@@ -211,17 +262,16 @@ int run(const Options& opt) {
       }
     }
   }
+  Eigen::Vector3d corner = Eigen::Vector3d::Zero();
+  const Eigen::Vector3d* corner_ptr = nullptr;
   if (planes.size() >= 3) {
-    const Eigen::Vector3d corner = planeIntersectionPoint(planes[0], planes[1], planes[2]);
+    corner = planeIntersectionPoint(planes[0], planes[1], planes[2]);
+    corner_ptr = &corner;
     std::cout << "three-plane corner (mm) = [" << corner.transpose() << "]\n";
   }
 
   if (opt.show) {
-    pcl::visualization::PCLVisualizer vis("SAC_RANSAC planes (mm)");
-    CloudRGB::Ptr labeled_ptr(new CloudRGB(labeled));
-    vis.addPointCloud<pcl::PointXYZRGB>(labeled_ptr, "labeled");
-    vis.addCoordinateSystem(50.0);  // 50 mm axis
-    vis.spin();
+    showColoredResult(plane_clouds, remaining, corner_ptr);
   }
   return 0;
 }
