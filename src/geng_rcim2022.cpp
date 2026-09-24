@@ -332,6 +332,27 @@ GengRcim2022::mergeSimilarPlanes()
   }
 }
 
+Eigen::Vector3f
+GengRcim2022::tiltTorchInward(const Eigen::Vector3f& torch_z,
+                              const Eigen::Vector3f& inward,
+                              float tilt_deg)
+{
+  Eigen::Vector3f z = torch_z;
+  Eigen::Vector3f in = inward;
+  if (z.norm() < 1e-8f || in.norm() < 1e-8f)
+    return z.norm() < 1e-8f ? Eigen::Vector3f::UnitZ() : z.normalized();
+  z.normalize();
+  in.normalize();
+
+  Eigen::Vector3f side = in - in.dot(z) * z;
+  if (side.norm() < 1e-6f)
+    return z;
+  side.normalize();
+
+  const float rad = tilt_deg * kPi / 180.0f;
+  return (std::cos(rad) * z + std::sin(rad) * side).normalized();
+}
+
 void
 GengRcim2022::buildTrajectory(WeldSeam& seam) const
 {
@@ -342,25 +363,34 @@ GengRcim2022::buildTrajectory(WeldSeam& seam) const
     return;
 
   const Eigen::Vector3f dir = vec / length;
+  const Eigen::Vector3f torch_start =
+      tiltTorchInward(seam.torch_z, dir, params_.end_tilt_deg);
+  const Eigen::Vector3f torch_end =
+      tiltTorchInward(seam.torch_z, -dir, params_.end_tilt_deg);
   const int steps = std::max(1, static_cast<int>(std::ceil(length / params_.trajectory_step_mm)));
   for (int i = 0; i <= steps; ++i)
   {
     const float t = static_cast<float>(i) / static_cast<float>(steps);
     const Eigen::Vector3f p = seam.start + t * vec;
+    Eigen::Vector3f torch = seam.torch_z;
+    if (i == 0)
+      torch = torch_start;
+    else if (i == steps)
+      torch = torch_end;
+
     pcl::PointNormal q;
     q.x = p.x();
     q.y = p.y();
     q.z = p.z();
-    q.normal_x = seam.torch_z.x();
-    q.normal_y = seam.torch_z.y();
-    q.normal_z = seam.torch_z.z();
+    q.normal_x = torch.x();
+    q.normal_y = torch.y();
+    q.normal_z = torch.z();
     q.curvature = 0.0f;
     seam.trajectory.push_back(q);
   }
   seam.trajectory.width = static_cast<std::uint32_t>(seam.trajectory.size());
   seam.trajectory.height = 1;
   seam.trajectory.is_dense = true;
-  (void)dir;
 }
 
 bool

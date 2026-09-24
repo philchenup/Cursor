@@ -54,7 +54,21 @@ main()
     expect(traj->size() >= 80, "L-joint trajectory is densely sampled");
     expect(meanDistToY(*traj) < 6.0f, "L-joint trajectory stays on the Y-axis seam");
     if (!det.seams().empty())
+    {
       expect(std::abs(det.seams()[0].length_mm - 200.0f) < 20.0f, "L-joint length ~200 mm");
+      const auto& s = det.seams()[0];
+      const Eigen::Vector3f dir = (s.end - s.start).normalized();
+      const Eigen::Vector3f z0(traj->front().normal_x, traj->front().normal_y, traj->front().normal_z);
+      const Eigen::Vector3f z1(traj->back().normal_x, traj->back().normal_y, traj->back().normal_z);
+      const float a0 = std::acos(std::min(1.0f, std::max(-1.0f, z0.normalized().dot(s.torch_z)))) *
+                       180.0f / 3.14159265f;
+      const float a1 = std::acos(std::min(1.0f, std::max(-1.0f, z1.normalized().dot(s.torch_z)))) *
+                       180.0f / 3.14159265f;
+      expect(std::abs(a0 - 45.0f) < 2.0f && z0.dot(dir) > 0.0f,
+             "start torch tilts 45 deg into the seam");
+      expect(std::abs(a1 - 45.0f) < 2.0f && z1.dot(-dir) > 0.0f,
+             "end torch tilts 45 deg into the seam");
+    }
   }
 
   {

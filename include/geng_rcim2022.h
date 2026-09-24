@@ -34,6 +34,7 @@ class GengRcim2022
     float min_seam_length_mm = 20.0f;
     int min_plane_support = 12;
     float trajectory_step_mm = 2.0f;
+    float end_tilt_deg = 45.0f;  // 起终点朝焊缝内部倾斜，避开端头其它面
     std::uint32_t rng_seed = 42;
   };
 
@@ -80,6 +81,9 @@ class GengRcim2022
   void extractSeamsAndTrajectories();
   bool buildSeam(const FittedPlane& a, const FittedPlane& b, WeldSeam& seam) const;
   void buildTrajectory(WeldSeam& seam) const;
+  static Eigen::Vector3f tiltTorchInward(const Eigen::Vector3f& torch_z,
+                                         const Eigen::Vector3f& inward,
+                                         float tilt_deg);
 
   static bool fitThreePoints(const Eigen::Vector3f& p0,
                              const Eigen::Vector3f& p1,
