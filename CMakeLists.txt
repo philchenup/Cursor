@@ -24,5 +24,15 @@ target_link_libraries(detect_weld_seam PRIVATE ${PCL_LIBRARIES})
 add_executable(test_ced_weld_seam src/test_ced_weld_seam.cpp)
 target_link_libraries(test_ced_weld_seam PRIVATE ${PCL_LIBRARIES})
 
+add_library(geng_rcim2022 src/geng_rcim2022.cpp)
+target_link_libraries(geng_rcim2022 PUBLIC ${PCL_LIBRARIES})
+
+add_executable(geng_rcim2022_demo src/geng_rcim2022_demo.cpp)
+target_link_libraries(geng_rcim2022_demo PRIVATE geng_rcim2022)
+
+add_executable(test_geng_rcim2022 src/test_geng_rcim2022.cpp)
+target_link_libraries(test_geng_rcim2022 PRIVATE geng_rcim2022)
+
 enable_testing()
 add_test(NAME ced_weld_seam COMMAND test_ced_weld_seam)
+add_test(NAME geng_rcim2022 COMMAND test_geng_rcim2022)
