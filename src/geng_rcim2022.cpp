@@ -451,13 +451,26 @@ GengRcim2022::buildSeam(const FittedPlane& a, const FittedPlane& b, WeldSeam& se
   const auto sb = span(t_b);
   const float t0 = std::max(sa.first, sb.first);
   const float t1 = std::min(sa.second, sb.second);
-  if (t1 - t0 < params_.min_seam_length_mm)
+  const float crop = std::max(0.0f, params_.seam_end_crop_mm);
+  const float t_lo = t0 + crop;
+  const float t_hi = t1 - crop;
+  if (t_hi - t_lo < params_.min_seam_length_mm)
     return false;
 
-  seam.start = origin + t0 * dir;
-  seam.end = origin + t1 * dir;
+  pcl::PointCloud<pcl::PointXYZ> cropped;
+  cropped.reserve(seam.seam_cloud.size());
+  for (const auto& p : seam.seam_cloud)
+  {
+    const float t = (p.getVector3fMap() - origin).dot(dir);
+    if (t >= t_lo && t <= t_hi)
+      cropped.push_back(p);
+  }
+  seam.seam_cloud.swap(cropped);
+
+  seam.start = origin + t_lo * dir;
+  seam.end = origin + t_hi * dir;
   seam.line_dir = dir;
-  seam.length_mm = t1 - t0;
+  seam.length_mm = t_hi - t_lo;
   seam.seam_cloud.width = static_cast<std::uint32_t>(seam.seam_cloud.size());
   seam.seam_cloud.height = 1;
   seam.seam_cloud.is_dense = true;

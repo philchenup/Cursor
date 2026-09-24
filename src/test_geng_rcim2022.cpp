@@ -55,7 +55,8 @@ main()
     expect(meanDistToY(*traj) < 6.0f, "L-joint trajectory stays on the Y-axis seam");
     if (!det.seams().empty())
     {
-      expect(std::abs(det.seams()[0].length_mm - 200.0f) < 20.0f, "L-joint length ~200 mm");
+      const float expect_len = 200.0f - 2.0f * det.params().seam_end_crop_mm;
+      expect(std::abs(det.seams()[0].length_mm - expect_len) < 20.0f, "L-joint length after end crop");
       const auto& s = det.seams()[0];
       const Eigen::Vector3f dir = (s.end - s.start).normalized();
       const Eigen::Vector3f z0(traj->front().normal_x, traj->front().normal_y, traj->front().normal_z);
