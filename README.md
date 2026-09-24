@@ -18,9 +18,9 @@ pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZ>);
 pcl::PointCloud<pcl::PointXYZ>::Ptr seam (new pcl::PointCloud<pcl::PointXYZ>);
 
 pcl::CEDWeldSeamDetector<pcl::PointXYZ, pcl::PointXYZ> detector;
-detector.setRadiusSearch (0.03);          // 约 3~5 倍点间距
-detector.setCentroidThreshold (0.10);     // 低于原版 CED，以免漏掉焊缝点
-detector.setSupportRadius (0.04);         // 双平面分析半径
+detector.setRadiusSearch (30.0);          // mm：约 3~5 倍点间距
+detector.setCentroidThreshold (0.10);     // 无量纲，毫米点云也不用改
+detector.setSupportRadius (40.0);         // mm：可省略，默认 1.3 * radius
 detector.setDihedralAngleRange (25.0, 155.0);
 detector.setInputCloud (cloud);
 detector.compute (*seam);
@@ -32,8 +32,8 @@ detector.compute (*seam);
 #include "ced_3d.h"
 
 pcl::CEDKeypoint3D<pcl::PointXYZ, pcl::PointXYZ> ced3d;
-ced3d.setRadiusSearch (0.05);
-ced3d.setNonMaxRadius (0.05);
+ced3d.setRadiusSearch (50.0);             // mm
+ced3d.setNonMaxRadius (50.0);
 ced3d.setCentroidThreshold (0.2);
 ced3d.setInputCloud (cloud);
 ced3d.compute (*keypoints);
@@ -49,16 +49,42 @@ cmake ..
 make -j
 ./test_ced_weld_seam
 ./detect_weld_seam --demo weld_seam.pcd --save-ced ced_keypoints.pcd --save-demo demo_cloud.pcd
-./detect_weld_seam input.pcd weld_seam.pcd --radius 0.03 --centroid 0.10
+./detect_weld_seam input.pcd weld_seam.pcd --unit mm --radius 30 --centroid 0.10
 ```
 
 `--demo` 会生成一个 L 形对接点云：两块互相垂直的平板沿 Y 轴相交。原始 CED 会标出所有自由边，焊缝检测器只保留交线上的点。
+
+### 点云单位为 mm 时怎么改参数
+
+长度类参数必须和点云坐标用同一单位；比例、角度、点数不用乘 1000。未显式设置的半径/带宽会按 `setRadiusSearch` 自动缩放，所以毫米点云通常只改这一项。
+
+| 参数 | 米（上一版示例） | 毫米 | 是否要改 |
+| --- | --- | --- | --- |
+| `setRadiusSearch` | 0.03 | **30** | 要，约 3~5 倍点间距 |
+| `setSupportRadius` | 0.04 | **40** | 要；也可不设，默认 1.3×半径 |
+| `setNormalRadius` | 0.018 | **18** | 可省略，默认 0.6×半径 |
+| `setPlaneDistanceThreshold` | 0.0054 | **5.4** | 可省略，默认 0.18×半径 |
+| `setSeamBandWidth` | 0.0105 | **10.5** | 可省略，默认 0.35×半径 |
+| `setClusterGapRadius` | 0.03 | **30** | 可省略，默认等于半径 |
+| `setCentroidThreshold` | 0.10 | 0.10 | 不用改 |
+| `setDihedralAngleRange` | 25, 155 | 25, 155 | 不用改 |
+| `setMinNeighbors` / `setMinSeamClusterSize` | 8 / 12 | 8 / 12 | 不用改 |
+
+若实际点间距不是约 10mm，不要套用 30，按 `半径 ≈ 3~5 × 点间距` 重算。例如点间距 1mm 时用 `setRadiusSearch(4.0)`。
+
+命令行对应：
+
+```bash
+./detect_weld_seam scan_mm.pcd weld_seam.pcd --unit mm --radius 30
+```
+
+`--unit mm` 只影响默认半径（0.05 → 50）；只要写了 `--radius`，就按你给的毫米值用。
 
 ### 主要参数
 
 | 参数 | 含义 | 建议 |
 | --- | --- | --- |
-| `setRadiusSearch` | CED 邻域半径 | 点间距的 3~5 倍 |
+| `setRadiusSearch` | CED 邻域半径（与点云同单位） | 点间距的 3~5 倍 |
 | `setCentroidThreshold` | 质心偏移 / 半径 | 0.08~0.15，过大会漏焊缝 |
 | `setSupportRadius` | 双平面分析半径 | 略大于搜索半径 |
 | `setDihedralAngleRange` | 两面夹角范围（度） | 常见坡口 25~155 |

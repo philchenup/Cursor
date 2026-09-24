@@ -24,6 +24,8 @@ struct Options
   double support_radius = 0.0;
   double voxel = 0.0;
   bool run_demo = false;
+  bool radius_set = false;
+  bool unit_mm = false;
 };
 
 void
@@ -34,10 +36,12 @@ printUsage (const char *exe)
       << "  " << exe << " <input.pcd> [output_seam.pcd] [options]\n"
       << "  " << exe << " --demo [output_seam.pcd] [options]\n"
       << "\nOptions:\n"
-      << "  --radius <m>           CED neighborhood radius (default 0.05)\n"
+      << "  --unit mm|m            cloud coordinate unit; mm changes default radius to 50\n"
+      << "  --radius <value>       CED neighborhood radius in the same unit as the cloud\n"
+      << "                         (default 0.05 m, or 50 mm with --unit mm)\n"
       << "  --centroid <ratio>     CED saliency threshold in [0,1] (default 0.10)\n"
-      << "  --support-radius <m>   two-plane analysis radius (default 1.3*radius)\n"
-      << "  --voxel <m>            optional voxel downsample leaf size\n"
+      << "  --support-radius <v>   two-plane analysis radius (default 1.3*radius)\n"
+      << "  --voxel <value>        optional voxel downsample leaf size, same unit as cloud\n"
       << "  --save-ced <file.pcd>  also write raw CED-3D keypoints for comparison\n"
       << "  --save-demo <file.pcd> write the generated demo cloud\n";
 }
@@ -63,10 +67,26 @@ parseOptions (int argc, char **argv, Options &opt)
     {
       opt.run_demo = true;
     }
+    else if (arg == "--unit")
+    {
+      if (i + 1 >= argc)
+        return false;
+      const std::string unit = argv[++i];
+      if (unit == "mm")
+        opt.unit_mm = true;
+      else if (unit == "m")
+        opt.unit_mm = false;
+      else
+      {
+        std::cerr << "Unknown unit: " << unit << " (use mm or m)\n";
+        return false;
+      }
+    }
     else if (arg == "--radius")
     {
       if (!needValue (opt.radius))
         return false;
+      opt.radius_set = true;
     }
     else if (arg == "--centroid")
     {
@@ -125,6 +145,8 @@ parseOptions (int argc, char **argv, Options &opt)
 
   if (!opt.run_demo && opt.input_pcd.empty ())
     return false;
+  if (opt.unit_mm && !opt.radius_set && !opt.run_demo)
+    opt.radius = 50.0;
   return true;
 }
 
@@ -190,6 +212,8 @@ main (int argc, char **argv)
   detector.setInputCloud (cloud);
   detector.compute (*seam);
 
+  std::cout << "Search radius: " << opt.radius
+            << (opt.unit_mm ? " mm" : " (cloud units)") << "\n";
   std::cout << "Weld seam points: " << seam->size ()
             << " (two-surface junctions only)\n";
 

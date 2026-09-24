@@ -21,15 +21,20 @@ namespace pcl
    * 只有一个平面支撑的自由边会被丢弃，输出的是两面之间的焊缝点云
    * （默认不做非极大值抑制，因此结果是稠密缝带而不是稀疏关键点）。
    *
+   * 长度参数必须与点云坐标单位一致。未显式设置的半径/带宽会按
+   * search_radius 自动缩放，因此毫米点云通常只需把搜索半径从米制的
+   * 0.03 改成 30，比例、角度、点数阈值不用改。
+   *
    * 参考：https://github.com/UCR-Robotics/CED_Detector
    *
    * @code
    * pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZ>);
    * pcl::PointCloud<pcl::PointXYZ>::Ptr seam (new pcl::PointCloud<pcl::PointXYZ>);
    * pcl::CEDWeldSeamDetector<pcl::PointXYZ, pcl::PointXYZ> detector;
-   * detector.setRadiusSearch (0.03);
-   * detector.setCentroidThreshold (0.10);
-   * detector.setSupportRadius (0.04);
+   * // 点云单位为 mm、点间距约 8~12mm 时：
+   * detector.setRadiusSearch (30.0);         // 约 3~5 倍点间距
+   * detector.setCentroidThreshold (0.10);    // 无量纲，不用乘 1000
+   * detector.setSupportRadius (40.0);        // 可省略，默认 1.3 * radius
    * detector.setDihedralAngleRange (25.0, 155.0);
    * detector.setInputCloud (cloud);
    * detector.compute (*seam);
@@ -83,23 +88,23 @@ namespace pcl
       inline void
       setMinNeighbors (int min_neighbors) { min_neighbors_ = min_neighbors; }
 
-      /** 双平面分析半径。<=0 时默认使用 1.3 * search_radius。 */
+      /** 双平面分析半径，单位与点云一致。<=0 时默认使用 1.3 * search_radius。 */
       inline void
       setSupportRadius (double support_radius) { support_radius_ = support_radius; }
 
-      /** 法向估计半径。<=0 时默认使用 0.6 * search_radius。 */
+      /** 法向估计半径，单位与点云一致。<=0 时默认使用 0.6 * search_radius。 */
       inline void
       setNormalRadius (double normal_radius) { normal_radius_ = normal_radius; }
 
-      /** 平面内点距离阈值。<=0 时默认使用 0.18 * search_radius。 */
+      /** 平面内点距离阈值，单位与点云一致。<=0 时默认使用 0.18 * search_radius。 */
       inline void
       setPlaneDistanceThreshold (double threshold) { plane_distance_threshold_ = threshold; }
 
-      /** 允许偏离两平面交线的最大距离。<=0 时默认使用 0.35 * search_radius。 */
+      /** 允许偏离两平面交线的最大距离，单位与点云一致。<=0 时默认使用 0.35 * search_radius。 */
       inline void
       setSeamBandWidth (double width) { seam_band_width_ = width; }
 
-      /** 焊缝连通簇的连接半径。<=0 时默认使用 search_radius。 */
+      /** 焊缝连通簇的连接半径，单位与点云一致。<=0 时默认使用 search_radius。 */
       inline void
       setClusterGapRadius (double radius) { cluster_gap_radius_ = radius; }
 
