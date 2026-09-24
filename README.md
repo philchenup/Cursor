@@ -10,7 +10,7 @@
 4. 沿交线等间距采样得到焊接轨迹（mm）
 5. 用二面角角平分线作为焊枪接近方向（轨迹点的 `normal`）
 6. 起点、终点的焊枪姿态再朝焊缝内部倾斜 45°（`end_tilt_deg`），避开端头其它面。`tiltTorchInward` 为 `static`，可在 `const` 成员函数中调用。
-7. `seam_end_crop_mm` 从焊缝两端各裁掉一段，去掉端头其它面带进 `seamCloud` 的非焊缝点。
+7. 焊缝长度取两侧支撑点沿交线的重叠区间，不再做额外首尾裁剪。
 
 ```cpp
 #include "geng_rcim2022.h"
@@ -33,7 +33,7 @@ make -j
 ./geng_rcim2022_demo scan_mm.pcd seam.pcd traj.pcd
 ```
 
-默认参数按 mm、点间距约 2–4 mm。`trajectory` 中每个点的 `xyz` 是焊点；中间点 `normal` 是二面角角平分线，起终点再向缝内倾 `end_tilt_deg`（默认 45°）。末端散开、不属于焊缝的点用 `seam_end_crop_mm`（默认 10 mm）从两端裁掉。某块分割面里混进其它面的点时，收紧 `max_normal_dev_deg`（默认 30°）或 `plane_cluster_tol_mm`（默认 8 mm）。
+默认参数按 mm、点间距约 2–4 mm。`trajectory` 中每个点的 `xyz` 是焊点；中间点 `normal` 是二面角角平分线，起终点再向缝内倾 `end_tilt_deg`（默认 45°）。焊缝起终点取两侧支撑点沿交线的重叠区间，不再额外裁两端。某块分割面里混进其它面的点时，收紧 `max_normal_dev_deg`（默认 30°）或 `plane_cluster_tol_mm`（默认 8 mm）。
 
 论文：https://doi.org/10.1016/j.rcim.2022.102433
 

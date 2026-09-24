@@ -33,7 +33,6 @@ class GengRcim2022
     float min_dihedral_deg = 50.0f;
     float max_dihedral_deg = 140.0f;
     float seam_band_mm = 8.0f;
-    float seam_end_crop_mm = 10.0f;  // 两端各裁掉这段长度，去掉端头其它面带进 seamCloud 的点
     float min_seam_length_mm = 20.0f;
     int min_plane_support = 12;
     float trajectory_step_mm = 2.0f;

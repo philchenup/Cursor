@@ -693,9 +693,8 @@ GengRcim2022::buildSeam(const FittedPlane& a, const FittedPlane& b, WeldSeam& se
   const auto sb = span(t_b);
   const float t0 = std::max(sa.first, sb.first);
   const float t1 = std::min(sa.second, sb.second);
-  const float crop = std::max(0.0f, params_.seam_end_crop_mm);
-  const float t_lo = t0 + crop;
-  const float t_hi = t1 - crop;
+  const float t_lo = t0;
+  const float t_hi = t1;
   if (t_hi - t_lo < params_.min_seam_length_mm)
     return false;
 
