@@ -97,6 +97,14 @@ main()
     expect(det.planes().size() >= 3, "box corner finds three plates");
     expect(det.seams().size() == 3, "box corner has three welds");
     expect(det.trajectoryCloud()->size() >= 200, "box corner outputs three trajectories");
+    int reach_corner = 0;
+    for (const auto& s : det.seams())
+    {
+      const float d = std::min(s.start.norm(), s.end.norm());
+      if (d < 8.0f)
+        ++reach_corner;
+    }
+    expect(reach_corner == 3, "each box-corner weld reaches the triple point");
   }
 
   {
