@@ -28,6 +28,8 @@ class GengRcim2022
     int max_planes = 8;
     float merge_normal_deg = 10.0f;
     float merge_offset_mm = 3.0f;
+    float max_normal_dev_deg = 30.0f;  // 局部法向与该面法向差太大则剔除
+    float plane_cluster_tol_mm = 8.0f;  // 同面连通半径，去掉共面但不属于这块面的点
     float min_dihedral_deg = 50.0f;
     float max_dihedral_deg = 140.0f;
     float seam_band_mm = 8.0f;
@@ -85,6 +87,11 @@ class GengRcim2022
   bool ransacOnePlane(const std::vector<int>& remaining, FittedPlane& plane) const;
   void refinePlane(FittedPlane& plane) const;
   void mergeSimilarPlanes();
+  void cleanSegmentedPlanes();
+  void estimateNormals();
+  void reassignPointsToNearestPlane();
+  void filterPlaneByNormal(FittedPlane& plane) const;
+  void keepLargestInlierCluster(FittedPlane& plane) const;
   void materializeSegmentedPlanes();
   void extractSeamsAndTrajectories();
   bool buildSeam(const FittedPlane& a, const FittedPlane& b, WeldSeam& seam) const;
@@ -119,6 +126,7 @@ class GengRcim2022
   pcl::PointCloud<pcl::PointXYZ>::ConstPtr input_;
   pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_;
   pcl::PointCloud<pcl::PointXYZ>::Ptr segmented_cloud_;
+  pcl::PointCloud<pcl::Normal>::Ptr normals_;
   pcl::search::KdTree<pcl::PointXYZ>::Ptr tree_;
   std::vector<FittedPlane> planes_;
   std::vector<WeldSeam> seams_;

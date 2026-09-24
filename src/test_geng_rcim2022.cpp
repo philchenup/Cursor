@@ -101,6 +101,28 @@ main()
   }
 
   {
+    std::cout << "[reject coplanar island]\n";
+    auto cloud = geng_demo::makeLJointMm();
+    geng_demo::appendXY(*cloud, 400.0f, 440.0f, 0.0f, 40.0f, 0.0f, 4.0f);
+    cloud->width = static_cast<std::uint32_t>(cloud->size());
+    cloud->height = 1;
+    GengRcim2022 det;
+    det.setInputCloud(cloud);
+    det.compute();
+    bool leaked = false;
+    for (const auto& plane : det.planes())
+    {
+      for (const auto& p : plane.points)
+      {
+        if (p.x > 300.0f)
+          leaked = true;
+      }
+    }
+    expect(!leaked, "distant coplanar island is stripped from the main face");
+    expect(det.seams().size() == 1, "L-joint weld still found after plane cleanup");
+  }
+
+  {
     std::cout << "[single plate mm]\n";
     pcl::PointCloud<pcl::PointXYZ>::Ptr plate(new pcl::PointCloud<pcl::PointXYZ>);
     geng_demo::appendXY(*plate, 0.0f, 200.0f, 0.0f, 200.0f, 0.0f, 4.0f);

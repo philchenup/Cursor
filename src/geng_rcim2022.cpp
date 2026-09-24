@@ -3,6 +3,7 @@
 #include <Eigen/Dense>
 #include <pcl/common/centroid.h>
 #include <pcl/common/io.h>
+#include <pcl/features/normal_3d.h>
 #include <pcl/filters/voxel_grid.h>
 
 #include <algorithm>
@@ -39,6 +40,7 @@ GengRcim2022::compute()
   seams_.clear();
   cloud_.reset();
   segmented_cloud_.reset();
+  normals_.reset();
   tree_.reset();
 
   if (!input_ || input_->empty())
@@ -53,6 +55,7 @@ GengRcim2022::compute()
 
   extractPlanes();
   mergeSimilarPlanes();
+  cleanSegmentedPlanes();
   materializeSegmentedPlanes();
   extractSeamsAndTrajectories();
   return !seams_.empty();
@@ -261,6 +264,176 @@ GengRcim2022::ransacOnePlane(const std::vector<int>& remaining, FittedPlane& pla
       plane.inliers.push_back(idx);
   }
   return static_cast<int>(plane.inliers.size()) >= params_.min_plane_inliers;
+}
+
+void
+GengRcim2022::estimateNormals()
+{
+  normals_.reset();
+  if (!cloud_ || cloud_->empty() || params_.max_normal_dev_deg <= 0.0f)
+    return;
+
+  float radius = params_.local_sample_radius_mm;
+  if (radius <= 0.0f)
+    radius = std::max(6.0f, 3.0f * params_.voxel_leaf_mm);
+
+  pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne;
+  ne.setInputCloud(cloud_);
+  ne.setSearchMethod(tree_);
+  ne.setRadiusSearch(radius);
+  normals_.reset(new pcl::PointCloud<pcl::Normal>);
+  ne.compute(*normals_);
+}
+
+void
+GengRcim2022::reassignPointsToNearestPlane()
+{
+  if (!cloud_ || planes_.empty())
+    return;
+
+  std::vector<std::vector<int>> assigned(planes_.size());
+  for (std::size_t i = 0; i < cloud_->size(); ++i)
+  {
+    const Eigen::Vector3f p = (*cloud_)[static_cast<std::size_t>(i)].getVector3fMap();
+    float best = std::numeric_limits<float>::infinity();
+    int best_j = -1;
+    for (std::size_t j = 0; j < planes_.size(); ++j)
+    {
+      const float dist = pointToPlaneDistance(p, planes_[j]);
+      if (dist < best)
+      {
+        best = dist;
+        best_j = static_cast<int>(j);
+      }
+    }
+    if (best_j >= 0 && best <= params_.plane_dist_mm)
+      assigned[static_cast<std::size_t>(best_j)].push_back(static_cast<int>(i));
+  }
+
+  for (std::size_t j = 0; j < planes_.size(); ++j)
+  {
+    planes_[j].inliers.swap(assigned[j]);
+    refinePlane(planes_[j]);
+  }
+}
+
+void
+GengRcim2022::filterPlaneByNormal(FittedPlane& plane) const
+{
+  if (!normals_ || normals_->size() != cloud_->size() || params_.max_normal_dev_deg <= 0.0f)
+    return;
+  if (plane.inliers.size() < 3)
+    return;
+
+  const float min_dot = std::cos(params_.max_normal_dev_deg * kPi / 180.0f);
+  std::vector<int> kept;
+  kept.reserve(plane.inliers.size());
+  for (const int idx : plane.inliers)
+  {
+    if (idx < 0 || idx >= static_cast<int>(normals_->size()))
+      continue;
+    const pcl::Normal& n = (*normals_)[static_cast<std::size_t>(idx)];
+    if (!std::isfinite(n.normal_x) || !std::isfinite(n.normal_y) || !std::isfinite(n.normal_z))
+      continue;
+    Eigen::Vector3f ln(n.normal_x, n.normal_y, n.normal_z);
+    if (ln.norm() < 1e-6f)
+      continue;
+    ln.normalize();
+    if (std::abs(ln.dot(plane.normal)) >= min_dot)
+      kept.push_back(idx);
+  }
+  if (static_cast<int>(kept.size()) >= params_.min_plane_inliers)
+    plane.inliers.swap(kept);
+}
+
+void
+GengRcim2022::keepLargestInlierCluster(FittedPlane& plane) const
+{
+  if (plane.inliers.size() < 2 || params_.plane_cluster_tol_mm <= 0.0f)
+    return;
+
+  pcl::PointCloud<pcl::PointXYZ>::Ptr subset(new pcl::PointCloud<pcl::PointXYZ>);
+  subset->reserve(plane.inliers.size());
+  for (const int idx : plane.inliers)
+    subset->push_back((*cloud_)[static_cast<std::size_t>(idx)]);
+
+  pcl::search::KdTree<pcl::PointXYZ> local;
+  local.setInputCloud(subset);
+
+  const float tol = params_.plane_cluster_tol_mm;
+  std::vector<int> label(subset->size(), -1);
+  int best_label = -1;
+  int best_size = 0;
+  int nlab = 0;
+  std::vector<int> queue;
+  queue.reserve(subset->size());
+
+  for (std::size_t seed = 0; seed < subset->size(); ++seed)
+  {
+    if (label[seed] >= 0)
+      continue;
+    queue.clear();
+    queue.push_back(static_cast<int>(seed));
+    label[seed] = nlab;
+    int sz = 0;
+    for (std::size_t head = 0; head < queue.size(); ++head)
+    {
+      ++sz;
+      pcl::Indices nn;
+      std::vector<float> nn_dist;
+      local.radiusSearch(queue[head], tol, nn, nn_dist);
+      for (const auto j : nn)
+      {
+        if (label[static_cast<std::size_t>(j)] < 0)
+        {
+          label[static_cast<std::size_t>(j)] = nlab;
+          queue.push_back(static_cast<int>(j));
+        }
+      }
+    }
+    if (sz > best_size)
+    {
+      best_size = sz;
+      best_label = nlab;
+    }
+    ++nlab;
+  }
+
+  if (best_label < 0)
+    return;
+
+  std::vector<int> kept;
+  kept.reserve(static_cast<std::size_t>(best_size));
+  for (std::size_t i = 0; i < label.size(); ++i)
+  {
+    if (label[i] == best_label)
+      kept.push_back(plane.inliers[i]);
+  }
+  plane.inliers.swap(kept);
+}
+
+void
+GengRcim2022::cleanSegmentedPlanes()
+{
+  if (planes_.empty() || !cloud_)
+    return;
+
+  estimateNormals();
+  reassignPointsToNearestPlane();
+  for (auto& plane : planes_)
+  {
+    filterPlaneByNormal(plane);
+    keepLargestInlierCluster(plane);
+    refinePlane(plane);
+  }
+
+  planes_.erase(std::remove_if(planes_.begin(),
+                               planes_.end(),
+                               [&](const FittedPlane& plane) {
+                                 return static_cast<int>(plane.inliers.size()) <
+                                        params_.min_plane_inliers;
+                               }),
+                planes_.end());
 }
 
 void
