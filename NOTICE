@@ -1,0 +1,10 @@
+This repository includes a geometry-only adaptation of the CED keypoint detector:
+
+  H. Teng, D. Chatziparaschis, X. Kan, A. K. Roy-Chowdhury and K. Karydis,
+  "Centroid Distance Keypoint Detector for Colored Point Clouds",
+  IEEE/CVF Winter Conference on Applications of Computer Vision (WACV), 2023.
+  https://github.com/UCR-Robotics/CED_Detector
+
+The original CED_Detector code is distributed under the MIT License
+(Copyright 2022 Autonomous Robots and Control Systems (ARCS) Lab).
+The MIT notice is retained in include/ced_3d.h and include/impl/ced_3d.hpp.
