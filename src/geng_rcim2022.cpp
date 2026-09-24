@@ -409,6 +409,59 @@ GengRcim2022::buildTrajectory(WeldSeam& seam) const
   updateTrajectoryNormals(seam);
 }
 
+float
+GengRcim2022::pointToPlaneDistance(const Eigen::Vector3f& p, const FittedPlane& plane)
+{
+  return std::abs(plane.normal.dot(p) + plane.d);
+}
+
+bool
+GengRcim2022::liesOnOtherPlane(const Eigen::Vector3f& p,
+                               const FittedPlane& a,
+                               const FittedPlane& b) const
+{
+  const float tol = params_.plane_dist_mm;
+  for (const auto& plane : planes_)
+  {
+    if (&plane == &a || &plane == &b)
+      continue;
+    if (pointToPlaneDistance(p, plane) <= tol)
+      return true;
+  }
+  return false;
+}
+
+void
+GengRcim2022::collectTwoPlaneSeamPoints(const FittedPlane& a,
+                                        const FittedPlane& b,
+                                        const Eigen::Vector3f& origin,
+                                        const Eigen::Vector3f& dir,
+                                        std::vector<float>& t_a,
+                                        std::vector<float>& t_b,
+                                        pcl::PointCloud<pcl::PointXYZ>& seam_cloud) const
+{
+  t_a.clear();
+  t_b.clear();
+  seam_cloud.clear();
+
+  auto collect = [&](const FittedPlane& plane, std::vector<float>& ts) {
+    for (const int idx : plane.inliers)
+    {
+      const Eigen::Vector3f p = (*cloud_)[idx].getVector3fMap();
+      if (pointToPlaneDistance(p, plane) > params_.plane_dist_mm)
+        continue;
+      if (pointToLineDistance(p, origin, dir) > params_.seam_band_mm)
+        continue;
+      if (liesOnOtherPlane(p, a, b))
+        continue;
+      ts.push_back((p - origin).dot(dir));
+      seam_cloud.push_back((*cloud_)[idx]);
+    }
+  };
+  collect(a, t_a);
+  collect(b, t_b);
+}
+
 bool
 GengRcim2022::buildSeam(const FittedPlane& a, const FittedPlane& b, WeldSeam& seam) const
 {
@@ -424,20 +477,7 @@ GengRcim2022::buildSeam(const FittedPlane& a, const FittedPlane& b, WeldSeam& se
   const Eigen::Vector3f origin = pointOnIntersection(a, b);
   std::vector<float> t_a;
   std::vector<float> t_b;
-  seam.seam_cloud.clear();
-
-  auto collect = [&](const FittedPlane& plane, std::vector<float>& ts) {
-    for (const int idx : plane.inliers)
-    {
-      const Eigen::Vector3f p = (*cloud_)[idx].getVector3fMap();
-      if (pointToLineDistance(p, origin, dir) > params_.seam_band_mm)
-        continue;
-      ts.push_back((p - origin).dot(dir));
-      seam.seam_cloud.push_back((*cloud_)[idx]);
-    }
-  };
-  collect(a, t_a);
-  collect(b, t_b);
+  collectTwoPlaneSeamPoints(a, b, origin, dir, t_a, t_b, seam.seam_cloud);
 
   if (static_cast<int>(t_a.size()) < params_.min_plane_support ||
       static_cast<int>(t_b.size()) < params_.min_plane_support)

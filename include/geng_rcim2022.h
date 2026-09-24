@@ -84,6 +84,17 @@ class GengRcim2022
   void mergeSimilarPlanes();
   void extractSeamsAndTrajectories();
   bool buildSeam(const FittedPlane& a, const FittedPlane& b, WeldSeam& seam) const;
+  void collectTwoPlaneSeamPoints(const FittedPlane& a,
+                                 const FittedPlane& b,
+                                 const Eigen::Vector3f& origin,
+                                 const Eigen::Vector3f& dir,
+                                 std::vector<float>& t_a,
+                                 std::vector<float>& t_b,
+                                 pcl::PointCloud<pcl::PointXYZ>& seam_cloud) const;
+  bool liesOnOtherPlane(const Eigen::Vector3f& p,
+                        const FittedPlane& a,
+                        const FittedPlane& b) const;
+  static float pointToPlaneDistance(const Eigen::Vector3f& p, const FittedPlane& plane);
   void buildTrajectory(WeldSeam& seam) const;
   static Eigen::Vector3f tiltTorchInward(const Eigen::Vector3f& torch_z,
                                          const Eigen::Vector3f& inward,
