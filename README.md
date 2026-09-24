@@ -5,7 +5,7 @@
 复现 Geng et al., *Robotics and Computer-Integrated Manufacturing*, 2022, 79:102433：
 
 1. 改进 RANSAC：在种子点邻域内采样，顺序抽出多个平面并最小二乘精化
-2. 相交平面求交线，用两侧支撑点截出焊缝点云
+2. 先把各分割面点云拼起来，再只从这两张面的点中求交线抽缝（不从原始点云抽）
 3. 沿交线等间距采样得到焊接轨迹（mm）
 4. 用二面角角平分线作为焊枪接近方向（轨迹点的 `normal`）
 5. 起点、终点的焊枪姿态再朝焊缝内部倾斜 45°（`end_tilt_deg`），避开端头其它面。`tiltTorchInward` 为 `static`，可在 `const` 成员函数中调用。

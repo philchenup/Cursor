@@ -45,6 +45,7 @@ class GengRcim2022
     float d = 0.0f;  // n·x + d = 0
     Eigen::Vector3f centroid = Eigen::Vector3f::Zero();
     std::vector<int> inliers;
+    pcl::PointCloud<pcl::PointXYZ> points;  // 该分割面点云，抽缝只从这里取
   };
 
   struct WeldSeam
@@ -72,6 +73,8 @@ class GengRcim2022
   pcl::PointCloud<pcl::PointXYZ>::Ptr seamCloud() const;
   pcl::PointCloud<pcl::PointNormal>::Ptr trajectoryCloud() const;
   pcl::PointCloud<pcl::PointXYZ>::Ptr processedCloud() const { return cloud_; }
+  /** 分割后各面拼成的点云，seamCloud 的抽取源，不含未分割的原始点。 */
+  pcl::PointCloud<pcl::PointXYZ>::Ptr segmentedCloud() const { return segmented_cloud_; }
 
   /** 把焊枪姿态写进轨迹点云法向：中间为角平分线，起终点向缝内倾斜 end_tilt_deg。 */
   void updateTrajectoryNormals(WeldSeam& seam) const;
@@ -82,6 +85,7 @@ class GengRcim2022
   bool ransacOnePlane(const std::vector<int>& remaining, FittedPlane& plane) const;
   void refinePlane(FittedPlane& plane) const;
   void mergeSimilarPlanes();
+  void materializeSegmentedPlanes();
   void extractSeamsAndTrajectories();
   bool buildSeam(const FittedPlane& a, const FittedPlane& b, WeldSeam& seam) const;
   void collectTwoPlaneSeamPoints(const FittedPlane& a,
@@ -114,6 +118,7 @@ class GengRcim2022
   Params params_;
   pcl::PointCloud<pcl::PointXYZ>::ConstPtr input_;
   pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_;
+  pcl::PointCloud<pcl::PointXYZ>::Ptr segmented_cloud_;
   pcl::search::KdTree<pcl::PointXYZ>::Ptr tree_;
   std::vector<FittedPlane> planes_;
   std::vector<WeldSeam> seams_;

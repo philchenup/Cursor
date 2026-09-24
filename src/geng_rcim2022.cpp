@@ -38,6 +38,7 @@ GengRcim2022::compute()
   planes_.clear();
   seams_.clear();
   cloud_.reset();
+  segmented_cloud_.reset();
   tree_.reset();
 
   if (!input_ || input_->empty())
@@ -52,6 +53,7 @@ GengRcim2022::compute()
 
   extractPlanes();
   mergeSimilarPlanes();
+  materializeSegmentedPlanes();
   extractSeamsAndTrajectories();
   return !seams_.empty();
 }
@@ -262,6 +264,33 @@ GengRcim2022::ransacOnePlane(const std::vector<int>& remaining, FittedPlane& pla
 }
 
 void
+GengRcim2022::materializeSegmentedPlanes()
+{
+  segmented_cloud_.reset(new pcl::PointCloud<pcl::PointXYZ>);
+  std::vector<char> taken(cloud_ ? cloud_->size() : 0, 0);
+
+  for (auto& plane : planes_)
+  {
+    plane.points.clear();
+    plane.points.reserve(plane.inliers.size());
+    for (const int idx : plane.inliers)
+    {
+      if (idx < 0 || idx >= static_cast<int>(taken.size()) || taken[static_cast<std::size_t>(idx)])
+        continue;
+      taken[static_cast<std::size_t>(idx)] = 1;
+      plane.points.push_back((*cloud_)[idx]);
+    }
+    plane.points.width = static_cast<std::uint32_t>(plane.points.size());
+    plane.points.height = 1;
+    plane.points.is_dense = true;
+    *segmented_cloud_ += plane.points;
+  }
+  segmented_cloud_->width = static_cast<std::uint32_t>(segmented_cloud_->size());
+  segmented_cloud_->height = 1;
+  segmented_cloud_->is_dense = true;
+}
+
+void
 GengRcim2022::extractPlanes()
 {
   planes_.clear();
@@ -445,9 +474,9 @@ GengRcim2022::collectTwoPlaneSeamPoints(const FittedPlane& a,
   seam_cloud.clear();
 
   auto collect = [&](const FittedPlane& plane, std::vector<float>& ts) {
-    for (const int idx : plane.inliers)
+    for (const auto& pt : plane.points)
     {
-      const Eigen::Vector3f p = (*cloud_)[idx].getVector3fMap();
+      const Eigen::Vector3f p = pt.getVector3fMap();
       if (pointToPlaneDistance(p, plane) > params_.plane_dist_mm)
         continue;
       if (pointToLineDistance(p, origin, dir) > params_.seam_band_mm)
@@ -455,7 +484,7 @@ GengRcim2022::collectTwoPlaneSeamPoints(const FittedPlane& a,
       if (liesOnOtherPlane(p, a, b))
         continue;
       ts.push_back((p - origin).dot(dir));
-      seam_cloud.push_back((*cloud_)[idx]);
+      seam_cloud.push_back(pt);
     }
   };
   collect(a, t_a);

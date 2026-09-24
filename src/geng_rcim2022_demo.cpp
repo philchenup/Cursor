@@ -57,7 +57,9 @@ main(int argc, char** argv)
 
   auto seam = detector.seamCloud();
   auto traj = detector.trajectoryCloud();
+  const auto segmented = detector.segmentedCloud();
   std::cout << "Planes: " << detector.planes().size()
+            << "  segmented: " << (segmented ? segmented->size() : 0)
             << "  seams: " << detector.seams().size()
             << "  seam points: " << seam->size()
             << "  trajectory points: " << traj->size() << "\n";

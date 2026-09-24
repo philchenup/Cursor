@@ -48,6 +48,8 @@ main()
               << " seams=" << det.seams().size()
               << " seam_pts=" << det.seamCloud()->size()
               << " traj=" << traj->size() << "\n";
+    expect(det.segmentedCloud() && !det.segmentedCloud()->empty(),
+           "L-joint builds a segmented-face cloud");
     expect(det.planes().size() >= 2, "L-joint finds two plates");
     expect(det.seams().size() == 1, "L-joint has one weld");
     expect(!det.seamCloud()->empty(), "L-joint outputs a weld point cloud");
