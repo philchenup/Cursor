@@ -101,9 +101,16 @@ class GengRcim2022
                                  std::vector<float>& t_a,
                                  std::vector<float>& t_b,
                                  pcl::PointCloud<pcl::PointXYZ>& seam_cloud) const;
-  bool liesOnOtherPlane(const Eigen::Vector3f& p,
-                        const FittedPlane& a,
-                        const FittedPlane& b) const;
+  bool nearOtherPlane(const Eigen::Vector3f& p, const FittedPlane& self, float tol) const;
+  std::pair<float, float> faceSpanAlongLine(const FittedPlane& plane,
+                                            const Eigen::Vector3f& origin,
+                                            const Eigen::Vector3f& dir) const;
+  void snapSeamToOtherPlanes(const FittedPlane& a,
+                             const FittedPlane& b,
+                             const Eigen::Vector3f& origin,
+                             const Eigen::Vector3f& dir,
+                             float& t_lo,
+                             float& t_hi) const;
   static float pointToPlaneDistance(const Eigen::Vector3f& p, const FittedPlane& plane);
   void buildTrajectory(WeldSeam& seam) const;
   static Eigen::Vector3f tiltTorchInward(const Eigen::Vector3f& torch_z,

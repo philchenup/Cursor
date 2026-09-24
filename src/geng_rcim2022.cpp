@@ -339,7 +339,10 @@ GengRcim2022::filterPlaneByNormal(FittedPlane& plane) const
     if (ln.norm() < 1e-6f)
       continue;
     ln.normalize();
-    if (std::abs(ln.dot(plane.normal)) >= min_dot)
+    const bool normal_ok = std::abs(ln.dot(plane.normal)) >= min_dot;
+    const Eigen::Vector3f p = (*cloud_)[static_cast<std::size_t>(idx)].getVector3fMap();
+    const float edge_tol = std::max(params_.plane_dist_mm, params_.local_sample_radius_mm);
+    if (normal_ok || nearOtherPlane(p, plane, edge_tol))
       kept.push_back(idx);
   }
   if (static_cast<int>(kept.size()) >= params_.min_plane_inliers)
@@ -618,19 +621,61 @@ GengRcim2022::pointToPlaneDistance(const Eigen::Vector3f& p, const FittedPlane& 
 }
 
 bool
-GengRcim2022::liesOnOtherPlane(const Eigen::Vector3f& p,
-                               const FittedPlane& a,
-                               const FittedPlane& b) const
+GengRcim2022::nearOtherPlane(const Eigen::Vector3f& p, const FittedPlane& self, float tol) const
 {
-  const float tol = params_.plane_dist_mm;
   for (const auto& plane : planes_)
   {
-    if (&plane == &a || &plane == &b)
+    if (&plane == &self)
       continue;
     if (pointToPlaneDistance(p, plane) <= tol)
       return true;
   }
   return false;
+}
+
+std::pair<float, float>
+GengRcim2022::faceSpanAlongLine(const FittedPlane& plane,
+                                const Eigen::Vector3f& origin,
+                                const Eigen::Vector3f& dir) const
+{
+  float tmin = std::numeric_limits<float>::infinity();
+  float tmax = -std::numeric_limits<float>::infinity();
+  for (const auto& pt : plane.points)
+  {
+    const float t = (pt.getVector3fMap() - origin).dot(dir);
+    tmin = std::min(tmin, t);
+    tmax = std::max(tmax, t);
+  }
+  return {tmin, tmax};
+}
+
+void
+GengRcim2022::snapSeamToOtherPlanes(const FittedPlane& a,
+                                    const FittedPlane& b,
+                                    const Eigen::Vector3f& origin,
+                                    const Eigen::Vector3f& dir,
+                                    float& t_lo,
+                                    float& t_hi) const
+{
+  const float slack = std::max(
+      params_.local_sample_radius_mm, std::max(2.0f * params_.seam_band_mm, 20.0f));
+  for (const auto& c : planes_)
+  {
+    if (&c == &a || &c == &b)
+      continue;
+    const float denom = c.normal.dot(dir);
+    if (std::abs(denom) < 1e-5f)
+      continue;
+    const float t_c = -(c.normal.dot(origin) + c.d) / denom;
+    const Eigen::Vector3f p = origin + t_c * dir;
+    if (pointToPlaneDistance(p, a) > params_.plane_dist_mm ||
+        pointToPlaneDistance(p, b) > params_.plane_dist_mm)
+      continue;
+    if (t_c < t_lo && t_lo - t_c <= slack)
+      t_lo = t_c;
+    if (t_c > t_hi && t_c - t_hi <= slack)
+      t_hi = t_c;
+  }
 }
 
 void
@@ -653,8 +698,6 @@ GengRcim2022::collectTwoPlaneSeamPoints(const FittedPlane& a,
       if (pointToPlaneDistance(p, plane) > params_.plane_dist_mm)
         continue;
       if (pointToLineDistance(p, origin, dir) > params_.seam_band_mm)
-        continue;
-      if (liesOnOtherPlane(p, a, b))
         continue;
       ts.push_back((p - origin).dot(dir));
       seam_cloud.push_back(pt);
@@ -689,12 +732,16 @@ GengRcim2022::buildSeam(const FittedPlane& a, const FittedPlane& b, WeldSeam& se
     const auto mm = std::minmax_element(ts.begin(), ts.end());
     return std::make_pair(*mm.first, *mm.second);
   };
-  const auto sa = span(t_a);
-  const auto sb = span(t_b);
-  const float t0 = std::max(sa.first, sb.first);
-  const float t1 = std::min(sa.second, sb.second);
-  const float t_lo = t0;
-  const float t_hi = t1;
+  auto sa = faceSpanAlongLine(a, origin, dir);
+  auto sb = faceSpanAlongLine(b, origin, dir);
+  if (!std::isfinite(sa.first) || !std::isfinite(sb.first))
+  {
+    sa = span(t_a);
+    sb = span(t_b);
+  }
+  float t_lo = std::max(sa.first, sb.first);
+  float t_hi = std::min(sa.second, sb.second);
+  snapSeamToOtherPlanes(a, b, origin, dir, t_lo, t_hi);
   if (t_hi - t_lo < params_.min_seam_length_mm)
     return false;
 
