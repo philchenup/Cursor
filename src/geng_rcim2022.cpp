@@ -354,6 +354,36 @@ GengRcim2022::tiltTorchInward(const Eigen::Vector3f& torch_z,
 }
 
 void
+GengRcim2022::updateTrajectoryNormals(WeldSeam& seam) const
+{
+  if (seam.trajectory.empty())
+    return;
+
+  Eigen::Vector3f dir = seam.end - seam.start;
+  if (dir.norm() < 1e-8f)
+    dir = seam.line_dir;
+  if (dir.norm() < 1e-8f)
+    dir = Eigen::Vector3f::UnitY();
+  dir.normalize();
+
+  const Eigen::Vector3f n_mid = seam.torch_z.normalized();
+  const Eigen::Vector3f n_start = tiltTorchInward(n_mid, dir, params_.end_tilt_deg);
+  const Eigen::Vector3f n_end = tiltTorchInward(n_mid, -dir, params_.end_tilt_deg);
+  const int last = static_cast<int>(seam.trajectory.size()) - 1;
+
+  for (int i = 0; i <= last; ++i)
+  {
+    Eigen::Vector3f n = n_mid;
+    if (i == 0)
+      n = n_start;
+    else if (i == last)
+      n = n_end;
+    seam.trajectory[static_cast<std::size_t>(i)].getNormalVector3fMap() = n;
+    seam.trajectory[static_cast<std::size_t>(i)].curvature = 0.0f;
+  }
+}
+
+void
 GengRcim2022::buildTrajectory(WeldSeam& seam) const
 {
   seam.trajectory.clear();
@@ -362,35 +392,21 @@ GengRcim2022::buildTrajectory(WeldSeam& seam) const
   if (length < 1e-4f)
     return;
 
-  const Eigen::Vector3f dir = vec / length;
-  const Eigen::Vector3f torch_start =
-      tiltTorchInward(seam.torch_z, dir, params_.end_tilt_deg);
-  const Eigen::Vector3f torch_end =
-      tiltTorchInward(seam.torch_z, -dir, params_.end_tilt_deg);
   const int steps = std::max(1, static_cast<int>(std::ceil(length / params_.trajectory_step_mm)));
   for (int i = 0; i <= steps; ++i)
   {
     const float t = static_cast<float>(i) / static_cast<float>(steps);
     const Eigen::Vector3f p = seam.start + t * vec;
-    Eigen::Vector3f torch = seam.torch_z;
-    if (i == 0)
-      torch = torch_start;
-    else if (i == steps)
-      torch = torch_end;
-
     pcl::PointNormal q;
-    q.x = p.x();
-    q.y = p.y();
-    q.z = p.z();
-    q.normal_x = torch.x();
-    q.normal_y = torch.y();
-    q.normal_z = torch.z();
+    q.getVector3fMap() = p;
+    q.getNormalVector3fMap() = Eigen::Vector3f::Zero();
     q.curvature = 0.0f;
     seam.trajectory.push_back(q);
   }
   seam.trajectory.width = static_cast<std::uint32_t>(seam.trajectory.size());
   seam.trajectory.height = 1;
   seam.trajectory.is_dense = true;
+  updateTrajectoryNormals(seam);
 }
 
 bool

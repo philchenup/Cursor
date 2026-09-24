@@ -72,6 +72,9 @@ class GengRcim2022
   pcl::PointCloud<pcl::PointNormal>::Ptr trajectoryCloud() const;
   pcl::PointCloud<pcl::PointXYZ>::Ptr processedCloud() const { return cloud_; }
 
+  /** 把焊枪姿态写进轨迹点云法向：中间为角平分线，起终点向缝内倾斜 end_tilt_deg。 */
+  void updateTrajectoryNormals(WeldSeam& seam) const;
+
  private:
   void downsample();
   void extractPlanes();
