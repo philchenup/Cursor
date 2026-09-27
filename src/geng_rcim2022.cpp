@@ -363,6 +363,131 @@ GengRcim2022::buildTrajectory(WeldSeam& seam) const
   (void)dir;
 }
 
+float
+GengRcim2022::pointToPlaneDistance(const Eigen::Vector3f& p, const FittedPlane& plane)
+{
+  return std::abs(signedPointToPlane(p, plane));
+}
+
+float
+GengRcim2022::signedPointToPlane(const Eigen::Vector3f& p, const FittedPlane& plane)
+{
+  return plane.normal.dot(p) + plane.d;
+}
+
+bool
+GengRcim2022::closerToOtherPlane(const Eigen::Vector3f& p,
+                                 const FittedPlane& a,
+                                 const FittedPlane& b) const
+{
+  const float own = std::min(pointToPlaneDistance(p, a), pointToPlaneDistance(p, b));
+  const float margin = 0.25f * params_.plane_dist_mm;
+  for (const auto& c : planes_)
+  {
+    if (&c == &a || &c == &b)
+      continue;
+    if (pointToPlaneDistance(p, c) + margin < own)
+      return true;
+  }
+  return false;
+}
+
+void
+GengRcim2022::clipSpanInwardToOtherPlanes(const FittedPlane& a,
+                                          const FittedPlane& b,
+                                          const Eigen::Vector3f& origin,
+                                          const Eigen::Vector3f& dir,
+                                          float& t0,
+                                          float& t1) const
+{
+  const float mid = 0.5f * (t0 + t1);
+  for (const auto& c : planes_)
+  {
+    if (&c == &a || &c == &b)
+      continue;
+    const float denom = c.normal.dot(dir);
+    if (std::abs(denom) < 1e-5f)
+      continue;
+    const float t_c = -(c.normal.dot(origin) + c.d) / denom;
+    if (t_c > mid && t_c < t1)
+      t1 = t_c;
+    else if (t_c < mid && t_c > t0)
+      t0 = t_c;
+  }
+}
+
+void
+GengRcim2022::shrinkSpanToBothPlaneSupport(const std::vector<float>& t_a,
+                                           const std::vector<float>& t_b,
+                                           float window_mm,
+                                           float step_mm,
+                                           float min_length_mm,
+                                           float& t0,
+                                           float& t1)
+{
+  const auto supported = [&](const std::vector<float>& ts, float t) {
+    for (const float x : ts)
+    {
+      if (std::abs(x - t) <= window_mm)
+        return true;
+    }
+    return false;
+  };
+
+  step_mm = std::max(step_mm, 0.5f);
+  while (t1 - t0 >= min_length_mm && (!supported(t_a, t0) || !supported(t_b, t0)))
+    t0 += step_mm;
+  while (t1 - t0 >= min_length_mm && (!supported(t_a, t1) || !supported(t_b, t1)))
+    t1 -= step_mm;
+}
+
+void
+GengRcim2022::cropSeamCloudToSpan(pcl::PointCloud<pcl::PointXYZ>& cloud,
+                                  const Eigen::Vector3f& origin,
+                                  const Eigen::Vector3f& dir,
+                                  float t0,
+                                  float t1)
+{
+  pcl::PointCloud<pcl::PointXYZ> cropped;
+  cropped.reserve(cloud.size());
+  for (const auto& pt : cloud)
+  {
+    const float t = (pt.getVector3fMap() - origin).dot(dir);
+    if (t >= t0 && t <= t1)
+      cropped.push_back(pt);
+  }
+  cloud.swap(cropped);
+}
+
+void
+GengRcim2022::collectTwoPlaneSeamPoints(const FittedPlane& a,
+                                        const FittedPlane& b,
+                                        const Eigen::Vector3f& origin,
+                                        const Eigen::Vector3f& dir,
+                                        std::vector<float>& t_a,
+                                        std::vector<float>& t_b,
+                                        pcl::PointCloud<pcl::PointXYZ>& seam_cloud) const
+{
+  t_a.clear();
+  t_b.clear();
+  seam_cloud.clear();
+
+  auto collect = [&](const FittedPlane& plane, std::vector<float>& ts) {
+    for (const int idx : plane.inliers)
+    {
+      const Eigen::Vector3f p = (*cloud_)[idx].getVector3fMap();
+      if (pointToLineDistance(p, origin, dir) > params_.seam_band_mm)
+        continue;
+      if (closerToOtherPlane(p, a, b))
+        continue;
+      ts.push_back((p - origin).dot(dir));
+      seam_cloud.push_back((*cloud_)[idx]);
+    }
+  };
+  collect(a, t_a);
+  collect(b, t_b);
+}
+
 bool
 GengRcim2022::buildSeam(const FittedPlane& a, const FittedPlane& b, WeldSeam& seam) const
 {
@@ -378,20 +503,7 @@ GengRcim2022::buildSeam(const FittedPlane& a, const FittedPlane& b, WeldSeam& se
   const Eigen::Vector3f origin = pointOnIntersection(a, b);
   std::vector<float> t_a;
   std::vector<float> t_b;
-  seam.seam_cloud.clear();
-
-  auto collect = [&](const FittedPlane& plane, std::vector<float>& ts) {
-    for (const int idx : plane.inliers)
-    {
-      const Eigen::Vector3f p = (*cloud_)[idx].getVector3fMap();
-      if (pointToLineDistance(p, origin, dir) > params_.seam_band_mm)
-        continue;
-      ts.push_back((p - origin).dot(dir));
-      seam.seam_cloud.push_back((*cloud_)[idx]);
-    }
-  };
-  collect(a, t_a);
-  collect(b, t_b);
+  collectTwoPlaneSeamPoints(a, b, origin, dir, t_a, t_b, seam.seam_cloud);
 
   if (static_cast<int>(t_a.size()) < params_.min_plane_support ||
       static_cast<int>(t_b.size()) < params_.min_plane_support)
@@ -403,15 +515,43 @@ GengRcim2022::buildSeam(const FittedPlane& a, const FittedPlane& b, WeldSeam& se
   };
   const auto sa = span(t_a);
   const auto sb = span(t_b);
-  const float t0 = std::max(sa.first, sb.first);
-  const float t1 = std::min(sa.second, sb.second);
+  float t0 = std::max(sa.first, sb.first);
+  float t1 = std::min(sa.second, sb.second);
+  clipSpanInwardToOtherPlanes(a, b, origin, dir, t0, t1);
+  shrinkSpanToBothPlaneSupport(t_a,
+                               t_b,
+                               params_.seam_band_mm,
+                               std::max(params_.voxel_leaf_mm, 1.0f),
+                               params_.min_seam_length_mm,
+                               t0,
+                               t1);
   if (t1 - t0 < params_.min_seam_length_mm)
     return false;
 
-  seam.start = origin + t0 * dir;
-  seam.end = origin + t1 * dir;
+  cropSeamCloudToSpan(seam.seam_cloud, origin, dir, t0, t1);
+  if (seam.seam_cloud.size() < 2)
+    return false;
+
+  Eigen::Vector3f centroid = Eigen::Vector3f::Zero();
+  for (const auto& pt : seam.seam_cloud)
+    centroid += pt.getVector3fMap();
+  centroid /= static_cast<float>(seam.seam_cloud.size());
+
+  float t_lo = std::numeric_limits<float>::infinity();
+  float t_hi = -std::numeric_limits<float>::infinity();
+  for (const auto& pt : seam.seam_cloud)
+  {
+    const float t = (pt.getVector3fMap() - centroid).dot(dir);
+    t_lo = std::min(t_lo, t);
+    t_hi = std::max(t_hi, t);
+  }
+  if (t_hi - t_lo < params_.min_seam_length_mm)
+    return false;
+
+  seam.start = centroid + t_lo * dir;
+  seam.end = centroid + t_hi * dir;
   seam.line_dir = dir;
-  seam.length_mm = t1 - t0;
+  seam.length_mm = t_hi - t_lo;
   seam.seam_cloud.width = static_cast<std::uint32_t>(seam.seam_cloud.size());
   seam.seam_cloud.height = 1;
   seam.seam_cloud.is_dense = true;
