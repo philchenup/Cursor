@@ -79,6 +79,36 @@ class GengRcim2022
   void mergeSimilarPlanes();
   void extractSeamsAndTrajectories();
   bool buildSeam(const FittedPlane& a, const FittedPlane& b, WeldSeam& seam) const;
+  void collectTwoPlaneSeamPoints(const FittedPlane& a,
+                                 const FittedPlane& b,
+                                 const Eigen::Vector3f& origin,
+                                 const Eigen::Vector3f& dir,
+                                 std::vector<float>& t_a,
+                                 std::vector<float>& t_b,
+                                 pcl::PointCloud<pcl::PointXYZ>& seam_cloud) const;
+  bool closerToOtherPlane(const Eigen::Vector3f& p,
+                          const FittedPlane& a,
+                          const FittedPlane& b) const;
+  void clipSpanInwardToOtherPlanes(const FittedPlane& a,
+                                   const FittedPlane& b,
+                                   const Eigen::Vector3f& origin,
+                                   const Eigen::Vector3f& dir,
+                                   float& t0,
+                                   float& t1) const;
+  static void shrinkSpanToBothPlaneSupport(const std::vector<float>& t_a,
+                                           const std::vector<float>& t_b,
+                                           float window_mm,
+                                           float step_mm,
+                                           float min_length_mm,
+                                           float& t0,
+                                           float& t1);
+  static void cropSeamCloudToSpan(pcl::PointCloud<pcl::PointXYZ>& cloud,
+                                  const Eigen::Vector3f& origin,
+                                  const Eigen::Vector3f& dir,
+                                  float t0,
+                                  float t1);
+  static float pointToPlaneDistance(const Eigen::Vector3f& p, const FittedPlane& plane);
+  static float signedPointToPlane(const Eigen::Vector3f& p, const FittedPlane& plane);
   void buildTrajectory(WeldSeam& seam) const;
 
   static bool fitThreePoints(const Eigen::Vector3f& p0,

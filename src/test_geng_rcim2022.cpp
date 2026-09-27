@@ -81,6 +81,28 @@ main()
     expect(det.planes().size() >= 3, "box corner finds three plates");
     expect(det.seams().size() == 3, "box corner has three welds");
     expect(det.trajectoryCloud()->size() >= 200, "box corner outputs three trajectories");
+    const float inside_tol = det.params().seam_band_mm + det.params().voxel_leaf_mm;
+    bool traj_inside = true;
+    float max_overshoot = 0.0f;
+    for (const auto& s : det.seams())
+    {
+      for (const auto& q : s.trajectory)
+      {
+        float best = 1e9f;
+        for (const auto& p : s.seam_cloud)
+        {
+          const float dx = p.x - q.x;
+          const float dy = p.y - q.y;
+          const float dz = p.z - q.z;
+          best = std::min(best, std::sqrt(dx * dx + dy * dy + dz * dz));
+        }
+        max_overshoot = std::max(max_overshoot, best);
+        if (best > inside_tol)
+          traj_inside = false;
+      }
+    }
+    std::cout << "  max traj-to-seam distance=" << max_overshoot << " mm\n";
+    expect(traj_inside, "box-corner trajectory stays inside the seam cloud");
   }
 
   {
