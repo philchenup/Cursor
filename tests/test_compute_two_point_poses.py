@@ -45,6 +45,8 @@ class Options:
         gravity_signed_travel_angle=True,
         tool_head_axis=None,
         flip_travel_to_raise_y=False,
+        torch_x=None,
+        x_align_hysteresis=0.2,
     ) -> None:
         self.world_up = np.asarray(world_up, dtype=np.float64)
         self.travel_policy = travel_policy
@@ -60,6 +62,8 @@ class Options:
             dtype=np.float64,
         )
         self.flip_travel_to_raise_y = flip_travel_to_raise_y
+        self.torch_x = np.zeros(3) if torch_x is None else np.asarray(torch_x, dtype=np.float64)
+        self.x_align_hysteresis = x_align_hysteresis
 
 
 def finite_unit(v: np.ndarray, fallback: np.ndarray) -> np.ndarray:
@@ -174,11 +178,24 @@ def compute_two_point_poses(trajectory: PointCloudPointNormal, opt: Options | No
         z0, z1 = z1.copy(), z0.copy()
         travel = -travel
 
-    steep = abs(float(np.dot(travel, world_up))) >= opt.steep_seam_abs_cos
     z_mean = finite_unit(z0 + z1, z0)
+    if float(np.dot(opt.torch_x, opt.torch_x)) >= EPS:
+        xref = project_perp(opt.torch_x, z_mean)
+        if float(np.dot(xref, xref)) < EPS:
+            xref = opt.torch_x
+        xref = finite_unit(xref, travel)
+        if float(np.dot(travel, xref)) < -opt.x_align_hysteresis:
+            t0, t1 = t1.copy(), t0.copy()
+            z0, z1 = z1.copy(), z0.copy()
+            travel = -travel
+            z_mean = finite_unit(z0 + z1, z0)
+
+    steep = abs(float(np.dot(travel, world_up))) >= opt.steep_seam_abs_cos
     y_probe = np.cross(z_mean, travel)
+    have_torch = float(np.dot(opt.torch_x, opt.torch_x)) >= EPS
     flip_xy = (
         (not vertical)
+        and (not have_torch)
         and opt.flip_travel_to_raise_y
         and not steep
         and float(np.dot(y_probe, y_probe)) >= EPS
@@ -223,6 +240,9 @@ def compute_two_point_poses(trajectory: PointCloudPointNormal, opt: Options | No
         x, y, z = assemble(z_in)
         if abs(signed) > 1e-8:
             x, y, z = rotate_travel_angle(x, y, z, signed, vertical)
+        if (not vertical) and float(np.dot(opt.torch_x, opt.torch_x)) >= EPS:
+            if float(np.dot(x, opt.torch_x)) < -opt.x_align_hysteresis:
+                x, y, z = make_frame(-x, -y, z)
         T = np.eye(4, dtype=np.float64)
         T[:3, 0], T[:3, 1], T[:3, 2], T[:3, 3] = x, y, z, t
         return T
@@ -381,6 +401,41 @@ class FlatVsVerticalTests(unittest.TestCase):
         ok, T, _ = compute_two_point_poses(traj, opt)
         self.assertTrue(ok)
         self.assert_orthonormal_rh(T[:3, :3])
+
+    def test_torch_x_keeps_positive_when_start_end_reversed(self) -> None:
+        """起终点反了也不翻枪 X：路径跟着焊枪 +X。"""
+        n = WORLD_Z
+        a, b = np.zeros(3), np.array([1.0, 0.0, 0.0])
+        torch_x = np.array([1.0, 0.0, 0.0])
+        opt = Options(
+            weld_position=FLAT,
+            travel_policy=KEEP,
+            travel_angle_deg=0.0,
+            max_torch_tilt_deg=0.0,
+            torch_x=torch_x,
+        )
+        fwd = PointCloudPointNormal([PointNormal(a, n), PointNormal(b, n)])
+        rev = PointCloudPointNormal([PointNormal(b, n), PointNormal(a, n)])
+        _, Tf, _ = compute_two_point_poses(fwd, opt)
+        _, Tr, _ = compute_two_point_poses(rev, opt)
+        self.assertGreater(float(np.dot(Tf[:3, 0], torch_x)), 0.5)
+        self.assertGreater(float(np.dot(Tr[:3, 0], torch_x)), 0.5)
+        self.assertGreater(float(np.dot(Tf[:3, 0], Tr[:3, 0])), 0.5)
+
+    def test_torch_x_hysteresis_does_not_flip_near_perpendicular(self) -> None:
+        n = WORLD_Z
+        a, b = np.zeros(3), np.array([1.0, 0.0, 0.0])
+        traj = PointCloudPointNormal([PointNormal(a, n), PointNormal(b, n)])
+        opt = Options(
+            weld_position=FLAT,
+            travel_policy=KEEP,
+            travel_angle_deg=0.0,
+            max_torch_tilt_deg=0.0,
+            torch_x=np.array([0.0, 1.0, 0.0]),
+            x_align_hysteresis=0.2,
+        )
+        _, T, _ = compute_two_point_poses(traj, opt)
+        self.assertGreater(float(np.dot(T[:3, 0], b - a)), 0.5)
 
 
 if __name__ == "__main__":

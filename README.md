@@ -19,8 +19,11 @@ opt.weld_position = WeldPosition::Auto;                 // 或 Flat / Vertical
 opt.vertical_seam_abs_cos = 0.5f;                       // 约 60° 起算立缝
 opt.travel_policy = WeldTravelPolicy::PreferDownhill;   // 只作用于平焊/斜板
 opt.travel_angle_deg = 10.f;                            // 平焊绕 Y，立焊绕 X
+opt.torch_x = mdl_tcp.linear().col(0);                  // 当前焊枪 +X，锁死正向
 computeTwoPointPoses(trajectory, pose_start, pose_end, opt);
 ```
+
+起终点反向时不要绕 Z 翻 180°（腕部奇异）。把当前焊枪 TCP-X 赋给 `torch_x`：路径跟着枪的 +X，近 90° 不换向。
 
 ## ScaleAISShapeBy1000
 

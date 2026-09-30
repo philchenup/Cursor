@@ -42,6 +42,10 @@ struct ComputeTwoPointPosesOptions {
     /// 鹅颈沿工具 +X。立焊时 +X 在水平面，不再跟着竖直行走。
     Eigen::Vector3f tool_head_axis = Eigen::Vector3f::UnitX();
     bool flip_travel_to_raise_y = false;
+    /// 当前焊枪 TCP 的 X（来自 mdl 法兰×工具）。非零则路径跟着枪 +X，避免起终点把 X 翻 180°。
+    Eigen::Vector3f torch_x = Eigen::Vector3f::Zero();
+    /// |travel · torch_x| 小于此值不换向，避免近 90° 抖动/腕部奇异。
+    float x_align_hysteresis = 0.2f;
 };
 
 namespace weld_pose_detail {
@@ -204,6 +208,42 @@ inline Eigen::Vector3f applyTravelPolicy(Eigen::Vector3f travel,
     return travel;
 }
 
+/** 路径跟着焊枪 +X：明显反向才对调起终点，不在 90° 附近翻转。 */
+inline Eigen::Vector3f alignTravelToTorchX(Eigen::Vector3f travel,
+                                          Eigen::Vector3f& t0,
+                                          Eigen::Vector3f& t1,
+                                          Eigen::Vector3f& z0,
+                                          Eigen::Vector3f& z1,
+                                          const Eigen::Vector3f& torch_x,
+                                          const Eigen::Vector3f& z_mean,
+                                          float hysteresis)
+{
+    if (torch_x.squaredNorm() < 1e-12f)
+        return travel;
+    Eigen::Vector3f xref = projectPerp(torch_x, z_mean);
+    if (xref.squaredNorm() < 1e-12f)
+        xref = torch_x;
+    xref = finiteUnit(xref, travel);
+    if (travel.dot(xref) < -hysteresis) {
+        std::swap(t0, t1);
+        std::swap(z0, z1);
+        travel = -travel;
+    }
+    return travel;
+}
+
+inline Frame pickFrameFacingTorchX(const Frame& f,
+                                  const Eigen::Vector3f& torch_x,
+                                  float hysteresis)
+{
+    if (torch_x.squaredNorm() < 1e-12f)
+        return f;
+    const float d = f.x.dot(torch_x);
+    if (d >= -hysteresis)
+        return f;
+    return makeFrame(-f.x, -f.y, f.z);
+}
+
 } // namespace weld_pose_detail
 
 /**
@@ -250,10 +290,15 @@ inline bool computeTwoPointPoses(
     Eigen::Vector3f travel = weld_pose_detail::applyTravelPolicy(
         seam, t0, t1, z0, z1, policy, world_up);
 
-    const bool steep = std::fabs(travel.dot(world_up)) >= opt.steep_seam_abs_cos;
     Eigen::Vector3f z_mean = weld_pose_detail::finiteUnit(z0 + z1, z0);
+    travel = weld_pose_detail::alignTravelToTorchX(
+        travel, t0, t1, z0, z1, opt.torch_x, z_mean, opt.x_align_hysteresis);
+    z_mean = weld_pose_detail::finiteUnit(z0 + z1, z0);
+
+    const bool steep = std::fabs(travel.dot(world_up)) >= opt.steep_seam_abs_cos;
     const Eigen::Vector3f y_probe = z_mean.cross(travel);
-    const bool flip_xy = !vertical && opt.flip_travel_to_raise_y && !steep &&
+    const bool have_torch_x = opt.torch_x.squaredNorm() >= 1e-12f;
+    const bool flip_xy = !vertical && !have_torch_x && opt.flip_travel_to_raise_y && !steep &&
                          y_probe.squaredNorm() >= 1e-12f &&
                          y_probe.dot(world_up) < 0.f;
 
@@ -286,6 +331,9 @@ inline bool computeTwoPointPoses(
         weld_pose_detail::Frame f = assemble(z_in);
         if (std::fabs(signed_rad) > 1e-8f)
             f = weld_pose_detail::rotateTravelAngle(f, signed_rad, vertical);
+        if (!vertical)
+            f = weld_pose_detail::pickFrameFacingTorchX(
+                f, opt.torch_x, opt.x_align_hysteresis);
         Eigen::Affine3f T = Eigen::Affine3f::Identity();
         T.linear().col(0) = f.x;
         T.linear().col(1) = f.y;
