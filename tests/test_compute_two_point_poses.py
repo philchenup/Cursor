@@ -15,22 +15,6 @@ KEEP, DOWNHILL, UPHILL = "keep", "downhill", "uphill"
 AUTO, FLAT, VERTICAL = "auto", "flat", "vertical"
 
 
-class PointNormal:
-    __slots__ = ("x", "y", "z", "normal_x", "normal_y", "normal_z")
-
-    def __init__(self, xyz: np.ndarray, normal: np.ndarray) -> None:
-        self.x, self.y, self.z = (float(v) for v in xyz)
-        self.normal_x, self.normal_y, self.normal_z = (float(v) for v in normal)
-
-
-class PointCloudPointNormal:
-    def __init__(self, points: list[PointNormal] | None = None) -> None:
-        self.points = list(points or [])
-
-    def __len__(self) -> int:
-        return len(self.points)
-
-
 class Options:
     def __init__(
         self,
@@ -146,13 +130,17 @@ def head_up(x, y, z, tool_head, world_up) -> float:
     return float(np.dot(head, world_up))
 
 
-def compute_two_point_poses(trajectory: PointCloudPointNormal, opt: Options | None = None):
+def pose_at(xyz, z_axis) -> np.ndarray:
+    T = np.eye(4, dtype=np.float64)
+    T[:3, 3] = np.asarray(xyz, dtype=np.float64)
+    T[:3, 2] = np.asarray(z_axis, dtype=np.float64)
+    return T
+
+
+def compute_two_point_poses(pose_start, pose_end, opt: Options | None = None):
     opt = opt or Options()
-    if len(trajectory) < 2:
-        return False, None, None
-    p0, p1 = trajectory.points[0], trajectory.points[1]
-    t0 = np.array([p0.x, p0.y, p0.z], dtype=np.float64)
-    t1 = np.array([p1.x, p1.y, p1.z], dtype=np.float64)
+    t0 = pose_start[:3, 3].copy()
+    t1 = pose_end[:3, 3].copy()
     weld = t1 - t0
     if float(np.dot(weld, weld)) < EPS:
         return False, None, None
@@ -161,12 +149,11 @@ def compute_two_point_poses(trajectory: PointCloudPointNormal, opt: Options | No
     seam = weld / np.linalg.norm(weld)
     vertical = is_vertical_seam(seam, world_up, opt)
 
-    def prepare_z(q: PointNormal) -> np.ndarray:
-        n = np.array([q.normal_x, q.normal_y, q.normal_z], dtype=np.float64)
-        n = finite_unit(n, world_up)
+    def prepare_z(z_in: np.ndarray) -> np.ndarray:
+        n = finite_unit(np.asarray(z_in, dtype=np.float64), world_up)
         return tilt_torch_toward(n, opt.preferred_torch, opt.max_torch_tilt_deg)
 
-    z0, z1 = prepare_z(p0), prepare_z(p1)
+    z0, z1 = prepare_z(pose_start[:3, 2]), prepare_z(pose_end[:3, 2])
     policy = opt.travel_policy
     if vertical and policy != KEEP:
         policy = UPHILL
@@ -256,19 +243,17 @@ class FlatVsVerticalTests(unittest.TestCase):
         self.assertGreater(float(np.linalg.det(R)), 0.0)
         np.testing.assert_allclose(R[:, 1], np.cross(R[:, 2], R[:, 0]), atol=1e-9)
 
-    def test_rejects_fewer_than_two_points(self) -> None:
-        self.assertFalse(compute_two_point_poses(PointCloudPointNormal())[0])
-
     def test_rejects_coincident_points(self) -> None:
-        p = PointNormal(np.array([1.0, 2.0, 3.0]), WORLD_Z)
-        self.assertFalse(compute_two_point_poses(PointCloudPointNormal([p, p]))[0])
+        T = pose_at([1.0, 2.0, 3.0], WORLD_Z)
+        self.assertFalse(compute_two_point_poses(T, T)[0])
 
     def test_auto_vertical_uses_y_bottom_to_top_and_horizontal_x(self) -> None:
         """立焊 PF：Y 从下到上沿缝，X 水平，鹅颈不朝天。"""
         n = np.array([0.0, 1.0, 0.0])
         low, high = np.zeros(3), np.array([0.0, 0.0, 2.0])
-        traj = PointCloudPointNormal([PointNormal(high, n), PointNormal(low, n)])
-        ok, Ts, Te = compute_two_point_poses(traj, Options(travel_angle_deg=0.0))
+        ok, Ts, Te = compute_two_point_poses(
+            pose_at(high, n), pose_at(low, n), Options(travel_angle_deg=0.0)
+        )
         self.assertTrue(ok)
         self.assertLess(Ts[2, 3], Te[2, 3])
         self.assertGreater(float(np.dot(Ts[:3, 1], WORLD_Z)), 0.5)
@@ -283,11 +268,10 @@ class FlatVsVerticalTests(unittest.TestCase):
         """平焊 PA：X 沿缝行走。"""
         t0 = np.zeros(3)
         weld = np.array([1.0, 0.2, 0.0])
-        traj = PointCloudPointNormal(
-            [PointNormal(t0, WORLD_Z), PointNormal(t0 + weld, WORLD_Z)]
-        )
         opt = Options(travel_angle_deg=0.0, max_torch_tilt_deg=0.0)
-        ok, Ts, _ = compute_two_point_poses(traj, opt)
+        ok, Ts, _ = compute_two_point_poses(
+            pose_at(t0, WORLD_Z), pose_at(t0 + weld, WORLD_Z), opt
+        )
         self.assertTrue(ok)
         hat = weld / np.linalg.norm(weld)
         self.assertGreater(abs(float(np.dot(Ts[:3, 0], hat))), 0.9)
@@ -296,23 +280,21 @@ class FlatVsVerticalTests(unittest.TestCase):
     def test_force_flat_on_vertical_seam_still_uses_x_travel(self) -> None:
         n = np.array([0.0, 1.0, 0.0])
         t0, t1 = np.zeros(3), np.array([0.0, 0.0, 2.0])
-        traj = PointCloudPointNormal([PointNormal(t0, n), PointNormal(t1, n)])
         opt = Options(
             weld_position=FLAT,
             travel_policy=KEEP,
             travel_angle_deg=0.0,
             max_torch_tilt_deg=0.0,
         )
-        ok, Ts, _ = compute_two_point_poses(traj, opt)
+        ok, Ts, _ = compute_two_point_poses(pose_at(t0, n), pose_at(t1, n), opt)
         self.assertTrue(ok)
         self.assertGreater(float(np.dot(Ts[:3, 0], t1 - t0)), 0.5)
 
     def test_keep_given_vertical_does_not_swap_but_y_follows_travel(self) -> None:
         n = np.array([0.0, 1.0, 0.0])
         high, low = np.array([0.0, 0.0, 2.0]), np.zeros(3)
-        traj = PointCloudPointNormal([PointNormal(high, n), PointNormal(low, n)])
         opt = Options(travel_policy=KEEP, travel_angle_deg=0.0, max_torch_tilt_deg=0.0)
-        ok, Ts, Te = compute_two_point_poses(traj, opt)
+        ok, Ts, Te = compute_two_point_poses(pose_at(high, n), pose_at(low, n), opt)
         self.assertTrue(ok)
         self.assertGreater(Ts[2, 3], Te[2, 3])
         self.assertLess(float(np.dot(Ts[:3, 1], WORLD_Z)), 0.0)
@@ -321,14 +303,15 @@ class FlatVsVerticalTests(unittest.TestCase):
         z = WORLD_Z
         t0 = np.zeros(3)
         weld = np.array([1.0, 0.2, 0.5])
-        traj = PointCloudPointNormal([PointNormal(t0, z), PointNormal(t0 + weld, z)])
         opt = Options(
             weld_position=FLAT,
             travel_policy=KEEP,
             travel_angle_deg=0.0,
             max_torch_tilt_deg=0.0,
         )
-        ok, Ts, Te = compute_two_point_poses(traj, opt)
+        ok, Ts, Te = compute_two_point_poses(
+            pose_at(t0, z), pose_at(t0 + weld, z), opt
+        )
         self.assertTrue(ok)
         R = Ts[:3, :3]
         self.assert_orthonormal_rh(R)
@@ -339,11 +322,10 @@ class FlatVsVerticalTests(unittest.TestCase):
 
     def test_vertical_travel_angle_keeps_x_horizontal(self) -> None:
         n = np.array([0.0, 1.0, 0.0])
-        traj = PointCloudPointNormal(
-            [PointNormal(np.zeros(3), n), PointNormal(np.array([0.0, 0.0, 2.0]), n)]
-        )
         opt = Options(travel_angle_deg=15.0, max_torch_tilt_deg=0.0)
-        ok, Ts, _ = compute_two_point_poses(traj, opt)
+        ok, Ts, _ = compute_two_point_poses(
+            pose_at(np.zeros(3), n), pose_at(np.array([0.0, 0.0, 2.0]), n), opt
+        )
         self.assertTrue(ok)
         self.assertLess(abs(float(np.dot(Ts[:3, 0], WORLD_Z))), 0.2)
         self.assertGreater(float(np.dot(Ts[:3, 1], WORLD_Z)), 0.5)
@@ -353,7 +335,6 @@ class FlatVsVerticalTests(unittest.TestCase):
         z = np.array([0.0, 1.0, 0.0])
         t0 = np.zeros(3)
         weld = np.array([1.0, 0.0, 0.0])
-        traj = PointCloudPointNormal([PointNormal(t0, z), PointNormal(t0 + weld, z)])
         opt = Options(
             weld_position=FLAT,
             travel_policy=KEEP,
@@ -361,44 +342,44 @@ class FlatVsVerticalTests(unittest.TestCase):
             max_torch_tilt_deg=0.0,
             flip_travel_to_raise_y=True,
         )
-        ok, T, _ = compute_two_point_poses(traj, opt)
+        ok, T, _ = compute_two_point_poses(
+            pose_at(t0, z), pose_at(t0 + weld, z), opt
+        )
         self.assertTrue(ok)
         self.assertGreaterEqual(float(np.dot(T[:3, 1], WORLD_Z)), -1e-12)
         np.testing.assert_allclose(T[:3, 0], [-1.0, 0.0, 0.0], atol=1e-9)
 
     def test_table_normal_not_tilted_through_part_without_travel_angle(self) -> None:
-        t0 = np.zeros(3)
-        t1 = np.array([1.0, 0.0, 0.0])
-        traj = PointCloudPointNormal([PointNormal(t0, WORLD_Z), PointNormal(t1, WORLD_Z)])
         opt = Options(travel_angle_deg=0.0)
-        ok, Ts, _ = compute_two_point_poses(traj, opt)
+        ok, Ts, _ = compute_two_point_poses(
+            pose_at(np.zeros(3), WORLD_Z),
+            pose_at(np.array([1.0, 0.0, 0.0]), WORLD_Z),
+            opt,
+        )
         self.assertTrue(ok)
         np.testing.assert_allclose(Ts[:3, 2], WORLD_Z, atol=1e-9)
 
     def test_start_and_end_share_the_same_y_sign_on_vertical(self) -> None:
         n = np.array([0.0, 1.0, 0.0])
-        traj = PointCloudPointNormal(
-            [
-                PointNormal(np.zeros(3), n),
-                PointNormal(np.array([0.05, 0.0, 1.0]), n),
-            ]
+        ok, Ts, Te = compute_two_point_poses(
+            pose_at(np.zeros(3), n),
+            pose_at(np.array([0.05, 0.0, 1.0]), n),
+            Options(travel_angle_deg=0.0),
         )
-        ok, Ts, Te = compute_two_point_poses(traj, Options(travel_angle_deg=0.0))
         self.assertTrue(ok)
         self.assertGreater(float(np.dot(Ts[:3, 1], Te[:3, 1])), 0.0)
 
     def test_travel_parallel_to_normal_still_orthonormal(self) -> None:
         weld = np.array([0.0, 0.0, 2.0])
-        traj = PointCloudPointNormal(
-            [PointNormal(np.zeros(3), WORLD_Z), PointNormal(weld, WORLD_Z)]
-        )
         opt = Options(
             weld_position=FLAT,
             travel_policy=KEEP,
             travel_angle_deg=0.0,
             max_torch_tilt_deg=0.0,
         )
-        ok, T, _ = compute_two_point_poses(traj, opt)
+        ok, T, _ = compute_two_point_poses(
+            pose_at(np.zeros(3), WORLD_Z), pose_at(weld, WORLD_Z), opt
+        )
         self.assertTrue(ok)
         self.assert_orthonormal_rh(T[:3, :3])
 
@@ -414,10 +395,8 @@ class FlatVsVerticalTests(unittest.TestCase):
             max_torch_tilt_deg=0.0,
             torch_x=torch_x,
         )
-        fwd = PointCloudPointNormal([PointNormal(a, n), PointNormal(b, n)])
-        rev = PointCloudPointNormal([PointNormal(b, n), PointNormal(a, n)])
-        _, Tf, _ = compute_two_point_poses(fwd, opt)
-        _, Tr, _ = compute_two_point_poses(rev, opt)
+        _, Tf, _ = compute_two_point_poses(pose_at(a, n), pose_at(b, n), opt)
+        _, Tr, _ = compute_two_point_poses(pose_at(b, n), pose_at(a, n), opt)
         self.assertGreater(float(np.dot(Tf[:3, 0], torch_x)), 0.5)
         self.assertGreater(float(np.dot(Tr[:3, 0], torch_x)), 0.5)
         self.assertGreater(float(np.dot(Tf[:3, 0], Tr[:3, 0])), 0.5)
@@ -425,7 +404,6 @@ class FlatVsVerticalTests(unittest.TestCase):
     def test_torch_x_hysteresis_does_not_flip_near_perpendicular(self) -> None:
         n = WORLD_Z
         a, b = np.zeros(3), np.array([1.0, 0.0, 0.0])
-        traj = PointCloudPointNormal([PointNormal(a, n), PointNormal(b, n)])
         opt = Options(
             weld_position=FLAT,
             travel_policy=KEEP,
@@ -434,7 +412,7 @@ class FlatVsVerticalTests(unittest.TestCase):
             torch_x=np.array([0.0, 1.0, 0.0]),
             x_align_hysteresis=0.2,
         )
-        _, T, _ = compute_two_point_poses(traj, opt)
+        _, T, _ = compute_two_point_poses(pose_at(a, n), pose_at(b, n), opt)
         self.assertGreater(float(np.dot(T[:3, 0], b - a)), 0.5)
 
 

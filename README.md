@@ -6,7 +6,7 @@
 
 ```cpp
 ComputeTwoPointPosesOptions opt;
-opt.torch_x = tcp.linear().col(0);   // 当前焊枪 +X；不填则用 pose_start 的 X
+opt.torch_x = tcp.linear().col(0);  // 当前焊枪 +X；不填则不锁 X
 computeTwoPointPoses(pose_start, pose_end, opt);
 ```
 

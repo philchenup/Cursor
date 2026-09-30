@@ -13,6 +13,7 @@ int main()
     pose_end.linear().col(2) = Eigen::Vector3f(0.f, 1.f, 0.f);
 
     ComputeTwoPointPosesOptions opt;
+    opt.torch_x = Eigen::Vector3f::UnitX();
     if (!computeTwoPointPoses(pose_start, pose_end, opt))
         return 1;
 
