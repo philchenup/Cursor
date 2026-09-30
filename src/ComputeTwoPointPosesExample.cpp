@@ -4,37 +4,18 @@
 
 int main()
 {
-    // 立墙竖缝（输入高→低）。Auto 判定为立焊：Y 从下到上，X 水平。
-    pcl::PointCloud<pcl::PointNormal> trajectory;
-    trajectory.resize(2);
+    Eigen::Affine3f pose_start = Eigen::Affine3f::Identity();
+    pose_start.translation() = Eigen::Vector3f(0.f, 0.f, 2.f);
+    pose_start.linear().col(2) = Eigen::Vector3f(0.f, 1.f, 0.f);
 
-    trajectory[0].x = 0.f;
-    trajectory[0].y = 0.f;
-    trajectory[0].z = 2.f;
-    trajectory[0].normal_x = 0.f;
-    trajectory[0].normal_y = 1.f;
-    trajectory[0].normal_z = 0.f;
-
-    trajectory[1].x = 0.f;
-    trajectory[1].y = 0.f;
-    trajectory[1].z = 0.f;
-    trajectory[1].normal_x = 0.f;
-    trajectory[1].normal_y = 1.f;
-    trajectory[1].normal_z = 0.f;
+    Eigen::Affine3f pose_end = Eigen::Affine3f::Identity();
+    pose_end.translation() = Eigen::Vector3f(0.f, 0.f, 0.f);
+    pose_end.linear().col(2) = Eigen::Vector3f(0.f, 1.f, 0.f);
 
     ComputeTwoPointPosesOptions opt;
-    Eigen::Affine3f pose_start, pose_end;
-    if (!computeTwoPointPoses(trajectory, pose_start, pose_end, opt)) {
-        std::cerr << "computeTwoPointPoses failed\n";
+    if (!computeTwoPointPoses(pose_start, pose_end, opt))
         return 1;
-    }
 
-    const Eigen::Matrix3f R = pose_start.linear();
-    std::cout << "start z: " << pose_start.translation().z()
-              << "  end z: " << pose_end.translation().z() << "\n"
-              << "X (should be horizontal): " << R.col(0).transpose()
-              << "  X·up=" << R.col(0).dot(opt.world_up) << "\n"
-              << "Y (bottom→top):           " << R.col(1).transpose()
-              << "  Y·up=" << R.col(1).dot(opt.world_up) << "\n";
+    std::cout << pose_start.matrix() << "\n\n" << pose_end.matrix() << "\n";
     return 0;
 }

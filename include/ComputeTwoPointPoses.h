@@ -6,8 +6,6 @@
 #include <utility>
 
 #include <Eigen/Geometry>
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
 
 /**
  * 平焊 vs 立焊：TCP 轴分配不同。
@@ -17,7 +15,7 @@
  * 工业做法：立缝把行走放到 Y（下→上），X 保持水平，Z 仍指向工件。
  */
 enum class WeldTravelPolicy {
-    KeepGiven,       ///< 尊重 trajectory[0] → [1]
+    KeepGiven,       ///< 尊重 pose_start → pose_end
     PreferDownhill,  ///< 平焊/斜板：travel·up ≤ 0
     PreferUphill     ///< 强制上坡；立焊 Auto 时也会走这条
 };
@@ -247,23 +245,18 @@ inline Frame pickFrameFacingTorchX(const Frame& f,
 } // namespace weld_pose_detail
 
 /**
- * @brief 由两点轨迹构造免示教焊接 TCP。
+ * @brief 由起点/终点 TCP 就地修正免示教焊接姿态。
  *
- * Auto：平焊缝 X 沿缝行走；立焊缝 Y 从下到上沿缝，X 水平（鹅颈不朝天）。
+ * 输入：`pose_start/end` 的平移为焊点，Z 列为枪轴。
+ * 输出：同一对姿态，X 与焊枪正向一致。无需点云。
  */
 inline bool computeTwoPointPoses(
-    const pcl::PointCloud<pcl::PointNormal>& trajectory,
     Eigen::Affine3f& pose_start,
     Eigen::Affine3f& pose_end,
     const ComputeTwoPointPosesOptions& opt = ComputeTwoPointPosesOptions())
 {
-    if (trajectory.size() < 2)
-        return false;
-
-    const pcl::PointNormal& p0 = trajectory.points[0];
-    const pcl::PointNormal& p1 = trajectory.points[1];
-    Eigen::Vector3f t0(p0.x, p0.y, p0.z);
-    Eigen::Vector3f t1(p1.x, p1.y, p1.z);
+    Eigen::Vector3f t0 = pose_start.translation();
+    Eigen::Vector3f t1 = pose_end.translation();
     const Eigen::Vector3f weld = t1 - t0;
     if (weld.squaredNorm() < 1e-12f)
         return false;
@@ -272,16 +265,16 @@ inline bool computeTwoPointPoses(
         weld_pose_detail::finiteUnit(opt.world_up, Eigen::Vector3f::UnitZ());
     const Eigen::Vector3f seam = weld.normalized();
     const bool vertical = weld_pose_detail::isVerticalSeam(seam, world_up, opt);
+    const Eigen::Vector3f& torch_x = opt.torch_x;
 
-    auto prepareZ = [&](const pcl::PointNormal& q) {
-        Eigen::Vector3f n(q.normal_x, q.normal_y, q.normal_z);
-        n = weld_pose_detail::finiteUnit(n, world_up);
+    auto prepareZ = [&](const Eigen::Vector3f& z_in) {
+        const Eigen::Vector3f n = weld_pose_detail::finiteUnit(z_in, world_up);
         return weld_pose_detail::tiltTorchToward(
             n, opt.preferred_torch, opt.max_torch_tilt_deg);
     };
 
-    Eigen::Vector3f z0 = prepareZ(p0);
-    Eigen::Vector3f z1 = prepareZ(p1);
+    Eigen::Vector3f z0 = prepareZ(pose_start.linear().col(2));
+    Eigen::Vector3f z1 = prepareZ(pose_end.linear().col(2));
 
     WeldTravelPolicy policy = opt.travel_policy;
     if (vertical && policy != WeldTravelPolicy::KeepGiven)
@@ -292,12 +285,12 @@ inline bool computeTwoPointPoses(
 
     Eigen::Vector3f z_mean = weld_pose_detail::finiteUnit(z0 + z1, z0);
     travel = weld_pose_detail::alignTravelToTorchX(
-        travel, t0, t1, z0, z1, opt.torch_x, z_mean, opt.x_align_hysteresis);
+        travel, t0, t1, z0, z1, torch_x, z_mean, opt.x_align_hysteresis);
     z_mean = weld_pose_detail::finiteUnit(z0 + z1, z0);
 
     const bool steep = std::fabs(travel.dot(world_up)) >= opt.steep_seam_abs_cos;
     const Eigen::Vector3f y_probe = z_mean.cross(travel);
-    const bool have_torch_x = opt.torch_x.squaredNorm() >= 1e-12f;
+    const bool have_torch_x = torch_x.squaredNorm() >= 1e-12f;
     const bool flip_xy = !vertical && !have_torch_x && opt.flip_travel_to_raise_y && !steep &&
                          y_probe.squaredNorm() >= 1e-12f &&
                          y_probe.dot(world_up) < 0.f;
@@ -333,7 +326,7 @@ inline bool computeTwoPointPoses(
             f = weld_pose_detail::rotateTravelAngle(f, signed_rad, vertical);
         if (!vertical)
             f = weld_pose_detail::pickFrameFacingTorchX(
-                f, opt.torch_x, opt.x_align_hysteresis);
+                f, torch_x, opt.x_align_hysteresis);
         Eigen::Affine3f T = Eigen::Affine3f::Identity();
         T.linear().col(0) = f.x;
         T.linear().col(1) = f.y;

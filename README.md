@@ -2,28 +2,13 @@
 
 ## computeTwoPointPoses
 
-输入 `pcl::PointCloud<pcl::PointNormal>`（`points[0]` / `points[1]` 为起终点，法向为该端枪轴初值）。
-
-工业上先按焊缝相对重力分类，再给不同的 TCP 轴：
-
-| 位置 | 判定 | TCP | 行走 |
-|---|---|---|---|
-| **平焊 PA** | 缝几乎水平 | **X = 沿缝**，Y 侧向，Z 指向工件 | 水平；斜板可用下坡 |
-| **立焊 PF** | `|缝方向 · 上|` 大 | **Y = 从下到上沿缝**，**X 水平**（鹅颈），Z 指向墙 | 下→上 |
-
-立缝若仍用 X 作竖直行走，鹅颈（工具 +X）会朝天。把行走换到 Y，X 留在水平面，与平焊共用同一把枪的 TCP 定义（Z 永远是枪尖）。
+就地修正起点/终点 TCP，无需点云。平移是焊点，Z 是枪轴。
 
 ```cpp
 ComputeTwoPointPosesOptions opt;
-opt.weld_position = WeldPosition::Auto;                 // 或 Flat / Vertical
-opt.vertical_seam_abs_cos = 0.5f;                       // 约 60° 起算立缝
-opt.travel_policy = WeldTravelPolicy::PreferDownhill;   // 只作用于平焊/斜板
-opt.travel_angle_deg = 10.f;                            // 平焊绕 Y，立焊绕 X
-opt.torch_x = mdl_tcp.linear().col(0);                  // 当前焊枪 +X，锁死正向
-computeTwoPointPoses(trajectory, pose_start, pose_end, opt);
+opt.torch_x = tcp.linear().col(0);   // 当前焊枪 +X；不填则用 pose_start 的 X
+computeTwoPointPoses(pose_start, pose_end, opt);
 ```
-
-起终点反向时不要绕 Z 翻 180°（腕部奇异）。把当前焊枪 TCP-X 赋给 `torch_x`：路径跟着枪的 +X，近 90° 不换向。
 
 ## ScaleAISShapeBy1000
 
