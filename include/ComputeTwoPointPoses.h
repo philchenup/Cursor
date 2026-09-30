@@ -16,7 +16,7 @@
  *
  * 当前数据：工件放在地面上采点云（world_up = +Z）。
  * 平焊起终点绕 Y 向焊缝内倾，避免枪体撞端壁。
- * 立焊自下而上：起点绕 X 向终点倾 inward_deg，终点不倾。
+ * 立焊自下而上：起终点都绕 X 向焊缝内倾 inward_deg（起点朝终点，终点朝起点）。
  * 焊点 Y 朝上，用来确定起点/终点顺序。
  */
 enum class WeldTravelPolicy {
@@ -49,7 +49,7 @@ struct ComputeTwoPointPosesOptions {
     Eigen::Vector3f torch_x = Eigen::Vector3f::Zero();
     /// |travel · torch_x| 小于此值不换向，避免近 90° 抖动/腕部奇异。
     float x_align_hysteresis = 0.2f;
-    /// 平焊起终点绕 Y 向内倾（默认 30°）。立焊只把起点绕 X 向终点倾同样角度。
+    /// 平焊绕 Y、立焊绕 X：起终点都向焊缝内倾（默认 30°）。
     float inward_deg = 30.f;
 };
 
@@ -159,15 +159,13 @@ namespace weld_pose_detail {
         return vertical ? rotateAroundX(f, rad) : rotateAroundY(f, rad);
     }
 
-    /** 平焊两端内倾；立焊仅起点绕 X 朝终点倾，终点不倾。 */
+    /** 平焊绕 Y、立焊绕 X：两端都向焊缝内倾。 */
     inline Frame applyInwardTilt(const Frame& f,
         float inward_rad,
         float inward_sign,
         bool vertical)
     {
         if (std::fabs(inward_rad) < 1e-8f)
-            return f;
-        if (vertical && inward_sign >= 0.f)
             return f;
         return rotateTravelAngle(f, inward_sign * inward_rad, vertical);
     }
@@ -318,7 +316,7 @@ namespace weld_pose_detail {
  * 输入：`pose_start/end` 的平移为焊点，Z 列为枪轴。
  * 输出：同一对姿态。平焊 Y 朝上并决定起终点；立焊自下而上。
  * 平焊起终点绕 Y 向内倾 `inward_deg`（默认 30°）。
- * 立焊起点绕 X 向终点倾同样角度，终点不倾。
+ * 立焊起终点绕 X 向内倾同样角度（起点朝终点，终点朝起点）。
  */
 inline bool computeTwoPointPoses(
     Eigen::Affine3f& pose_start,
@@ -417,7 +415,7 @@ inline bool computeTwoPointPoses(
  * 地面工件焊枪起终点：转调 `computeTwoPointPoses`。
  *
  * 平焊：Y 朝上决定顺序；起终点绕 Y 向内倾 inward_deg（默认 30°）。
- * 立焊：自下而上；起点绕 X 向终点倾 inward_deg，终点不倾。
+ * 立焊：自下而上；起终点绕 X 向内倾 inward_deg。
  */
 inline bool computeWeldTcpStartEnd(
     Eigen::Affine3f& tcp_weld_start,

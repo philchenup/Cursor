@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ground workpiece: flat PA both ends 30°, vertical PF start 30° toward end."""
+"""Ground workpiece: flat PA and vertical PF both ends inward 30°."""
 
 from __future__ import annotations
 
@@ -251,7 +251,7 @@ def compute_two_point_poses(pose_start, pose_end, opt: Options | None = None):
         if not vertical and float(np.dot(opt.torch_x, opt.torch_x)) >= EPS:
             if float(np.dot(x, opt.torch_x)) < -opt.x_align_hysteresis:
                 x, y, z = make_frame(-x, -y, z)
-        if abs(inward_rad) > 1e-8 and not (vertical and inward_sign >= 0.0):
+        if abs(inward_rad) > 1e-8:
             x, y, z = rotate_travel_angle(x, y, z, inward_sign * inward_rad, vertical)
         if abs(signed) > 1e-8:
             x, y, z = rotate_travel_angle(x, y, z, signed, vertical)
@@ -544,24 +544,31 @@ class WeldTcpStartEndTests(unittest.TestCase):
         self.assertLess(abs(float(np.dot(Ts[:3, 2], side))), 1e-6)
         self.assertLess(abs(float(np.dot(Te[:3, 2], side))), 1e-6)
 
-    def test_vertical_bottom_to_top_start_tilts_30_toward_end(self) -> None:
+    def test_vertical_bottom_to_top_both_ends_tilt_30(self) -> None:
         n = np.array([0.0, 1.0, 0.0])
         high = pose_at([0.0, 0.0, 2.0], n)
         low = pose_at([0.0, 0.0, 0.0], n)
         ok, Ts, Te = compute_weld_tcp_start_end(high, low)
         self.assertTrue(ok)
         self.assertLess(Ts[2, 3], Te[2, 3])
-        self.assertGreater(float(np.dot(Ts[:3, 1], WORLD_Z)), 0.5)
+        self.assertGreater(float(np.dot(Ts[:3, 1], WORLD_Z)), 0.4)
+        self.assertGreater(float(np.dot(Te[:3, 1], WORLD_Z)), 0.4)
         self.assertLess(abs(float(np.dot(Ts[:3, 0], WORLD_Z))), 0.2)
+        self.assertLess(abs(float(np.dot(Te[:3, 0], WORLD_Z))), 0.2)
         travel = Te[:3, 3] - Ts[:3, 3]
         travel /= np.linalg.norm(travel)
         self.assertGreater(float(np.dot(Ts[:3, 2], travel)), 0.4)
+        self.assertLess(float(np.dot(Te[:3, 2], travel)), -0.4)
         self.assertAlmostEqual(
             math.degrees(math.acos(float(np.clip(np.dot(Ts[:3, 2], n), -1.0, 1.0)))),
             30.0,
             places=4,
         )
-        np.testing.assert_allclose(Te[:3, 2], n, atol=1e-6)
+        self.assertAlmostEqual(
+            math.degrees(math.acos(float(np.clip(np.dot(Te[:3, 2], n), -1.0, 1.0)))),
+            30.0,
+            places=4,
+        )
         self.assert_orthonormal_rh(Ts[:3, :3])
         self.assert_orthonormal_rh(Te[:3, :3])
 
@@ -582,7 +589,7 @@ class TrajectoryCloudTests(unittest.TestCase):
         self.assertGreater(float(np.dot(Ts[:3, 2], travel)), 0.3)
         self.assertLess(float(np.dot(Te[:3, 2], travel)), -0.3)
 
-    def test_vertical_pair_start_tilts_toward_end(self) -> None:
+    def test_vertical_pair_both_ends_tilt_30(self) -> None:
         n = np.array([0.0, 1.0, 0.0])
         pairs = trajectory_cloud(
             [([0.0, 0.0, 2.0], [0.0, 0.0, 0.0], n)],
@@ -591,11 +598,10 @@ class TrajectoryCloudTests(unittest.TestCase):
         self.assertEqual(len(pairs), 1)
         Ts, Te = pairs[0]
         self.assertLess(Ts[2, 3], Te[2, 3])
-        self.assertGreater(float(np.dot(Ts[:3, 1], WORLD_Z)), 0.5)
         travel = Te[:3, 3] - Ts[:3, 3]
         travel /= np.linalg.norm(travel)
         self.assertGreater(float(np.dot(Ts[:3, 2], travel)), 0.4)
-        np.testing.assert_allclose(Te[:3, 2], n, atol=1e-6)
+        self.assertLess(float(np.dot(Te[:3, 2], travel)), -0.4)
 
 
 if __name__ == "__main__":
