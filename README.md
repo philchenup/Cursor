@@ -9,13 +9,10 @@
 ```cpp
 #include "fast_maximize.h"
 
-int main(int argc, char *argv[])
-{
-    QApplication a(argc, argv);
-    MainWindow w;
-    showMaximizedFast(&w, occView);  // 无 3D 视口可只传 &w
-    return a.exec();
-}
+QApplication a(argc, argv);
+MainWindow w;
+showMaximizedFast(&w);  // 自动找 OCCT / VTK
+// 或显式：showMaximizedFast(&w, occView, vtkWidget);
 ```
 
 示例：`include/fast_maximize.h`、`src/qt_show_maximized_main.cpp`。

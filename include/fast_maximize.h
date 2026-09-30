@@ -1,9 +1,11 @@
 #ifndef FAST_MAXIMIZE_H
 #define FAST_MAXIMIZE_H
 
+#include <QByteArray>
 #include <QCoreApplication>
 #include <QEvent>
 #include <QGuiApplication>
+#include <QList>
 #include <QResizeEvent>
 #include <QScreen>
 #include <QTimer>
@@ -20,23 +22,43 @@
 #  endif
 #endif
 
+inline bool isOccOrVtkView(QWidget *w)
+{
+    const QByteArray n = QByteArray(w->metaObject()->className()).toLower();
+    const QByteArray o = w->objectName().toLower().toLatin1();
+    auto hit = [](const QByteArray &s) {
+        return s.contains("vtk") || s.contains("qvtk") || s.contains("occt")
+            || s.contains("occview") || s.contains("aisview") || s.contains("v3d");
+    };
+    return hit(n) || hit(o);
+}
+
+inline QList<QWidget *> findOccVtkViews(QWidget *root)
+{
+    QList<QWidget *> out;
+    const auto kids = root->findChildren<QWidget *>();
+    for (QWidget *c : kids) {
+        if (isOccOrVtkView(c)) {
+            out << c;
+        }
+    }
+    return out;
+}
+
 /**
- * 从小窗口拉到最大化会卡：系统过渡动画触发几十次 Resize，
- * 每次都做完整布局 + VTK/OCC/OpenGL 整帧渲染。
+ * 最大化卡顿：Win 过渡动画连续 Resize，OCCT 与 VTK 每次都整帧重绘。
+ * 关掉过渡，吞掉两个 3D 视口的中间 Resize，结束只刷一次。
  *
- * 处理：关掉窗口过渡；缩放过程冻结重绘并吞掉 3D 视口的中间 Resize，
- * 结束后只渲染一次。
- *
- *   showMaximizedFast(&w);            // 无 3D 视口
- *   showMaximizedFast(&w, occView);   // 推荐：传入 VTK/OCC 窗口
+ *   showMaximizedFast(&w);                 // 自动找 OCCT / VTK
+ *   showMaximizedFast(&w, occView, vtkW);  // 显式传入
  */
 class FastMaximizeFilter : public QObject
 {
 public:
-    FastMaximizeFilter(QWidget *window, QWidget *heavyView)
+    FastMaximizeFilter(QWidget *window, QList<QWidget *> heavies)
         : QObject(window)
         , m_win(window)
-        , m_heavy(heavyView)
+        , m_heavies(heavies)
     {
 #ifdef Q_OS_WIN
         BOOL off = TRUE;
@@ -47,9 +69,7 @@ public:
         m_idle.setInterval(40);
         QObject::connect(&m_idle, &QTimer::timeout, this, [this] { flush(); });
         window->installEventFilter(this);
-        if (heavyView != nullptr) {
-            heavyView->installEventFilter(this);
-        }
+        attachHeavies();
     }
 
     bool eventFilter(QObject *obj, QEvent *e) override
@@ -57,35 +77,61 @@ public:
         if (e->type() != QEvent::Resize || m_flushing) {
             return false;
         }
+        attachHeavies();
         if (m_win->updatesEnabled()) {
             m_win->setUpdatesEnabled(false);
         }
         m_idle.start();
-        return obj == m_heavy;
+        return m_heavies.contains(static_cast<QWidget *>(obj));
     }
 
 private:
+    void attachHeavies()
+    {
+        if (m_attached) {
+            return;
+        }
+        if (m_heavies.isEmpty()) {
+            m_heavies = findOccVtkViews(m_win);
+        }
+        if (m_heavies.isEmpty()) {
+            return;
+        }
+        for (QWidget *h : m_heavies) {
+            h->installEventFilter(this);
+        }
+        m_attached = true;
+    }
+
     void flush()
     {
         m_flushing = true;
         m_win->setUpdatesEnabled(true);
-        if (m_heavy != nullptr) {
-            QResizeEvent ev(m_heavy->size(), m_heavy->size());
-            QCoreApplication::sendEvent(m_heavy, &ev);
+        for (QWidget *h : m_heavies) {
+            QResizeEvent ev(h->size(), h->size());
+            QCoreApplication::sendEvent(h, &ev);
         }
         m_win->update();
         m_flushing = false;
     }
 
     QWidget *m_win;
-    QWidget *m_heavy;
+    QList<QWidget *> m_heavies;
     QTimer m_idle;
     bool m_flushing = false;
+    bool m_attached = false;
 };
 
-inline void showMaximizedFast(QWidget *w, QWidget *heavyView = nullptr)
+inline void showMaximizedFast(QWidget *w, QWidget *occView = nullptr, QWidget *vtkView = nullptr)
 {
-    new FastMaximizeFilter(w, heavyView);
+    QList<QWidget *> heavies;
+    if (occView != nullptr) {
+        heavies << occView;
+    }
+    if (vtkView != nullptr) {
+        heavies << vtkView;
+    }
+    new FastMaximizeFilter(w, heavies);
     if (QScreen *s = QGuiApplication::primaryScreen()) {
         w->setGeometry(s->availableGeometry());
     }

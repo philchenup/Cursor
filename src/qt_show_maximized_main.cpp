@@ -1,13 +1,35 @@
+#include "mainwindow.h"
 #include "fast_maximize.h"
-
 #include <QApplication>
-#include <QMainWindow>
-// 已有主窗口时改成：#include "MainWindow.h"
+#include <QDesktopWidget>
+#include <vtkOutputWindow.h>
+#include <QMetaType>
 
-int main(int argc, char *argv[])
+MainWindow* MainWindow::singleton = nullptr;
+
+int main(int argc, char* argv[])
 {
+    vtkOutputWindow::SetGlobalWarningDisplay(0); //不弹出vtkOutputWindow窗口
+
+    qRegisterMetaType<ct::Cloud::Ptr>("ct::Cloud::Ptr");
+    qRegisterMetaType<RobotPara>("RobotPara");
+    qRegisterMetaType<std::vector<Eigen::Affine3f>>("std::vector<Eigen::Affine3f>");
+    qRegisterMetaType<Eigen::Affine3f>("Eigen::Affine3f");
+    qRegisterMetaType<std::vector<std::pair<std::vector<float>, std::vector<float>>>>("std::vector<std::pair<std::vector<float>, std::vector<float>>>");
+    qRegisterMetaType<std::string>("std::string");
+    qRegisterMetaType<bool>("bool");
+    qRegisterMetaType<CamData>("CamData");
+    qRegisterMetaType<std::vector<float>>("std::vector<float>");
+    qRegisterMetaType<std::vector<rl::math::Vector>>("std::vector<rl::math::Vector>");
+    qRegisterMetaType<rl::plan::VectorList>(" rl::plan::VectorList");
+    qRegisterMetaType<rl::math::Real>("rl::math::Real");
+    qRegisterMetaType<rl::math::Transform>("rl::math::Transform");
+    qRegisterMetaType<rl::math::Vector>("rl::math::Vector");
+    qRegisterMetaType<std::string>("std::string");
+    qRegisterMetaType<std::vector<std::pair<Eigen::Affine3f, Eigen::Affine3f>>>("std::vector<std::pair<Eigen::Affine3f, Eigen::Affine3f>>");
+
     QApplication a(argc, argv);
-    QMainWindow w;   // 已有主窗口时改成：MainWindow w;
-    showMaximizedFast(&w);            // 有 3D 视口时：showMaximizedFast(&w, occView);
+    MainWindow w;
+    showMaximizedFast(&w);  // 自动冻结 OCCT + VTK；也可 showMaximizedFast(&w, occView, vtkWidget)
     return a.exec();
 }
