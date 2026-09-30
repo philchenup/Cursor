@@ -416,5 +416,88 @@ class FlatVsVerticalTests(unittest.TestCase):
         self.assertGreater(float(np.dot(T[:3, 0], b - a)), 0.5)
 
 
+def compute_weld_tcp_start_end(tcp_weld_start, tcp_weld_end, inward_deg=30.0):
+    t0 = tcp_weld_start[:3, 3].copy()
+    t1 = tcp_weld_end[:3, 3].copy()
+    z0 = tcp_weld_start[:3, 2].copy()
+    z1 = tcp_weld_end[:3, 2].copy()
+    weld = t1 - t0
+    if float(np.dot(weld, weld)) < EPS:
+        return False, tcp_weld_start, tcp_weld_end
+
+    if float(np.dot(t0, t0)) > float(np.dot(t1, t1)):
+        t0, t1 = t1.copy(), t0.copy()
+        z0, z1 = z1.copy(), z0.copy()
+
+    x_world = (t1 - t0) / np.linalg.norm(t1 - t0)
+    rad = math.radians(inward_deg)
+
+    def pose_at_tilt(t, z_in, y_rad):
+        z = finite_unit(z_in, WORLD_Z)
+        x = travel_axis_in_torch_plane(z, x_world, WORLD_Z)
+        y = np.cross(z, x)
+        if float(np.dot(y, y)) < EPS:
+            y = np.cross(WORLD_Z, x)
+        x, y, z = make_frame(x, y, z)
+        if abs(y_rad) > 1e-8:
+            x, y, z = rotate_around_y(x, y, z, y_rad)
+        T = np.eye(4, dtype=np.float64)
+        T[:3, 0], T[:3, 1], T[:3, 2], T[:3, 3] = x, y, z, t
+        return T
+
+    return True, pose_at_tilt(t0, z0, -rad), pose_at_tilt(t1, z1, rad)
+
+
+class WeldTcpStartEndTests(unittest.TestCase):
+    def assert_orthonormal_rh(self, R: np.ndarray) -> None:
+        np.testing.assert_allclose(R.T @ R, np.eye(3), atol=1e-9)
+        self.assertGreater(float(np.linalg.det(R)), 0.0)
+
+    def test_orders_near_to_far_and_x_points_along_weld(self) -> None:
+        far = pose_at([200.0, 0.0, 0.0], WORLD_Z)
+        near = pose_at([50.0, 0.0, 0.0], WORLD_Z)
+        ok, Ts, Te = compute_weld_tcp_start_end(far, near)
+        self.assertTrue(ok)
+        self.assertLess(np.linalg.norm(Ts[:3, 3]), np.linalg.norm(Te[:3, 3]))
+        travel = Te[:3, 3] - Ts[:3, 3]
+        self.assertGreater(float(np.dot(Ts[:3, 0], travel)), 0.0)
+        self.assertGreater(float(np.dot(Te[:3, 0], travel)), 0.0)
+
+    def test_both_ends_tilt_inward_30_around_y(self) -> None:
+        ok, Ts, Te = compute_weld_tcp_start_end(
+            pose_at([0.0, 0.0, 0.0], WORLD_Z),
+            pose_at([100.0, 0.0, 0.0], WORLD_Z),
+        )
+        self.assertTrue(ok)
+        travel = Te[:3, 3] - Ts[:3, 3]
+        travel /= np.linalg.norm(travel)
+        self.assertGreater(float(np.dot(Ts[:3, 2], travel)), 0.4)
+        self.assertLess(float(np.dot(Te[:3, 2], travel)), -0.4)
+        self.assertAlmostEqual(
+            math.degrees(math.acos(float(np.clip(np.dot(Ts[:3, 2], WORLD_Z), -1.0, 1.0)))),
+            30.0,
+            places=4,
+        )
+        self.assertAlmostEqual(
+            math.degrees(math.acos(float(np.clip(np.dot(Te[:3, 2], WORLD_Z), -1.0, 1.0)))),
+            30.0,
+            places=4,
+        )
+        self.assert_orthonormal_rh(Ts[:3, :3])
+        self.assert_orthonormal_rh(Te[:3, :3])
+
+    def test_does_not_lean_into_side_walls(self) -> None:
+        ok, Ts, Te = compute_weld_tcp_start_end(
+            pose_at([0.0, 0.0, 0.0], WORLD_Z),
+            pose_at([100.0, 0.0, 0.0], WORLD_Z),
+        )
+        self.assertTrue(ok)
+        side = np.array([0.0, 1.0, 0.0])
+        self.assertGreater(abs(float(np.dot(Ts[:3, 1], side))), 0.99)
+        self.assertGreater(abs(float(np.dot(Te[:3, 1], side))), 0.99)
+        self.assertLess(abs(float(np.dot(Ts[:3, 2], side))), 1e-6)
+        self.assertLess(abs(float(np.dot(Te[:3, 2], side))), 1e-6)
+
+
 if __name__ == "__main__":
     unittest.main()

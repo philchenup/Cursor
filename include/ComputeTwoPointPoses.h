@@ -340,4 +340,57 @@ inline bool computeTwoPointPoses(
     return true;
 }
 
+/**
+ * 近→远焊接：X 从近到远，起终点共用同一 X。
+ * 只绕 Y 向焊缝内部倾 inward_deg（默认 30°），不绕 X，避免枪体撞两侧壁。
+ * 起点 Ry(-θ)：Z 指向终点；终点 Ry(+θ)：Z 指向起点。
+ */
+inline bool computeWeldTcpStartEnd(
+    Eigen::Affine3f& tcp_weld_start,
+    Eigen::Affine3f& tcp_weld_end,
+    float inward_deg = 30.f)
+{
+    Eigen::Vector3f t0 = tcp_weld_start.translation();
+    Eigen::Vector3f t1 = tcp_weld_end.translation();
+    Eigen::Vector3f z0 = tcp_weld_start.linear().col(2);
+    Eigen::Vector3f z1 = tcp_weld_end.linear().col(2);
+    const Eigen::Vector3f weld = t1 - t0;
+    if (weld.squaredNorm() < 1e-12f)
+        return false;
+
+    if (t0.squaredNorm() > t1.squaredNorm()) {
+        std::swap(t0, t1);
+        std::swap(z0, z1);
+    }
+
+    const Eigen::Vector3f x_world = (t1 - t0).normalized();
+    const Eigen::Vector3f world_up = Eigen::Vector3f::UnitZ();
+    const float rad = inward_deg * weld_pose_detail::kDegToRad;
+
+    auto poseAt = [&](const Eigen::Vector3f& t,
+                      const Eigen::Vector3f& z_in,
+                      float y_rad) {
+        const Eigen::Vector3f z =
+            weld_pose_detail::finiteUnit(z_in, world_up);
+        const Eigen::Vector3f x =
+            weld_pose_detail::travelAxisInTorchPlane(z, x_world, world_up);
+        Eigen::Vector3f y = z.cross(x);
+        if (y.squaredNorm() < 1e-12f)
+            y = world_up.cross(x);
+        weld_pose_detail::Frame f = weld_pose_detail::makeFrame(x, y, z);
+        if (std::fabs(y_rad) > 1e-8f)
+            f = weld_pose_detail::rotateAroundY(f, y_rad);
+        Eigen::Affine3f T = Eigen::Affine3f::Identity();
+        T.linear().col(0) = f.x;
+        T.linear().col(1) = f.y;
+        T.linear().col(2) = f.z;
+        T.translation() = t;
+        return T;
+    };
+
+    tcp_weld_start = poseAt(t0, z0, -rad);
+    tcp_weld_end = poseAt(t1, z1, rad);
+    return true;
+}
+
 #endif // COMPUTE_TWO_POINT_POSES_H
