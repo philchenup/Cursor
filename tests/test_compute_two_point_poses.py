@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ground workpiece: flat PA inward 30°, vertical PF bottom-to-top, Y-up order."""
+"""Ground workpiece: flat PA both ends 30°, vertical PF start 30° toward end."""
 
 from __future__ import annotations
 
@@ -244,15 +244,15 @@ def compute_two_point_poses(pose_start, pose_end, opt: Options | None = None):
                     <= head_up(bx, by, bz, opt.tool_head_axis, world_up)
                     else -plus
                 )
-    inward_rad = 0.0 if vertical else math.radians(opt.inward_deg)
+    inward_rad = math.radians(opt.inward_deg)
 
     def make_pose(t, z_in, inward_sign):
         x, y, z = assemble(z_in)
         if not vertical and float(np.dot(opt.torch_x, opt.torch_x)) >= EPS:
             if float(np.dot(x, opt.torch_x)) < -opt.x_align_hysteresis:
                 x, y, z = make_frame(-x, -y, z)
-        if abs(inward_rad) > 1e-8:
-            x, y, z = rotate_around_y(x, y, z, inward_sign * inward_rad)
+        if abs(inward_rad) > 1e-8 and not (vertical and inward_sign >= 0.0):
+            x, y, z = rotate_travel_angle(x, y, z, inward_sign * inward_rad, vertical)
         if abs(signed) > 1e-8:
             x, y, z = rotate_travel_angle(x, y, z, signed, vertical)
         T = np.eye(4, dtype=np.float64)
@@ -305,7 +305,7 @@ class FlatVsVerticalTests(unittest.TestCase):
         self.assertFalse(compute_two_point_poses(T, T)[0])
 
     def test_auto_vertical_uses_y_bottom_to_top_and_horizontal_x(self) -> None:
-        """立焊 PF：Y 从下到上沿缝，X 水平，鹅颈不朝天。不内倾。"""
+        """立焊 PF：Y 从下到上沿缝，X 水平，鹅颈不朝天。inward=0 时不倾。"""
         n = np.array([0.0, 1.0, 0.0])
         low, high = np.zeros(3), np.array([0.0, 0.0, 2.0])
         ok, Ts, Te = compute_two_point_poses(
@@ -544,7 +544,7 @@ class WeldTcpStartEndTests(unittest.TestCase):
         self.assertLess(abs(float(np.dot(Ts[:3, 2], side))), 1e-6)
         self.assertLess(abs(float(np.dot(Te[:3, 2], side))), 1e-6)
 
-    def test_vertical_bottom_to_top_without_inward_tilt(self) -> None:
+    def test_vertical_bottom_to_top_start_tilts_30_toward_end(self) -> None:
         n = np.array([0.0, 1.0, 0.0])
         high = pose_at([0.0, 0.0, 2.0], n)
         low = pose_at([0.0, 0.0, 0.0], n)
@@ -552,9 +552,15 @@ class WeldTcpStartEndTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertLess(Ts[2, 3], Te[2, 3])
         self.assertGreater(float(np.dot(Ts[:3, 1], WORLD_Z)), 0.5)
-        self.assertGreater(float(np.dot(Te[:3, 1], WORLD_Z)), 0.5)
         self.assertLess(abs(float(np.dot(Ts[:3, 0], WORLD_Z))), 0.2)
-        np.testing.assert_allclose(Ts[:3, 2], n, atol=1e-6)
+        travel = Te[:3, 3] - Ts[:3, 3]
+        travel /= np.linalg.norm(travel)
+        self.assertGreater(float(np.dot(Ts[:3, 2], travel)), 0.4)
+        self.assertAlmostEqual(
+            math.degrees(math.acos(float(np.clip(np.dot(Ts[:3, 2], n), -1.0, 1.0)))),
+            30.0,
+            places=4,
+        )
         np.testing.assert_allclose(Te[:3, 2], n, atol=1e-6)
         self.assert_orthonormal_rh(Ts[:3, :3])
         self.assert_orthonormal_rh(Te[:3, :3])
@@ -576,7 +582,7 @@ class TrajectoryCloudTests(unittest.TestCase):
         self.assertGreater(float(np.dot(Ts[:3, 2], travel)), 0.3)
         self.assertLess(float(np.dot(Te[:3, 2], travel)), -0.3)
 
-    def test_vertical_pair_bottom_to_top_no_inward(self) -> None:
+    def test_vertical_pair_start_tilts_toward_end(self) -> None:
         n = np.array([0.0, 1.0, 0.0])
         pairs = trajectory_cloud(
             [([0.0, 0.0, 2.0], [0.0, 0.0, 0.0], n)],
@@ -586,7 +592,9 @@ class TrajectoryCloudTests(unittest.TestCase):
         Ts, Te = pairs[0]
         self.assertLess(Ts[2, 3], Te[2, 3])
         self.assertGreater(float(np.dot(Ts[:3, 1], WORLD_Z)), 0.5)
-        np.testing.assert_allclose(Ts[:3, 2], n, atol=1e-6)
+        travel = Te[:3, 3] - Ts[:3, 3]
+        travel /= np.linalg.norm(travel)
+        self.assertGreater(float(np.dot(Ts[:3, 2], travel)), 0.4)
         np.testing.assert_allclose(Te[:3, 2], n, atol=1e-6)
 
 
