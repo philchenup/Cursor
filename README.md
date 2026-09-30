@@ -4,19 +4,18 @@
 
 输入 `pcl::PointCloud<pcl::PointNormal>`（`points[0]` / `points[1]` 为起终点，法向为该端枪轴初值）。
 
-竖直或倾斜焊缝时，为避免机械臂拧姿态：
+免示教里 **路径方向** 和 **枪头朝向** 必须拆开。鹅颈枪头大致沿工具 +X，若 TCP-X 绑死行走，X 朝天则枪头朝天。
 
-1. **正交 TCP**：X 是焊缝方向在 ⊥Z 上的投影，再 `Y = Z × X`，`Z = X × Y`。倾斜缝若把 X 设成三维起点→终点，旋转不正交，IK 会拧腕。
-2. **陡焊缝不反行走**：`|travel · world_up|` 较大时禁止用 `Y·up < 0` 把 X、Y 一起取反。
-3. **两端同号**：是否绕 Z 翻 180° 只决定一次，避免路径中 180° 扭转。
-4. **枪略倾**：法向与 `preferred_torch`（默认世界 -Z）同侧时，最多再倾 `max_torch_tilt_deg`（立墙焊缝枪口略朝下）。异侧不倾，以免枪穿到工件背面。
+1. **工艺定行走**：默认 `PreferDownhill`（高→低，ISO PG）。厚板改 `PreferUphill`。不要用绕 Z 转 180° 选方向。
+2. **重力定行走角**：绕工具 Y 倾 `travel_angle_deg`（默认 10°），符号取枪头更朝下的一侧，上坡下坡都适用。
+3. **正交 TCP**：X 是行走在 ⊥Z 上的投影。陡缝默认不翻 X。
+4. **枪略倾**：法向与 `preferred_torch`（默认 −Z）同侧时最多再倾 25°。
 
 ```cpp
-#include "ComputeTwoPointPoses.h"
-
-pcl::PointCloud<pcl::PointNormal> trajectory;
-Eigen::Affine3f pose_start, pose_end;
-ComputeTwoPointPosesOptions opt;          // 可改 steep_seam_abs_cos / max_torch_tilt_deg
+ComputeTwoPointPosesOptions opt;
+opt.travel_policy = WeldTravelPolicy::PreferDownhill;  // 或 KeepGiven / PreferUphill
+opt.travel_angle_deg = 10.f;
+opt.tool_head_axis = Eigen::Vector3f::UnitX();         // 鹅颈；喷嘴沿 Z 则 UnitZ()
 computeTwoPointPoses(trajectory, pose_start, pose_end, opt);
 ```
 

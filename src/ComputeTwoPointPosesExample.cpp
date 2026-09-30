@@ -4,7 +4,7 @@
 
 int main()
 {
-    // 立墙竖缝：法向沿 +Y，行走沿 +Z。枪轴会略向 -Z 倾斜，X 保持向上。
+    // 立墙竖缝，输入从低到高。免示教会改成高→低下坡，枪头（+X）朝下。
     pcl::PointCloud<pcl::PointNormal> trajectory;
     trajectory.resize(2);
 
@@ -29,9 +29,10 @@ int main()
         return 1;
     }
 
-    const Eigen::Matrix3f R = pose_start.linear();
-    std::cout << "X (travel in torch plane): " << R.col(0).transpose() << "\n"
-              << "Z (torch):                 " << R.col(2).transpose() << "\n"
-              << "X·Z (should be ~0):        " << R.col(0).dot(R.col(2)) << "\n";
+    const Eigen::Vector3f head = pose_start.linear() * opt.tool_head_axis;
+    std::cout << "start z: " << pose_start.translation().z()
+              << "  end z: " << pose_end.translation().z() << "\n"
+              << "X: " << pose_start.linear().col(0).transpose() << "\n"
+              << "head·up: " << head.dot(opt.world_up) << "  (should be < 0)\n";
     return 0;
 }
