@@ -1,29 +1,8 @@
 # Cursor
 
-## 缩放时暂停 3D 刷新
+## 缩放时冻结 3D 视口尺寸
 
-`resizeEvent` 里关掉 Inventor / VTK 刷新，100ms 内不再变尺寸再打开。见 `snippets/MainWindow_pause_3d_on_resize.cpp`。
-
-```cpp
-void MainWindow::set3DRefresh(bool on)
-{
-    if (viewer && viewer->viewer) {
-        viewer->viewer->setAutoRedraw(on);
-        if (on) viewer->viewer->render();
-    }
-    if (ui->cloudview) {
-        ui->cloudview->setUpdatesEnabled(on);
-        if (on) ui->cloudview->update();
-    }
-}
-
-void MainWindow::resizeEvent(QResizeEvent* e)
-{
-    set3DRefresh(false);
-    QMainWindow::resizeEvent(e);
-    m_resizeIdle.start(100);
-}
-```
+只停绘制不够：放大时 Inventor / VTK 仍按中间尺寸重建 FBO。缩放过程中 `setFixedSize` 锁住两个 3D 窗口，并关掉 Windows 最大化动画；150ms 后再解开只刷新一次。见 `snippets/MainWindow_pause_3d_on_resize.cpp`。
 
 ## ScaleAISShapeBy1000
 

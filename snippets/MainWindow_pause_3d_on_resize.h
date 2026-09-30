@@ -1,5 +1,5 @@
 protected:
     void resizeEvent(QResizeEvent* e) override;
 private:
-    void set3DRefresh(bool on);
+    void freeze3D(bool freeze);
     QTimer m_resizeIdle;
