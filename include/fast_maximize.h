@@ -22,23 +22,31 @@
 #  endif
 #endif
 
-inline bool isOccOrVtkView(QWidget *w)
+inline bool isInventorOrVtkView(QWidget *w)
 {
     const QByteArray n = QByteArray(w->metaObject()->className()).toLower();
     const QByteArray o = w->objectName().toLower().toLatin1();
     auto hit = [](const QByteArray &s) {
-        return s.contains("vtk") || s.contains("qvtk") || s.contains("occt")
-            || s.contains("occview") || s.contains("aisview") || s.contains("v3d");
+        return s.contains("vtk") || s.contains("qvtk") || s.contains("cloudview")
+            || s.contains("soqt") || s.contains("inventor") || s.contains("quarter")
+            || s.contains("examiner") || s == "viewer";
     };
     return hit(n) || hit(o);
 }
 
-inline QList<QWidget *> findOccVtkViews(QWidget *root)
+inline bool isGlSurface(QWidget *w)
+{
+    const QByteArray n = QByteArray(w->metaObject()->className()).toLower();
+    return n.contains("opengl") || n.contains("glwidget") || n.contains("soqt")
+        || n.contains("vtk") || n.contains("quarter") || n.contains("inventor");
+}
+
+inline QList<QWidget *> findInventorVtkViews(QWidget *root)
 {
     QList<QWidget *> out;
     const auto kids = root->findChildren<QWidget *>();
     for (QWidget *c : kids) {
-        if (isOccOrVtkView(c)) {
+        if (isInventorOrVtkView(c)) {
             out << c;
         }
     }
@@ -46,11 +54,11 @@ inline QList<QWidget *> findOccVtkViews(QWidget *root)
 }
 
 /**
- * 最大化卡顿：Win 过渡动画连续 Resize，OCCT 与 VTK 每次都整帧重绘。
- * 关掉过渡，吞掉两个 3D 视口的中间 Resize，结束只刷一次。
+ * 最大化卡顿：Win 过渡动画连续 Resize，OpenInventor(SoQt Viewer)
+ * 与 VTK(cloudview) 每次都整帧重绘。关掉过渡，吞掉两个 3D 视口
+ * 及其 GL 子窗口的中间 Resize，结束只刷一次。
  *
- *   showMaximizedFast(&w);                 // 自动找 OCCT / VTK
- *   showMaximizedFast(&w, occView, vtkW);  // 显式传入
+ *   showMaximizedFast(&w, w.viewer, w.findChild<QWidget *>("cloudview"));
  */
 class FastMaximizeFilter : public QObject
 {
@@ -92,10 +100,20 @@ private:
             return;
         }
         if (m_heavies.isEmpty()) {
-            m_heavies = findOccVtkViews(m_win);
+            m_heavies = findInventorVtkViews(m_win);
         }
         if (m_heavies.isEmpty()) {
             return;
+        }
+
+        QList<QWidget *> extra = m_heavies;
+        for (QWidget *h : extra) {
+            const auto kids = h->findChildren<QWidget *>();
+            for (QWidget *c : kids) {
+                if (isGlSurface(c) && !m_heavies.contains(c)) {
+                    m_heavies << c;
+                }
+            }
         }
         for (QWidget *h : m_heavies) {
             h->installEventFilter(this);
@@ -122,11 +140,11 @@ private:
     bool m_attached = false;
 };
 
-inline void showMaximizedFast(QWidget *w, QWidget *occView = nullptr, QWidget *vtkView = nullptr)
+inline void showMaximizedFast(QWidget *w, QWidget *inventorView = nullptr, QWidget *vtkView = nullptr)
 {
     QList<QWidget *> heavies;
-    if (occView != nullptr) {
-        heavies << occView;
+    if (inventorView != nullptr) {
+        heavies << inventorView;
     }
     if (vtkView != nullptr) {
         heavies << vtkView;

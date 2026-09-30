@@ -2,20 +2,17 @@
 
 ## 启动即最大化（且不卡顿）
 
-从小窗口拉到最大化会卡，是因为 Windows 过渡动画会连续发出几十次 `Resize`。每次都做完整布局，VTK / OCC / OpenGL 视口还会整帧重绘。
-
-做法：关掉窗口过渡；先铺满工作区再 `showMaximized()`；缩放过程冻结重绘，3D 视口只在结束时渲染一次。
+`MainWindow` 构造里 `resize(1600, 1200)`，`main` 再 `showMaximized()`。Windows 过渡动画会连续 `Resize`，OpenInventor（`w.viewer` / SoQt）和 VTK 点云（`ui->cloudview`）每次都整帧重绘，所以从小窗口拉到最大化会卡。
 
 ```cpp
 #include "fast_maximize.h"
 
 QApplication a(argc, argv);
 MainWindow w;
-showMaximizedFast(&w);  // 自动找 OCCT / VTK
-// 或显式：showMaximizedFast(&w, occView, vtkWidget);
+showMaximizedFast(&w, w.viewer, w.findChild<QWidget *>("cloudview"));
 ```
 
-示例：`include/fast_maximize.h`、`src/qt_show_maximized_main.cpp`。
+示例：`include/fast_maximize.h`、`src/qt_show_maximized_main.cpp`。建议删掉构造函数里的 `this->resize(1600, 1200);`。
 
 ## ScaleAISShapeBy1000
 
