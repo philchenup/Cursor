@@ -1,23 +1,15 @@
 # Cursor
 
-## getFlangePoseMmAbc
-
-用 `MainWindow::mdl`（`rl::mdl::Kinematic`）取末端法兰位姿，输出 **mm + ABC 度**。与 `OperationalModel::data` 同一套欧拉角。
+## 法兰位姿（mm + ABC）
 
 ```cpp
-// 关节更新后
-mdl->setPosition(q);
 mdl->forwardPosition();
-
-FlangePoseMmAbc pose;
-auto* kin = dynamic_cast<rl::mdl::Kinematic*>(mdl.get());
-getFlangePoseMmAbc(kin, pose);   // X,Y,Z [mm], A,B,C [deg]
-// R = Rz(C) * Ry(B) * Rx(A)
+const auto& T = mdl->getOperationalPosition(0);
+const auto p = T.translation() * 1000.0;
+const auto abc = T.rotation().eulerAngles(2, 1, 0).reverse() * rl::math::RAD2DEG;
+std::cout << p.x() << " " << p.y() << " " << p.z() << " "
+          << abc.x() << " " << abc.y() << " " << abc.z() << "\n";
 ```
-
-MainWindow 封装见 `snippets/MainWindow_getFlangePoseMmAbc.cpp`。
-
-RL 平移是米，函数内 `* 1000`。若 rlmdl 本身已是毫米，不要再乘。
 
 ## ScaleAISShapeBy1000
 
