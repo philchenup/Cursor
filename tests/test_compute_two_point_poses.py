@@ -263,38 +263,26 @@ def compute_two_point_poses(pose_start, pose_end, opt: Options | None = None):
 
 
 def compute_weld_tcp_start_end(tcp_weld_start, tcp_weld_end, inward_deg=30.0):
-    t0 = tcp_weld_start[:3, 3].copy()
-    t1 = tcp_weld_end[:3, 3].copy()
-    z0 = tcp_weld_start[:3, 2].copy()
-    z1 = tcp_weld_end[:3, 2].copy()
-    weld = t1 - t0
-    if float(np.dot(weld, weld)) < EPS:
-        return False, tcp_weld_start, tcp_weld_end
-
+    """Thin wrapper matching computeWeldTcpStartEnd → computeTwoPointPoses."""
     opt = Options(inward_deg=inward_deg, travel_angle_deg=0.0, max_torch_tilt_deg=0.0)
-    seam = weld / np.linalg.norm(weld)
-    vertical = is_vertical_seam(seam, WORLD_Z, opt)
-    travel = seam.copy()
-    if vertical:
-        if float(np.dot(travel, WORLD_Z)) < -1e-6:
-            t0, t1, z0, z1, travel = swap_ends(t0, t1, z0, z1, travel)
-    else:
-        z_mean = finite_unit(z0 + z1, z0)
-        travel, t0, t1, z0, z1 = align_travel_so_y_up(
-            seam, t0, t1, z0, z1, z_mean, WORLD_Z
-        )
+    return compute_two_point_poses(tcp_weld_start, tcp_weld_end, opt)
 
-    rad = 0.0 if vertical else math.radians(inward_deg)
 
-    def pose_at_tilt(t, z_in, y_rad):
-        x, y, z = assemble_travel_frame(z_in, travel, WORLD_Z, vertical, False)
-        if (not vertical) and abs(y_rad) > 1e-8:
-            x, y, z = rotate_around_y(x, y, z, y_rad)
-        T = np.eye(4, dtype=np.float64)
-        T[:3, 0], T[:3, 1], T[:3, 2], T[:3, 3] = x, y, z, t
-        return T
+def fill_seam_poses(start_xyz, end_xyz, torch_z, inward_deg=30.0):
+    """SeamExtra::fillSeamPoses / trajectoryCloud 的起终点部分。"""
+    start = pose_at(start_xyz, torch_z)
+    end = pose_at(end_xyz, torch_z)
+    return compute_weld_tcp_start_end(start, end, inward_deg)
 
-    return True, pose_at_tilt(t0, z0, -rad), pose_at_tilt(t1, z1, rad)
+
+def trajectory_cloud(seams, inward_deg=30.0):
+    """SeamExtra::trajectoryCloud：每条焊缝一对 (start_pose, end_pose)。"""
+    out = []
+    for start_xyz, end_xyz, torch_z in seams:
+        ok, ts, te = fill_seam_poses(start_xyz, end_xyz, torch_z, inward_deg)
+        if ok:
+            out.append((ts, te))
+    return out
 
 
 class FlatVsVerticalTests(unittest.TestCase):
@@ -570,6 +558,36 @@ class WeldTcpStartEndTests(unittest.TestCase):
         np.testing.assert_allclose(Te[:3, 2], n, atol=1e-6)
         self.assert_orthonormal_rh(Ts[:3, :3])
         self.assert_orthonormal_rh(Te[:3, :3])
+
+
+class TrajectoryCloudTests(unittest.TestCase):
+    def test_flat_fillet_pair_from_trajectory_cloud(self) -> None:
+        z = np.array([0.0, -math.sqrt(0.5), -math.sqrt(0.5)])
+        pairs = trajectory_cloud(
+            [([200.0, 0.0, 0.0], [50.0, 0.0, 0.0], z)],
+            inward_deg=30.0,
+        )
+        self.assertEqual(len(pairs), 1)
+        Ts, Te = pairs[0]
+        self.assertLess(Ts[0, 3], Te[0, 3])
+        self.assertGreater(float(np.dot(Ts[:3, 1], WORLD_Z)), 0.4)
+        travel = Te[:3, 3] - Ts[:3, 3]
+        travel /= np.linalg.norm(travel)
+        self.assertGreater(float(np.dot(Ts[:3, 2], travel)), 0.3)
+        self.assertLess(float(np.dot(Te[:3, 2], travel)), -0.3)
+
+    def test_vertical_pair_bottom_to_top_no_inward(self) -> None:
+        n = np.array([0.0, 1.0, 0.0])
+        pairs = trajectory_cloud(
+            [([0.0, 0.0, 2.0], [0.0, 0.0, 0.0], n)],
+            inward_deg=30.0,
+        )
+        self.assertEqual(len(pairs), 1)
+        Ts, Te = pairs[0]
+        self.assertLess(Ts[2, 3], Te[2, 3])
+        self.assertGreater(float(np.dot(Ts[:3, 1], WORLD_Z)), 0.5)
+        np.testing.assert_allclose(Ts[:3, 2], n, atol=1e-6)
+        np.testing.assert_allclose(Te[:3, 2], n, atol=1e-6)
 
 
 if __name__ == "__main__":

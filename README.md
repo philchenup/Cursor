@@ -1,16 +1,35 @@
 # Cursor
 
-## computeTwoPointPoses / computeWeldTcpStartEnd
+## SeamExtra / trajectoryCloud
+
+点云提取焊缝后，起终点 TCP 已按地面工件规则修正。结果直接从 `trajectoryCloud()` 取。
+
+- **平焊**：Y 朝上定顺序，两端绕 Y 内倾 30°。
+- **立焊**：自下而上，不内倾。
+
+```cpp
+#include "seamExtractor.h"
+
+SeamExtra extractor;
+extractor.setInputCloud(cloud);
+if (!extractor.compute())
+    return;
+
+for (const auto& se : extractor.trajectoryCloud()) {
+    const Eigen::Affine3f& start = se.first;  // 焊枪起点 TCP
+    const Eigen::Affine3f& end = se.second;   // 焊枪终点 TCP
+}
+```
+
+`computeWeldTcpStartEnd` 是 `computeTwoPointPoses` 的薄封装，`SeamExtra::fillSeamPoses` 内部调用它。
+
+## computeTwoPointPoses
 
 工件放在地面上采点云（`world_up = +Z`）。焊点 **Y 朝上** 用来确定起点/终点。
-
-- **平焊 PA**：X 沿缝；起终点绕 Y 向焊缝内倾 30°，不绕 X，避免枪体撞端壁/侧壁。
-- **立焊 PF**：Y 自下而上沿缝，X 水平；不内倾。
 
 ```cpp
 ComputeTwoPointPosesOptions opt;
 computeTwoPointPoses(pose_start, pose_end, opt);
-
 computeWeldTcpStartEnd(tcp_weld_start, tcp_weld_end);  // 默认内倾 30°
 ```
 

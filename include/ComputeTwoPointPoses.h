@@ -399,68 +399,21 @@ inline bool computeTwoPointPoses(
 }
 
 /**
- * 地面工件焊枪起终点。
+ * 地面工件焊枪起终点：转调 `computeTwoPointPoses`。
  *
- * 平焊：Y 朝上决定顺序；起终点共用沿缝的 X；只绕 Y 向内倾 inward_deg
- * （默认 30°），不绕 X，避免撞两侧壁。起点 Ry(-θ)：Z 指向终点；
- * 终点 Ry(+θ)：Z 指向起点。
- *
- * 立焊：自下而上，Y 沿缝朝上，X 水平，不内倾。
+ * 平焊：Y 朝上决定顺序；起终点绕 Y 向内倾 inward_deg（默认 30°）。
+ * 立焊：自下而上，不内倾。
  */
 inline bool computeWeldTcpStartEnd(
     Eigen::Affine3f& tcp_weld_start,
     Eigen::Affine3f& tcp_weld_end,
     float inward_deg = 30.f)
 {
-    Eigen::Vector3f t0 = tcp_weld_start.translation();
-    Eigen::Vector3f t1 = tcp_weld_end.translation();
-    Eigen::Vector3f z0 = tcp_weld_start.linear().col(2);
-    Eigen::Vector3f z1 = tcp_weld_end.linear().col(2);
-    const Eigen::Vector3f weld = t1 - t0;
-    if (weld.squaredNorm() < 1e-12f)
-        return false;
-
     ComputeTwoPointPosesOptions opt;
     opt.inward_deg = inward_deg;
     opt.travel_angle_deg = 0.f;
     opt.max_torch_tilt_deg = 0.f;
-
-    const Eigen::Vector3f world_up = Eigen::Vector3f::UnitZ();
-    const Eigen::Vector3f seam = weld.normalized();
-    const bool vertical =
-        weld_pose_detail::isVerticalSeam(seam, world_up, opt);
-
-    Eigen::Vector3f travel = seam;
-    if (vertical) {
-        travel = weld_pose_detail::applyTravelPolicy(
-            seam, t0, t1, z0, z1, WeldTravelPolicy::PreferUphill, world_up);
-    } else {
-        const Eigen::Vector3f z_mean =
-            weld_pose_detail::finiteUnit(z0 + z1, z0);
-        travel = weld_pose_detail::alignTravelSoYUp(
-            seam, t0, t1, z0, z1, z_mean, world_up);
-    }
-
-    const float rad = vertical ? 0.f : inward_deg * weld_pose_detail::kDegToRad;
-
-    auto poseAt = [&](const Eigen::Vector3f& t,
-        const Eigen::Vector3f& z_in,
-        float y_rad) {
-            weld_pose_detail::Frame f = weld_pose_detail::assembleTravelFrame(
-                z_in, travel, world_up, vertical, false);
-            if (!vertical && std::fabs(y_rad) > 1e-8f)
-                f = weld_pose_detail::rotateAroundY(f, y_rad);
-            Eigen::Affine3f T = Eigen::Affine3f::Identity();
-            T.linear().col(0) = f.x;
-            T.linear().col(1) = f.y;
-            T.linear().col(2) = f.z;
-            T.translation() = t;
-            return T;
-        };
-
-    tcp_weld_start = poseAt(t0, z0, -rad);
-    tcp_weld_end = poseAt(t1, z1, rad);
-    return true;
+    return computeTwoPointPoses(tcp_weld_start, tcp_weld_end, opt);
 }
 
 #endif // COMPUTE_TWO_POINT_POSES_H
