@@ -1,23 +1,24 @@
 # Cursor
 
-## 启动即最大化
+## 启动即最大化（且不卡顿）
 
-把 `show()` 换成 `showMaximized()`，不要先 `show()` 再最大化，避免闪一下普通窗口。
+从小窗口拉到最大化会卡，是因为 Windows 过渡动画会连续发出几十次 `Resize`。每次都做完整布局，VTK / OCC / OpenGL 视口还会整帧重绘。
+
+做法：关掉窗口过渡；先铺满工作区再 `showMaximized()`；缩放过程冻结重绘，3D 视口只在结束时渲染一次。
 
 ```cpp
-#include <QApplication>
-#include "MainWindow.h"
+#include "fast_maximize.h"
 
 int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
     MainWindow w;
-    w.showMaximized();
+    showMaximizedFast(&w, occView);  // 无 3D 视口可只传 &w
     return a.exec();
 }
 ```
 
-完整可编译示例见 `src/qt_show_maximized_main.cpp`。
+示例：`include/fast_maximize.h`、`src/qt_show_maximized_main.cpp`。
 
 ## ScaleAISShapeBy1000
 
