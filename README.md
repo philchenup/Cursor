@@ -2,11 +2,28 @@
 
 ## 缩放时暂停 3D 刷新
 
-缩小快、放大卡：放大时 Windows 过渡会连续给出更大的中间尺寸，Inventor / VTK 每次都重新分配 FBO。上一版只停了绘制，40ms 定时器还会在动画中途整帧渲染。
+`resizeEvent` 里关掉 Inventor / VTK 刷新，100ms 内不再变尺寸再打开。见 `snippets/MainWindow_pause_3d_on_resize.cpp`。
 
-这次：关掉窗口过渡；放大过程吞掉两个 3D 视口的 `Resize`；120ms 内不再变尺寸才分配一次 FBO 并刷新。
+```cpp
+void MainWindow::set3DRefresh(bool on)
+{
+    if (viewer && viewer->viewer) {
+        viewer->viewer->setAutoRedraw(on);
+        if (on) viewer->viewer->render();
+    }
+    if (ui->cloudview) {
+        ui->cloudview->setUpdatesEnabled(on);
+        if (on) ui->cloudview->update();
+    }
+}
 
-见 `snippets/MainWindow_pause_3d_on_resize.*`。构造函数里用 `setGeometry(availableGeometry())` 替换 `resize(1600, 1200)`。
+void MainWindow::resizeEvent(QResizeEvent* e)
+{
+    set3DRefresh(false);
+    QMainWindow::resizeEvent(e);
+    m_resizeIdle.start(100);
+}
+```
 
 ## ScaleAISShapeBy1000
 
