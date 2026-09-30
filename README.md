@@ -1,18 +1,21 @@
 # Cursor
 
-## 启动即最大化（且不卡顿）
+## 缩放时暂停 3D 刷新
 
-`MainWindow` 构造里 `resize(1600, 1200)`，`main` 再 `showMaximized()`。Windows 过渡动画会连续 `Resize`，OpenInventor（`w.viewer` / SoQt）和 VTK 点云（`ui->cloudview`）每次都整帧重绘，所以从小窗口拉到最大化会卡。
+在 `MainWindow` 里检测最大化 / 缩小：`resizeEvent` 和 `WindowStateChange` 时关掉 OpenInventor（`viewer->viewer->setAutoRedraw`）和 VTK（`cloudview` 中止渲染），尺寸稳定后再刷一次。
+
+把头文件声明拷进 `mainwindow.h`，实现拷进 `mainwindow.cpp`，构造函数 `resize(1600, 1200)` 之后接上定时器。见 `snippets/MainWindow_pause_3d_on_resize.*`。
 
 ```cpp
-#include "fast_maximize.h"
-
-QApplication a(argc, argv);
-MainWindow w;
-showMaximizedFast(&w, w.viewer, w.findChild<QWidget *>("cloudview"));
+void MainWindow::resizeEvent(QResizeEvent* event)
+{
+    pause3DRefresh();
+    QMainWindow::resizeEvent(event);
+    m_resizeIdle.start();
+}
 ```
 
-示例：`include/fast_maximize.h`、`src/qt_show_maximized_main.cpp`。建议删掉构造函数里的 `this->resize(1600, 1200);`。
+`main` 仍用 `w.showMaximized()`。
 
 ## ScaleAISShapeBy1000
 

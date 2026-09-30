@@ -1,6 +1,4 @@
 #include "mainwindow.h"
-#include "device_sim/Viewer.h"
-#include "fast_maximize.h"
 #include <QApplication>
 #include <QDesktopWidget>
 #include <vtkOutputWindow.h>
@@ -31,8 +29,6 @@ int main(int argc, char* argv[])
 
     QApplication a(argc, argv);
     MainWindow w;
-    // Inventor 仿真：w.viewer（SoQt，加在 ui->robotWidget）
-    // VTK 点云：ui->cloudview（objectName = cloudview）
-    showMaximizedFast(&w, w.viewer, w.findChild<QWidget *>("cloudview"));
+    w.showMaximized();
     return a.exec();
 }
