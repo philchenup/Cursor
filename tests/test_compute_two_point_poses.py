@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ground workpiece: flat PA and vertical PF both ends inward 30°."""
+"""Ground workpiece: flat PA inward both ends; vertical PF same 30° toward end."""
 
 from __future__ import annotations
 
@@ -251,8 +251,9 @@ def compute_two_point_poses(pose_start, pose_end, opt: Options | None = None):
         if not vertical and float(np.dot(opt.torch_x, opt.torch_x)) >= EPS:
             if float(np.dot(x, opt.torch_x)) < -opt.x_align_hysteresis:
                 x, y, z = make_frame(-x, -y, z)
+        tilt = -inward_rad if vertical else inward_sign * inward_rad
         if abs(inward_rad) > 1e-8:
-            x, y, z = rotate_travel_angle(x, y, z, inward_sign * inward_rad, vertical)
+            x, y, z = rotate_travel_angle(x, y, z, tilt, vertical)
         if abs(signed) > 1e-8:
             x, y, z = rotate_travel_angle(x, y, z, signed, vertical)
         T = np.eye(4, dtype=np.float64)
@@ -544,7 +545,7 @@ class WeldTcpStartEndTests(unittest.TestCase):
         self.assertLess(abs(float(np.dot(Ts[:3, 2], side))), 1e-6)
         self.assertLess(abs(float(np.dot(Te[:3, 2], side))), 1e-6)
 
-    def test_vertical_bottom_to_top_both_ends_tilt_30(self) -> None:
+    def test_vertical_bottom_to_top_both_ends_same_30_toward_end(self) -> None:
         n = np.array([0.0, 1.0, 0.0])
         high = pose_at([0.0, 0.0, 2.0], n)
         low = pose_at([0.0, 0.0, 0.0], n)
@@ -558,7 +559,8 @@ class WeldTcpStartEndTests(unittest.TestCase):
         travel = Te[:3, 3] - Ts[:3, 3]
         travel /= np.linalg.norm(travel)
         self.assertGreater(float(np.dot(Ts[:3, 2], travel)), 0.4)
-        self.assertLess(float(np.dot(Te[:3, 2], travel)), -0.4)
+        self.assertGreater(float(np.dot(Te[:3, 2], travel)), 0.4)
+        self.assertGreater(float(np.dot(Ts[:3, 2], Te[:3, 2])), 0.95)
         self.assertAlmostEqual(
             math.degrees(math.acos(float(np.clip(np.dot(Ts[:3, 2], n), -1.0, 1.0)))),
             30.0,
@@ -589,7 +591,7 @@ class TrajectoryCloudTests(unittest.TestCase):
         self.assertGreater(float(np.dot(Ts[:3, 2], travel)), 0.3)
         self.assertLess(float(np.dot(Te[:3, 2], travel)), -0.3)
 
-    def test_vertical_pair_both_ends_tilt_30(self) -> None:
+    def test_vertical_pair_both_ends_same_tilt_toward_end(self) -> None:
         n = np.array([0.0, 1.0, 0.0])
         pairs = trajectory_cloud(
             [([0.0, 0.0, 2.0], [0.0, 0.0, 0.0], n)],
@@ -601,7 +603,8 @@ class TrajectoryCloudTests(unittest.TestCase):
         travel = Te[:3, 3] - Ts[:3, 3]
         travel /= np.linalg.norm(travel)
         self.assertGreater(float(np.dot(Ts[:3, 2], travel)), 0.4)
-        self.assertLess(float(np.dot(Te[:3, 2], travel)), -0.4)
+        self.assertGreater(float(np.dot(Te[:3, 2], travel)), 0.4)
+        self.assertGreater(float(np.dot(Ts[:3, 2], Te[:3, 2])), 0.95)
 
 
 if __name__ == "__main__":

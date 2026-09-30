@@ -19,7 +19,7 @@
  * 从地面工件点云提取焊缝，并用 computeWeldTcpStartEnd 生成起终点 TCP。
  *
  * 平焊：Y 朝上定顺序，两端绕 Y 内倾 inward_deg。
- * 立焊：自下而上；起终点绕 X 向焊缝内倾 inward_deg。
+ * 立焊：自下而上；起终点绕 X 同向朝终点倾 inward_deg。
  * 结果直接从 trajectoryCloud() 取。
  */
 class SeamExtra
@@ -41,7 +41,7 @@ public:
         float min_seam_length_mm = 20.0f;
         int min_plane_support = 12;
         float trajectory_step_mm = 2.0f;
-        /// 平焊绕 Y、立焊绕 X：起终点都向焊缝内倾。
+        /// 平焊绕 Y 两端内倾；立焊绕 X，起终点同向朝上坡倾。
         float inward_deg = 30.0f;
         std::uint32_t rng_seed = 42;
     };
