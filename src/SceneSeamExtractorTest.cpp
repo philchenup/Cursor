@@ -30,7 +30,8 @@
 //   tee     长筋 + 一块 T 形搭接短筋
 //   ladder  两根长筋 + 三块两端搭接的横筋
 //   single  单筋 + 两块对称弧形肘板
-// 相机垂直向下拍摄，只采样底板上表面和立板顶边；立板根部一侧留阴影缺失，
+// 相机垂直向下拍摄，点云按相机坐标系生成（Z 轴指向地面，地面 Z 最大），
+// 只采样底板上表面和立板顶边；立板根部一侧留阴影缺失，
 // 并混入地面倾斜、噪声、杂点、小块杂物、NaN 和零点。
 //
 // 检查通过后打开窗口：
@@ -140,9 +141,23 @@ struct PlacedWorkpiece {
     std::vector<GroundTruthSeam> seams;
 };
 
+// 场景按相机坐标系生成：相机位于原点上方俯视，Z 轴指向地面，地面 Z 最大，物体越高 Z 越小。
+// 下面的几何量先按“高出水平基准面”的世界高度描述，再由 CameraZ 换算到相机坐标系。
+constexpr float kCameraHeight = 1500.0f; ///< 相机到地面基准的距离
+
+float GroundHeight(float x, float y)
+{
+    return 0.002f * x - 0.001f * y; ///< 地面略有倾斜（世界高度）
+}
+
+float CameraZ(float worldHeight)
+{
+    return kCameraHeight - worldHeight;
+}
+
 float GroundZ(float x, float y)
 {
-    return 0.002f * x - 0.001f * y;
+    return CameraZ(GroundHeight(x, y)); ///< 地面在相机坐标系中的 Z
 }
 
 // 按与算法无关的几何规则生成真值焊缝：
@@ -156,7 +171,7 @@ std::vector<GroundTruthSeam> TemplateSeams(const Template& shape, const Pose& po
 
     auto lift = [&](const Eigen::Vector2f& local, float above) {
         const Eigen::Vector2f world = pose.apply(local);
-        return Eigen::Vector3f(world.x(), world.y(), GroundZ(world.x(), world.y()) + shape.baseThickness + above);
+        return Eigen::Vector3f(world.x(), world.y(), CameraZ(GroundHeight(world.x(), world.y()) + shape.baseThickness + above));
     };
 
     struct Hit {
@@ -260,7 +275,14 @@ struct Scene {
     std::vector<PlacedWorkpiece> workpieces;
 };
 
-void AddPoint(Cloud& cloud, float x, float y, float z)
+/// 按世界高度加点，写入相机坐标系
+void AddPoint(Cloud& cloud, float x, float y, float worldHeight)
+{
+    cloud.push_back(pcl::PointXYZ(x, y, CameraZ(worldHeight)));
+}
+
+/// 直接写入原始坐标（零点、NaN 等无效点）
+void AddRawPoint(Cloud& cloud, float x, float y, float z)
 {
     cloud.push_back(pcl::PointXYZ(x, y, z));
 }
@@ -278,7 +300,7 @@ void SampleWorkpiece(const Template& shape, const Pose& pose, std::mt19937& rng,
 
     auto emit = [&](const Eigen::Vector2f& local, float above) {
         const Eigen::Vector2f world = pose.apply(local);
-        AddPoint(cloud, world.x(), world.y(), GroundZ(world.x(), world.y()) + shape.baseThickness + above + noise(rng));
+        AddPoint(cloud, world.x(), world.y(), GroundHeight(world.x(), world.y()) + shape.baseThickness + above + noise(rng));
     };
 
     // 底板上表面：避开立板占位和阴影
@@ -342,7 +364,7 @@ Scene BuildScene()
     constexpr float kGroundStep = 8.0f;
     for (float x = 0.0f; x <= 18000.0f; x += kGroundStep) {
         for (float y = 0.0f; y <= 3200.0f; y += kGroundStep) {
-            AddPoint(*scene.cloud, x, y, GroundZ(x, y) + noise(rng));
+            AddPoint(*scene.cloud, x, y, GroundHeight(x, y) + noise(rng));
         }
     }
 
@@ -374,7 +396,7 @@ Scene BuildScene()
         const float cy = 1600.0f;
         for (float x = -60.0f; x <= 60.0f; x += 4.0f) {
             for (float y = -60.0f; y <= 60.0f; y += 4.0f) {
-                AddPoint(*scene.cloud, cx + x, cy + y, GroundZ(cx + x, cy + y) + 60.0f + noise(rng));
+                AddPoint(*scene.cloud, cx + x, cy + y, GroundHeight(cx + x, cy + y) + 60.0f + noise(rng));
             }
         }
     }
@@ -387,8 +409,8 @@ Scene BuildScene()
         AddPoint(*scene.cloud, ux(rng), uy(rng), uz(rng));
     }
     for (int i = 0; i < 500; ++i) {
-        AddPoint(*scene.cloud, 0.0f, 0.0f, 0.0f);
-        AddPoint(*scene.cloud, std::numeric_limits<float>::quiet_NaN(), 1.0f, 1.0f);
+        AddRawPoint(*scene.cloud, 0.0f, 0.0f, 0.0f);
+        AddRawPoint(*scene.cloud, std::numeric_limits<float>::quiet_NaN(), 1.0f, 1.0f);
     }
 
     scene.cloud->width = static_cast<std::uint32_t>(scene.cloud->size());
@@ -865,48 +887,49 @@ int main(int argc, char** argv)
 
     const Scene scene = BuildScene();
     std::cout << "场景点数 " << scene.cloud->size() << "，工件 " << scene.workpieces.size() << " 个\n";
-    // 合成场景 Z 向上；相机坐标系版本 Z 指向地面
-    Cloud::Ptr cameraCloud(new Cloud(*scene.cloud));
-    for (pcl::PointXYZ& p : cameraCloud->points) {
-        p.z = -p.z;
-    }
+    // 合成场景为相机坐标系（Z 指向地面），与默认参数 zAxisDown = true 一致
     if (!options.savePlyPath.empty()) {
-        if (pcl::io::savePLYFileBinary(options.savePlyPath, *cameraCloud) < 0) {
+        if (pcl::io::savePLYFileBinary(options.savePlyPath, *scene.cloud) < 0) {
             std::cerr << "写入 PLY 失败: " << options.savePlyPath << '\n';
             return EXIT_FAILURE;
         }
         std::cout << "合成场景已按相机坐标系写入 " << options.savePlyPath << '\n';
     }
 
-    SceneSeamParams upright;
-    upright.zAxisDown = false;
-
     const auto begin = std::chrono::steady_clock::now();
-    const SceneSeamResult result = ExtractSceneSeams(scene.cloud, upright);
+    SceneSeamResult result = ExtractSceneSeams(scene.cloud);
     const auto end = std::chrono::steady_clock::now();
     std::cout << "耗时 " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " ms，"
               << result.message << '\n';
 
     failures += !Expect(result.success, "提取应成功");
 
-    // 默认参数按相机坐标系处理，结果应与 Z 向上版本一致（翻转回同一坐标系后比较）
+    // 同一场景转成 Z 向上后用 zAxisDown = false 处理，翻回相机坐标系应得到一致结果
     {
-        SceneSeamResult cameraResult = ExtractSceneSeams(cameraCloud);
-        failures += !Expect(cameraResult.success, "相机坐标系提取应成功");
-        failures += !Expect(cameraResult.seams.size() == result.seams.size(), "相机坐标系焊缝数量应一致");
-        FlipResultZ(cameraResult);
-        float maxDiff = 0.0f;
-        for (std::size_t i = 0; i < std::min(cameraResult.seams.size(), result.seams.size()); ++i) {
-            maxDiff = std::max(maxDiff, (cameraResult.seams[i].start - result.seams[i].start).norm());
-            maxDiff = std::max(maxDiff, (cameraResult.seams[i].end - result.seams[i].end).norm());
+        Cloud::Ptr uprightCloud(new Cloud(*scene.cloud));
+        for (pcl::PointXYZ& p : uprightCloud->points) {
+            p.z = -p.z;
         }
-        std::cout << "相机坐标系与 Z 向上结果最大偏差 " << maxDiff << " mm\n";
-        failures += !Expect(maxDiff < 1e-3f, "相机坐标系结果翻转后应与 Z 向上结果一致");
+        SceneSeamParams upright;
+        upright.zAxisDown = false;
+        SceneSeamResult uprightResult = ExtractSceneSeams(uprightCloud, upright);
+        failures += !Expect(uprightResult.success, "Z 向上输入提取应成功");
+        failures += !Expect(uprightResult.seams.size() == result.seams.size(), "Z 向上输入焊缝数量应一致");
+        FlipResultZ(uprightResult);
+        float maxDiff = 0.0f;
+        for (std::size_t i = 0; i < std::min(uprightResult.seams.size(), result.seams.size()); ++i) {
+            maxDiff = std::max(maxDiff, (uprightResult.seams[i].start - result.seams[i].start).norm());
+            maxDiff = std::max(maxDiff, (uprightResult.seams[i].end - result.seams[i].end).norm());
+        }
+        std::cout << "Z 向上输入与相机坐标系结果最大偏差 " << maxDiff << " mm\n";
+        // 体素栅格边界上的点在翻转后可能落入相邻体素，允许亚毫米差异
+        failures += !Expect(maxDiff < 0.5f, "两种坐标系输入的结果应一致");
     }
     failures += !Expect(result.workpieces.size() == scene.workpieces.size(), "工件数量应为 19");
 
+    // 相机坐标系中地面 z = kCameraHeight - 0.002 x + 0.001 y，朝向相机的法向为 (-0.002, 0.001, -1)
     const Eigen::Vector3f groundNormal = result.groundPlane.head<3>().normalized();
-    const Eigen::Vector3f expectedNormal = Eigen::Vector3f(-0.002f, 0.001f, 1.0f).normalized();
+    const Eigen::Vector3f expectedNormal = Eigen::Vector3f(-0.002f, 0.001f, -1.0f).normalized();
     std::cout << "地面法向 " << groundNormal.transpose() << "  对齐 " << groundNormal.dot(expectedNormal) << '\n';
     failures += !Expect(groundNormal.dot(expectedNormal) > 0.9999f, "地面倾斜应被估计出来");
 
@@ -960,10 +983,11 @@ int main(int argc, char** argv)
     failures += !Expect(recall >= 0.95f, "焊缝召回应不低于 0.95");
     failures += !Expect(precision >= 0.95f, "焊缝精度应不低于 0.95");
 
+    // 相机坐标系中离相机越近 z 越小，焊缝 z 应小于地面 z
     for (const InitialSeam& seam : result.seams) {
-        const float groundClearance = std::min(seam.start.z(), seam.end.z()) - GroundZ(seam.start.x(), seam.start.y());
+        const float groundClearance = GroundZ(seam.start.x(), seam.start.y()) - std::max(seam.start.z(), seam.end.z());
         if (groundClearance < 5.0f) {
-            std::cerr << "焊缝落到地面以下: z 高出地面 " << groundClearance << '\n';
+            std::cerr << "焊缝落到地面以下: 高出地面 " << groundClearance << '\n';
             ++failures;
             break;
         }
@@ -971,15 +995,12 @@ int main(int argc, char** argv)
 
     if (failures != 0) {
         std::cerr << failures << " 项检查失败\n";
-        if (showViewer) {
-            ShowScene(result);
-        }
-        return EXIT_FAILURE;
+    } else {
+        std::cout << "通过\n";
     }
-
-    std::cout << "通过\n";
     if (showViewer) {
+        FlipResultZ(result); // 可视化按 Z 向上绘制
         ShowScene(result);
     }
-    return EXIT_SUCCESS;
+    return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

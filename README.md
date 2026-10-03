@@ -40,7 +40,7 @@ for (const Workpiece& piece : result.workpieces)
 ```bash
 cmake -S . -B build -DCMAKE_CXX_COMPILER=g++ -DCMAKE_C_COMPILER=gcc
 cmake --build build -j
-./build/scene_seam_test                # 合成 19 个工件的场景，通过检查后打开可视化窗口
+./build/scene_seam_test                # 合成 19 个工件的相机坐标系场景（Z 指向地面），通过检查后打开可视化窗口
 ./build/scene_seam_test --no-viewer    # 仅运行检查
 ```
 
