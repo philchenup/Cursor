@@ -53,3 +53,17 @@ python -m unittest tests.test_weld_seam
 ```
 
 依赖见 `weld_seam/requirements.txt`。
+
+## 补全同一平面上的缺口
+
+黄、绿两块是同一平面的点云，中间没有点，所以被欧式聚类分成两个连通域。`fillPlanarGap` 只在两块正对、缝宽稳定的那一段里补点，新点落在两块质心连线所在的平面上，不把外轮廓往外撑。
+
+```bash
+g++ -std=c++17 -O2 -Iinclude src/FillPlanarGap.cpp src/FillPlanarGapDemo.cpp \
+  -o fill_planar_gap $(pkg-config --cflags --libs pcl_segmentation pcl_search pcl_kdtree pcl_common)
+
+python weld_seam/fill_screenshot_gap.py weld_seam/examples/yg_plates.png ./fill_planar_gap \
+  -o weld_seam/examples/yg_gap_filled.png
+```
+
+这张截图补了 39199 个点，都在 z = 0，落在两块之间的黑色缺口里。下图里红色是补上的点。
