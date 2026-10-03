@@ -3,7 +3,13 @@ from pathlib import Path
 
 import numpy as np
 
-from weld_seam.detect import find_seams_in_image, fit_two_plate_seam, tjoint_seams_3d
+from weld_seam.detect import (
+    cloud_from_screenshot,
+    find_groove_seams,
+    find_seams_in_image,
+    fit_two_plate_seam,
+    tjoint_seams_3d,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 IMAGE = ROOT / "weld_seam" / "examples" / "t_plates.png"
@@ -110,6 +116,35 @@ class ThreeDimensionalTJointTest(unittest.TestCase):
         self.assertGreater(seam.length, 70.0)
 
 
+class PointCloudGapTest(unittest.TestCase):
+    def test_round_hole_and_scratch_are_not_welds(self):
+        xs = np.arange(0, 220)
+        ys = np.arange(0, 320)
+        xx, yy = np.meshgrid(xs, ys)
+        points = np.stack([xx.ravel(), yy.ravel()], axis=1).astype(np.float64)
+        groove = (
+            (points[:, 0] >= 100)
+            & (points[:, 0] <= 130)
+            & (points[:, 1] >= 30)
+            & (points[:, 1] <= 290)
+        )
+        hole = (points[:, 0] - 40) ** 2 + (points[:, 1] - 50) ** 2 <= 8**2
+        scratch = (
+            (points[:, 0] >= 180)
+            & (points[:, 0] <= 181)
+            & (points[:, 1] >= 100)
+            & (points[:, 1] <= 180)
+        )
+        seams = find_groove_seams(points[~(groove | hole | scratch)])
+        self.assertEqual(len(seams), 1)
+        seam = seams[0]
+        self.assertAlmostEqual(float(seam.centerline[:, 0].mean()), 115.0, delta=2.0)
+        self.assertGreater(seam.width, 24.0)
+        self.assertLess(seam.width, 34.0)
+        self.assertGreater(seam.length, 220.0)
+        self.assertLess(seam.gap_mad, 1.0)
+
+
 class ImageSeamTest(unittest.TestCase):
     def test_two_t_plates_on_the_scan(self):
         import cv2
@@ -117,21 +152,25 @@ class ImageSeamTest(unittest.TestCase):
         image = cv2.imread(str(IMAGE), cv2.IMREAD_COLOR)
         self.assertIsNotNone(image)
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        cloud = cloud_from_screenshot(rgb)
+        self.assertEqual(cloud.shape[1], 3)
+        self.assertGreater(len(cloud), 1_000_000)
+        self.assertTrue(np.all(cloud[:, 2] == 0))
         seams = find_seams_in_image(rgb)
         self.assertEqual(len(seams), 2)
 
         tilted, upright = seams
         self.assertGreater(abs(np.dot(upright.direction, np.array([0.0, 1.0]))), 0.995)
         self.assertAlmostEqual(upright.centerline[:, 0].mean(), 1026.5, delta=4.0)
-        self.assertGreater(upright.width, 48.0)
-        self.assertLess(upright.width, 60.0)
+        self.assertGreater(upright.width, 44.0)
+        self.assertLess(upright.width, 56.0)
         self.assertGreater(upright.length, 440.0)
         self.assertLess(upright.gap_mad, 2.0)
         self.assertLess(upright.parallel_angle_deg, 2.0)
 
         self.assertAlmostEqual(tilted.direction_deg, 49.0, delta=4.0)
-        self.assertGreater(tilted.width, 72.0)
-        self.assertLess(tilted.width, 88.0)
+        self.assertGreater(tilted.width, 68.0)
+        self.assertLess(tilted.width, 82.0)
         self.assertGreater(tilted.length, 450.0)
         self.assertLess(tilted.gap_mad, 2.0)
         self.assertLess(tilted.parallel_angle_deg, 2.0)

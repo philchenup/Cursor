@@ -1,12 +1,11 @@
 """T 型板焊缝定位。
 
-俯视点云里，中间焊缝和两侧焊趾都由板件几何决定，不依赖坡口里有没有点：
+截图是正交俯视点云：每个非背景像素是一个回波点，黑色是没有回波的坡口。
 
-1. 去掉与图像四角同色的无回波背景。
-2. 底板是前景里的主色，其余连通域是板件。
-3. 只配对长边近似平行、中间留有窄缝、并且沿缝方向有足够重叠的两块板。
-4. 沿焊缝方向分箱，取相向一侧的高分位棱边。缝宽用中位数，被缺口或飞溅带偏的箱子用 MAD 丢掉。
-5. 两条焊趾是两侧棱边，中间焊缝是它们的中线。端点取两块板沿缝方向的重叠段。
+1. 把截图收成点云，坐标就是点的平面位置，z = 0。
+2. 点云内部细长的无点缺口才是坡口。板内小孔、边缘毛刺因为不够长或者不够宽而被丢掉。
+3. 沿缺口方向分箱。每一箱的两侧高分位是两条焊趾，中位数是中间焊缝。
+4. 缝宽偏离中位数过大的箱子用 MAD 丢掉，端点只留在缝宽稳定的那一段。
 
 立板本身有点时走 ``tjoint_seams_3d``：RANSAC 抽出翼板，把立板投影到翼板上，
 再用同一套分箱包络得到中心线和两条角焊缝。两面都有点时，点数多的那一面不会把中心线拉偏。
@@ -516,29 +515,180 @@ def segment_plates(
     return found
 
 
-def find_seams_in_image(rgb: np.ndarray, **segment_kwargs) -> list[Seam2D]:
-    """分割板件并配对，返回按中点 x 从小到大排序的接头。"""
-    plates = segment_plates(rgb, **segment_kwargs)
-    candidates: list[tuple[float, int, int, Seam2D]] = []
-    for i in range(len(plates)):
-        for j in range(i + 1, len(plates)):
-            seam = fit_two_plate_seam(plates[i]["points"], plates[j]["points"])
-            if seam is None:
-                continue
-            seam.side_a_rgb = plates[i]["rgb"]
-            seam.side_b_rgb = plates[j]["rgb"]
-            candidates.append((seam.width, i, j, seam))
-    candidates.sort(key=lambda item: item[0])
-    used: set[int] = set()
-    seams: list[Seam2D] = []
-    for _, i, j, seam in candidates:
-        if i in used or j in used:
+def cloud_from_screenshot(rgb: np.ndarray, *, backdrop_threshold: float = 40.0) -> np.ndarray:
+    """把正交俯视截图收成点云。每个非背景像素是一个点 (x, y, 0)。"""
+    rgb = np.asarray(rgb)
+    if rgb.ndim != 3 or rgb.shape[2] < 3:
+        raise ValueError("需要 RGB 图像")
+    rgb = rgb[:, :, :3]
+    returns = ~_backdrop_mask(rgb, backdrop_threshold)
+    ys, xs = np.where(returns)
+    zeros = np.zeros(len(xs), dtype=np.float64)
+    return np.column_stack([xs.astype(np.float64), ys.astype(np.float64), zeros])
+
+
+def _longest_true_run(mask: np.ndarray) -> np.ndarray:
+    kept = np.zeros(mask.shape, dtype=bool)
+    best_start = 0
+    best_len = 0
+    start = None
+    for index, flag in enumerate(np.concatenate([mask, [False]])):
+        if flag and start is None:
+            start = index
+        elif not flag and start is not None:
+            length = index - start
+            if length > best_len:
+                best_start = start
+                best_len = length
+            start = None
+    if best_len > 0:
+        kept[best_start : best_start + best_len] = True
+    return kept
+
+
+def _seam_from_gap(
+    points: np.ndarray,
+    *,
+    bin_size: float = 8.0,
+    edge_percentile: float = 98.0,
+    min_bins: int = 8,
+    min_width: float = 12.0,
+    max_width: float = 250.0,
+) -> Seam2D | None:
+    """无点缺口的两侧是焊趾，缺口中线是中间焊缝。"""
+    if len(points) < 30:
+        return None
+    center, major, major_var, minor_var = _pca_axes(points)
+    if minor_var <= 1e-9 or np.sqrt(major_var / minor_var) < 4.0:
+        return None
+    direction = _orient_down(major)
+    normal = np.array([-direction[1], direction[0]], dtype=np.float64)
+    along = (points - center) @ direction
+    across = (points - center) @ normal
+    t_lo = float(np.percentile(along, 1))
+    t_hi = float(np.percentile(along, 99))
+    edges = np.arange(t_lo, t_hi + bin_size, bin_size)
+    centers: list[float] = []
+    low: list[float] = []
+    high: list[float] = []
+    low_q = 100.0 - edge_percentile
+    for start, stop in zip(edges[:-1], edges[1:]):
+        chosen = (along >= start) & (along < stop)
+        if int(chosen.sum()) < 15:
             continue
-        used.add(i)
-        used.add(j)
+        values = across[chosen]
+        centers.append(0.5 * (start + stop))
+        low.append(float(np.percentile(values, low_q)))
+        high.append(float(np.percentile(values, edge_percentile)))
+    if len(centers) < min_bins:
+        return None
+    bin_t = np.asarray(centers)
+    edge_lo = np.asarray(low)
+    edge_hi = np.asarray(high)
+    width = edge_hi - edge_lo
+    inliers = _mad_keep(width, floor=6.0)
+    if float(inliers.mean()) < 0.6 or int(inliers.sum()) < min_bins:
+        return None
+    run = _longest_true_run(inliers)
+    if int(run.sum()) < min_bins:
+        return None
+    toe_lo = float(np.median(edge_lo[run]))
+    toe_hi = float(np.median(edge_hi[run]))
+    center_s = 0.5 * (toe_lo + toe_hi)
+    gap = toe_hi - toe_lo
+    if gap < min_width or gap > max_width:
+        return None
+    gap_mad = float(np.median(np.abs(width[run] - np.median(width[run]))))
+    if gap_mad > max(2.5, 0.08 * gap):
+        return None
+    edge_std = float(np.hypot(np.std(edge_lo[run] - toe_lo), np.std(edge_hi[run] - toe_hi)))
+    t_start = float(bin_t[run].min())
+    t_end = float(bin_t[run].max())
+
+    def point_at(along_value: float, across_value: float) -> np.ndarray:
+        return center + along_value * direction + across_value * normal
+
+    return Seam2D(
+        centerline=np.stack([point_at(t_start, center_s), point_at(t_end, center_s)]),
+        toe_a=np.stack([point_at(t_start, toe_lo), point_at(t_end, toe_lo)]),
+        toe_b=np.stack([point_at(t_start, toe_hi), point_at(t_end, toe_hi)]),
+        direction=direction,
+        normal=normal,
+        width=float(gap),
+        length=float(t_end - t_start),
+        parallel_angle_deg=0.0,
+        gap_mad=gap_mad,
+        edge_std=edge_std,
+    )
+
+
+def _color_beside(rgb: np.ndarray, point: np.ndarray) -> tuple[int, int, int] | None:
+    height, width = rgb.shape[:2]
+    x = int(round(float(point[0])))
+    y = int(round(float(point[1])))
+    if not (0 <= x < width and 0 <= y < height):
+        return None
+    patch = rgb[max(0, y - 3) : y + 4, max(0, x - 3) : x + 4]
+    if patch.size == 0:
+        return None
+    mean = patch.reshape(-1, 3).mean(axis=0)
+    return int(round(float(mean[0]))), int(round(float(mean[1]))), int(round(float(mean[2])))
+
+
+def find_groove_seams(
+    points_xy: np.ndarray,
+    rgb: np.ndarray | None = None,
+    *,
+    min_area: int = 2000,
+    min_aspect: float = 4.0,
+) -> list[Seam2D]:
+    """在点云平面上找细长无点坡口，返回中间焊缝和两侧焊趾。"""
+    points_xy = np.asarray(points_xy, dtype=np.float64)
+    if points_xy.ndim != 2 or points_xy.shape[1] < 2 or len(points_xy) < 100:
+        return []
+    xs = np.rint(points_xy[:, 0]).astype(np.int32)
+    ys = np.rint(points_xy[:, 1]).astype(np.int32)
+    pad = 1
+    origin_x = int(xs.min()) - pad
+    origin_y = int(ys.min()) - pad
+    width = int(xs.max()) - origin_x + pad + 1
+    height = int(ys.max()) - origin_y + pad + 1
+    occupied = np.zeros((height, width), dtype=np.uint8)
+    occupied[ys - origin_y, xs - origin_x] = 255
+    empty = occupied == 0
+    flood = empty.astype(np.uint8) * 255
+    mask = np.zeros((height + 2, width + 2), dtype=np.uint8)
+    cv2.floodFill(flood, mask, (0, 0), 128)
+    holes = empty & (flood != 128)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(holes.astype(np.uint8), 8)
+    seams: list[Seam2D] = []
+    for index in range(1, count):
+        area = int(stats[index, cv2.CC_STAT_AREA])
+        if area < min_area:
+            continue
+        rows, cols = np.where(labels == index)
+        gap = np.column_stack([cols + origin_x, rows + origin_y]).astype(np.float64)
+        _, _, major_var, minor_var = _pca_axes(gap)
+        if minor_var <= 1e-9 or np.sqrt(major_var / minor_var) < min_aspect:
+            continue
+        seam = _seam_from_gap(gap)
+        if seam is None:
+            continue
+        if rgb is not None:
+            midpoint = seam.centerline.mean(axis=0)
+            offset = seam.normal * (seam.width * 0.5 + 16.0)
+            seam.side_a_rgb = _color_beside(rgb, midpoint - offset)
+            seam.side_b_rgb = _color_beside(rgb, midpoint + offset)
         seams.append(seam)
     seams.sort(key=lambda seam: float(seam.centerline.mean(axis=0)[0]))
     return seams
+
+
+def find_seams_in_image(rgb: np.ndarray) -> list[Seam2D]:
+    """截图即点云。先收成回波点，再在无点坡口上求焊缝。"""
+    cloud = cloud_from_screenshot(rgb)
+    image = np.asarray(rgb)[:, :, :3]
+    return find_groove_seams(cloud[:, :2], rgb=image)
 
 
 def _draw_segment(image: np.ndarray, segment: np.ndarray, color: tuple[int, int, int], thickness: int) -> None:
@@ -590,8 +740,8 @@ def _load_rgb(path: Path) -> np.ndarray:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="定位俯视点云中 T 型板的中间焊缝和两侧焊趾")
-    parser.add_argument("image", type=Path, help="俯视点云渲染图")
+    parser = argparse.ArgumentParser(description="从正交俯视点云截图定位 T 型板的中间焊缝和两侧焊趾")
+    parser.add_argument("image", type=Path, help="正交俯视点云截图，每个非背景像素是一个回波点")
     parser.add_argument("-o", "--output", type=Path, help="标注图输出路径")
     parser.add_argument("--json", type=Path, help="焊缝坐标 JSON 输出路径")
     args = parser.parse_args()
@@ -602,7 +752,8 @@ def main() -> None:
         "image": str(args.image),
         "width": int(rgb.shape[1]),
         "height": int(rgb.shape[0]),
-        "coordinate_system": "像素，原点在左上角，x 向右，y 向下",
+        "coordinate_system": "正交俯视点云。每个非背景像素是一个回波点，x 向右，y 向下，z = 0，单位是截图上的 1 像素",
+        "point_count": int(cloud_from_screenshot(rgb).shape[0]),
         "seams": [seam.to_dict() for seam in seams],
     }
     text = json.dumps(payload, ensure_ascii=False, indent=2)
