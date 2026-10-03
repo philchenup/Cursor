@@ -1,5 +1,7 @@
 #include "WeldSeamFinder.h"
 
+#include <pcl/visualization/pcl_visualizer.h>
+
 #include <Eigen/Geometry>
 
 #include <cmath>
@@ -9,14 +11,16 @@
 #include <limits>
 #include <string>
 
-// 合成一块 T 型板点云，检查 FindWeldSeam 的焊缝方向。
+// 合成一块 T 型板点云，检查 FindWeldSeam 的焊缝方向，并打开窗口显示。
+// 灰色是原始点云，红色是空洞区域，绿色箭头是空洞 PCA 主方向。
 //
 // 底板在 z = 0，中间留一条沿 X 的缝隙；立板立在缝隙上方。
 // 点云里混入零点、NaN、远离主体的小团块，以及一块更小的干扰平面，
 // 再整体旋转和平移。期望主方向沿缝隙，地面法向垂直于底板。
 //
-// 在仓库根目录编译运行：
-// g++ -std=c++17 -O2 -Iinclude $(pkg-config --cflags pcl_common) src/WeldSeamFinderTest.cpp src/WeldSeamFinder.cpp $(pkg-config --libs pcl_common pcl_filters pcl_segmentation pcl_surface pcl_sample_consensus pcl_search pcl_kdtree) -o weld_seam_test && ./weld_seam_test
+// 在仓库根目录编译运行（Ubuntu 上需能找到 VTK 头文件和库）：
+// vtk_libs=$(ldd /usr/lib/x86_64-linux-gnu/libpcl_visualization.so | awk '/vtk/ {so=$1; sub(/\.so.*/, "", so); sub(/^lib/, "-l", so); printf "%s ", so}')
+// g++ -std=c++17 -O2 -Iinclude -I/usr/include/vtk-9.1 $(pkg-config --cflags pcl_visualization) src/WeldSeamFinderTest.cpp src/WeldSeamFinder.cpp -Wl,--no-as-needed $(pkg-config --libs pcl_visualization pcl_filters pcl_segmentation pcl_surface pcl_sample_consensus pcl_search) $vtk_libs -o weld_seam_test && ./weld_seam_test
 
 namespace {
 
@@ -99,6 +103,96 @@ bool Expect(bool condition, const std::string& message)
     return condition;
 }
 
+pcl::PointCloud<pcl::PointXYZ>::Ptr FinitePoints(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& cloud)
+{
+    pcl::PointCloud<pcl::PointXYZ>::Ptr finite(new pcl::PointCloud<pcl::PointXYZ>);
+    finite->reserve(cloud->size());
+    for (const pcl::PointXYZ& point : cloud->points) {
+        if (std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z)) {
+            finite->push_back(point);
+        }
+    }
+    finite->width = static_cast<std::uint32_t>(finite->size());
+    finite->height = 1;
+    finite->is_dense = true;
+    return finite;
+}
+
+void AddDirectionArrow(pcl::visualization::PCLVisualizer& viewer, const WeldSeamResult& result)
+{
+    const Eigen::Vector3f direction = result.direction.normalized();
+    const Eigen::Vector3f normal = result.plane.head<3>().normalized();
+    const Eigen::Vector3f side = normal.cross(direction).normalized();
+    const Eigen::Vector3f lift = normal * 6.0f;
+
+    float minOffset = 0.0f;
+    float maxOffset = 0.0f;
+    for (const pcl::PointXYZ& point : result.hollow->points) {
+        const float offset = (point.getVector3fMap() - result.centroid).dot(direction);
+        minOffset = std::min(minOffset, offset);
+        maxOffset = std::max(maxOffset, offset);
+    }
+
+    const float span = std::max(maxOffset - minOffset, 1.0f);
+    const float padding = 0.06f * span;
+    const float headLength = std::max(18.0f, 0.07f * span);
+    const Eigen::Vector3f tail = result.centroid + (minOffset - padding) * direction + lift;
+    const Eigen::Vector3f tip = result.centroid + (maxOffset + padding) * direction + lift;
+    const Eigen::Vector3f headBase = tip - direction * headLength;
+    const float headWidth = headLength * 0.38f;
+
+    auto toPoint = [](const Eigen::Vector3f& position) {
+        return pcl::PointXYZ(position.x(), position.y(), position.z());
+    };
+
+    const pcl::PointXYZ tailPoint = toPoint(tail);
+    const pcl::PointXYZ tipPoint = toPoint(tip);
+    const pcl::PointXYZ leftPoint = toPoint(headBase + side * headWidth);
+    const pcl::PointXYZ rightPoint = toPoint(headBase - side * headWidth);
+
+    viewer.addLine(tailPoint, tipPoint, 0.20, 0.95, 0.35, "seam-shaft");
+    viewer.addLine(leftPoint, tipPoint, 0.20, 0.95, 0.35, "seam-head-left");
+    viewer.addLine(rightPoint, tipPoint, 0.20, 0.95, 0.35, "seam-head-right");
+    viewer.setShapeRenderingProperties(pcl::visualization::PCL_VISUALIZER_LINE_WIDTH, 5.0, "seam-shaft");
+    viewer.setShapeRenderingProperties(pcl::visualization::PCL_VISUALIZER_LINE_WIDTH, 5.0, "seam-head-left");
+    viewer.setShapeRenderingProperties(pcl::visualization::PCL_VISUALIZER_LINE_WIDTH, 5.0, "seam-head-right");
+}
+
+void ShowClouds(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& original, const WeldSeamResult& result)
+{
+    const pcl::PointCloud<pcl::PointXYZ>::Ptr drawable = FinitePoints(original);
+
+    pcl::visualization::PCLVisualizer viewer("T-plate weld");
+    viewer.setSize(1280, 800);
+    viewer.setBackgroundColor(0.07, 0.08, 0.10);
+    viewer.addText("gray: original cloud", 16, 64, 18, 0.82, 0.84, 0.86, "label-original");
+    viewer.addText("red: hollow region", 16, 38, 18, 1.0, 0.35, 0.28, "label-hollow");
+    viewer.addText("green: principal direction", 16, 12, 18, 0.25, 0.95, 0.35, "label-direction");
+
+    pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> originalColor(drawable, 186, 194, 204);
+    viewer.addPointCloud(drawable, originalColor, "original");
+    viewer.setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 3, "original");
+
+    pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> hollowColor(result.hollow, 255, 72, 56);
+    viewer.addPointCloud(result.hollow, hollowColor, "hollow");
+    viewer.setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 8, "hollow");
+
+    AddDirectionArrow(viewer, result);
+
+    const Eigen::Vector3f normal = result.plane.head<3>().normalized();
+    const Eigen::Vector3f direction = result.direction.normalized();
+    const Eigen::Vector3f side = normal.cross(direction).normalized();
+    const Eigen::Vector3f eye = result.centroid + normal * 760.0f + side * 460.0f - direction * 40.0f;
+    viewer.setCameraPosition(eye.x(), eye.y(), eye.z(),
+                             result.centroid.x(), result.centroid.y(), result.centroid.z(),
+                             normal.x(), normal.y(), normal.z());
+    viewer.setCameraFieldOfView(0.62);
+    viewer.setCameraClipDistances(10.0, 5000.0);
+
+    std::cout << "关闭窗口后退出\n";
+    viewer.spin();
+}
+
 } // namespace
 
 int main()
@@ -152,6 +246,8 @@ int main()
         std::cerr << failures << " 项检查失败\n";
         return EXIT_FAILURE;
     }
+
     std::cout << "通过\n";
+    ShowClouds(cloud, result);
     return EXIT_SUCCESS;
 }
