@@ -1,5 +1,9 @@
 # Cursor
 
+## T 型板焊缝
+
+俯视点云上两块 T 型板的中间焊缝和两侧焊趾，见 [weld_seam/README.md](weld_seam/README.md)。
+
 ## ScaleAISShapeBy1000
 
 将 OpenCASCADE 的 `AIS_Shape*` 缩小 1000 倍，并返回一个新的 `AIS_Shape*`。
