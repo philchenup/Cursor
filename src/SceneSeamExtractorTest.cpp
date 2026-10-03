@@ -1,0 +1,791 @@
+#include "SceneSeamExtractor.h"
+
+#include <pcl/visualization/pcl_visualizer.h>
+#include <pcl/visualization/point_cloud_color_handlers.h>
+
+#include <vtkCamera.h>
+#include <vtkRenderWindow.h>
+#include <vtkRenderer.h>
+#include <vtkRendererCollection.h>
+
+#include <Eigen/Geometry>
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
+#include <iostream>
+#include <limits>
+#include <random>
+#include <string>
+#include <vector>
+
+// 合成 3 m x 18 m 场地，乱序摆放 19 个组立工件，检查 ExtractSceneSeams 提取的初始焊缝。
+//
+// 工件模板：
+//   grid    长筋 + 三块贯穿横筋 + 四块弧形肘板
+//   tee     长筋 + 一块 T 形搭接短筋
+//   ladder  两根长筋 + 三块两端搭接的横筋
+//   single  单筋 + 两块对称弧形肘板
+// 相机垂直向下拍摄，只采样底板上表面和立板顶边；立板根部一侧留阴影缺失，
+// 并混入地面倾斜、噪声、杂点、小块杂物、NaN 和零点。
+//
+// 检查通过后打开窗口：
+//   上半部分  整场点云按高度着色，工件外接框和编号，焊缝叠加显示
+//   下半部分  单个工件细节，按 n / p 切换工件
+//   红色 平角焊缝    橙色 立角焊缝    青色 立板中心线
+//
+// 在仓库根目录编译运行（Ubuntu，PCL 1.14，VTK 9.1）：
+// vtk_libs=$(ldd /usr/lib/x86_64-linux-gnu/libpcl_visualization.so | awk '/vtk/ {so=$1; sub(/\.so.*/, "", so); sub(/^lib/, "-l", so); printf "%s ", so}')
+// g++ -std=c++17 -O2 -Iinclude -I/usr/include/vtk-9.1 $(pkg-config --cflags pcl_visualization) src/SceneSeamExtractorTest.cpp src/SceneSeamExtractor.cpp -Wl,--no-as-needed $(pkg-config --libs pcl_visualization pcl_filters) $vtk_libs -o scene_seam_test && ./scene_seam_test
+//
+// 不带窗口只跑检查：./scene_seam_test --no-viewer
+
+namespace {
+
+constexpr float kPi = 3.14159265358979323846f;
+
+using Cloud = pcl::PointCloud<pcl::PointXYZ>;
+
+// ---------------------------------------------------------------------------
+// 工件模板与真值
+// ---------------------------------------------------------------------------
+
+struct RibSpec {
+    Eigen::Vector2f a;
+    Eigen::Vector2f b;
+    float thickness;
+    float height;
+    bool curved; ///< 肘板：高度从 a 端的 height 线性降到 b 端的 0.3 height
+};
+
+struct Template {
+    std::string name;
+    float baseLength;
+    float baseWidth;
+    float baseThickness;
+    std::vector<RibSpec> ribs;
+};
+
+std::vector<Template> MakeTemplates()
+{
+    std::vector<Template> templates;
+
+    Template grid{"grid", 1300.0f, 800.0f, 12.0f, {}};
+    grid.ribs.push_back({{-600.0f, 0.0f}, {600.0f, 0.0f}, 10.0f, 180.0f, false});
+    for (float x : {-350.0f, 0.0f, 350.0f}) {
+        grid.ribs.push_back({{x, -330.0f}, {x, 330.0f}, 10.0f, 140.0f, false});
+    }
+    for (float x : {-560.0f, 560.0f}) {
+        grid.ribs.push_back({{x, 5.0f}, {x, 330.0f}, 8.0f, 120.0f, true});
+        grid.ribs.push_back({{x, -5.0f}, {x, -330.0f}, 8.0f, 120.0f, true});
+    }
+    templates.push_back(grid);
+
+    Template tee{"tee", 1100.0f, 600.0f, 10.0f, {}};
+    tee.ribs.push_back({{-500.0f, 0.0f}, {500.0f, 0.0f}, 10.0f, 150.0f, false});
+    tee.ribs.push_back({{150.0f, 5.0f}, {150.0f, 260.0f}, 8.0f, 120.0f, false});
+    templates.push_back(tee);
+
+    Template ladder{"ladder", 1300.0f, 800.0f, 12.0f, {}};
+    for (float y : {-250.0f, 250.0f}) {
+        ladder.ribs.push_back({{-600.0f, y}, {600.0f, y}, 10.0f, 160.0f, false});
+    }
+    for (float x : {-400.0f, 0.0f, 400.0f}) {
+        ladder.ribs.push_back({{x, -245.0f}, {x, 245.0f}, 8.0f, 120.0f, false});
+    }
+    templates.push_back(ladder);
+
+    Template single{"single", 900.0f, 500.0f, 10.0f, {}};
+    single.ribs.push_back({{-400.0f, 0.0f}, {400.0f, 0.0f}, 12.0f, 160.0f, false});
+    single.ribs.push_back({{0.0f, 6.0f}, {0.0f, 220.0f}, 8.0f, 100.0f, true});
+    single.ribs.push_back({{0.0f, -6.0f}, {0.0f, -220.0f}, 8.0f, 100.0f, true});
+    templates.push_back(single);
+
+    return templates;
+}
+
+struct Pose {
+    Eigen::Vector2f position;
+    float yaw;
+
+    Eigen::Vector2f apply(const Eigen::Vector2f& local) const
+    {
+        const Eigen::Rotation2Df rotation(yaw);
+        return rotation * local + position;
+    }
+};
+
+struct GroundTruthSeam {
+    SeamType type;
+    Eigen::Vector3f start;
+    Eigen::Vector3f end;
+};
+
+struct PlacedWorkpiece {
+    const Template* shape;
+    Pose pose;
+    std::vector<GroundTruthSeam> seams;
+};
+
+float GroundZ(float x, float y)
+{
+    return 0.002f * x - 0.001f * y;
+}
+
+// 按与算法无关的几何规则生成真值焊缝：
+// 平焊缝 = 立板中心线两侧偏移半板厚，在相交立板处留出间隙；
+// 立焊缝 = 两块立板交点处每个有板的象限一条，高度取两板较矮者。
+std::vector<GroundTruthSeam> TemplateSeams(const Template& shape, const Pose& pose)
+{
+    constexpr float kClearance = 5.0f;
+    constexpr float kMinArm = 15.0f;
+    std::vector<GroundTruthSeam> seams;
+
+    auto lift = [&](const Eigen::Vector2f& local, float above) {
+        const Eigen::Vector2f world = pose.apply(local);
+        return Eigen::Vector3f(world.x(), world.y(), GroundZ(world.x(), world.y()) + shape.baseThickness + above);
+    };
+
+    struct Hit {
+        float tSelf;
+        float tOther;
+        const RibSpec* other;
+    };
+
+    auto hits = [&](const RibSpec& rib) {
+        std::vector<Hit> result;
+        const Eigen::Vector2f d = (rib.b - rib.a).normalized();
+        const float length = (rib.b - rib.a).norm();
+        for (const RibSpec& other : shape.ribs) {
+            if (&other == &rib) {
+                continue;
+            }
+            const Eigen::Vector2f e = (other.b - other.a).normalized();
+            const float cross = d.x() * e.y() - d.y() * e.x();
+            if (std::fabs(cross) < 0.2f) {
+                continue;
+            }
+            const Eigen::Vector2f delta = other.a - rib.a;
+            const float t = (delta.x() * e.y() - delta.y() * e.x()) / cross;
+            const float u = (delta.x() * d.y() - delta.y() * d.x()) / cross;
+            const float otherLength = (other.b - other.a).norm();
+            if (t < -other.thickness * 0.5f - 2.0f || t > length + other.thickness * 0.5f + 2.0f) {
+                continue;
+            }
+            if (u < -rib.thickness * 0.5f - 2.0f || u > otherLength + rib.thickness * 0.5f + 2.0f) {
+                continue;
+            }
+            result.push_back({t, u, &other});
+        }
+        std::sort(result.begin(), result.end(), [](const Hit& l, const Hit& r) { return l.tSelf < r.tSelf; });
+        return result;
+    };
+
+    for (const RibSpec& rib : shape.ribs) {
+        const Eigen::Vector2f d = (rib.b - rib.a).normalized();
+        const Eigen::Vector2f n(-d.y(), d.x());
+        const float length = (rib.b - rib.a).norm();
+        const std::vector<Hit> ribHits = hits(rib);
+
+        for (float side : {1.0f, -1.0f}) {
+            const Eigen::Vector2f offset = n * side * rib.thickness * 0.5f;
+            float cursor = 0.0f;
+            auto emit = [&](float t0, float t1) {
+                if (t1 - t0 < 30.0f) {
+                    return;
+                }
+                seams.push_back({SeamType::FlatFillet, lift(rib.a + d * t0 + offset, 0.0f), lift(rib.a + d * t1 + offset, 0.0f)});
+            };
+            for (const Hit& hit : ribHits) {
+                const float half = hit.other->thickness * 0.5f + kClearance;
+                if (hit.tSelf - half > cursor) {
+                    emit(cursor, std::min(hit.tSelf - half, length));
+                }
+                cursor = std::max(cursor, hit.tSelf + half);
+            }
+            if (cursor < length) {
+                emit(cursor, length);
+            }
+        }
+
+        for (const Hit& hit : ribHits) {
+            if (hit.other < &rib) {
+                continue;
+            }
+            const RibSpec& other = *hit.other;
+            const Eigen::Vector2f e = (other.b - other.a).normalized();
+            const float otherLength = (other.b - other.a).norm();
+            const Eigen::Vector2f cross = rib.a + d * hit.tSelf;
+            const float height = std::min(rib.height, other.height);
+            for (float sa : {1.0f, -1.0f}) {
+                const bool armA = sa > 0.0f ? length >= hit.tSelf + other.thickness * 0.5f + kMinArm
+                                            : 0.0f <= hit.tSelf - other.thickness * 0.5f - kMinArm;
+                if (!armA) {
+                    continue;
+                }
+                for (float sb : {1.0f, -1.0f}) {
+                    const bool armB = sb > 0.0f ? otherLength >= hit.tOther + rib.thickness * 0.5f + kMinArm
+                                                : 0.0f <= hit.tOther - rib.thickness * 0.5f - kMinArm;
+                    if (!armB) {
+                        continue;
+                    }
+                    const Eigen::Vector2f corner = cross + d * (sa * other.thickness * 0.5f) + e * (sb * rib.thickness * 0.5f);
+                    seams.push_back({SeamType::VerticalFillet, lift(corner, 0.0f), lift(corner, height)});
+                }
+            }
+        }
+    }
+    return seams;
+}
+
+// ---------------------------------------------------------------------------
+// 场景采样
+// ---------------------------------------------------------------------------
+
+struct Scene {
+    Cloud::Ptr cloud;
+    std::vector<PlacedWorkpiece> workpieces;
+};
+
+void AddPoint(Cloud& cloud, float x, float y, float z)
+{
+    cloud.push_back(pcl::PointXYZ(x, y, z));
+}
+
+void SampleWorkpiece(const Template& shape, const Pose& pose, std::mt19937& rng, Cloud& cloud)
+{
+    std::normal_distribution<float> noise(0.0f, 0.5f);
+    std::uniform_real_distribution<float> shadowWidth(0.0f, 12.0f);
+    std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+
+    std::vector<float> shadows;
+    for (std::size_t i = 0; i < shape.ribs.size(); ++i) {
+        shadows.push_back(shadowWidth(rng));
+    }
+
+    auto emit = [&](const Eigen::Vector2f& local, float above) {
+        const Eigen::Vector2f world = pose.apply(local);
+        AddPoint(cloud, world.x(), world.y(), GroundZ(world.x(), world.y()) + shape.baseThickness + above + noise(rng));
+    };
+
+    // 底板上表面：避开立板占位和阴影
+    constexpr float kStep = 4.0f;
+    for (float x = -shape.baseLength * 0.5f; x <= shape.baseLength * 0.5f; x += kStep) {
+        for (float y = -shape.baseWidth * 0.5f; y <= shape.baseWidth * 0.5f; y += kStep) {
+            const Eigen::Vector2f p(x, y);
+            bool blocked = false;
+            for (std::size_t i = 0; i < shape.ribs.size() && !blocked; ++i) {
+                const RibSpec& rib = shape.ribs[i];
+                const Eigen::Vector2f d = (rib.b - rib.a).normalized();
+                const Eigen::Vector2f n(-d.y(), d.x());
+                const float t = d.dot(p - rib.a);
+                const float lateral = n.dot(p - rib.a);
+                if (t < 0.0f || t > (rib.b - rib.a).norm()) {
+                    continue;
+                }
+                if (std::fabs(lateral) <= rib.thickness * 0.5f) {
+                    blocked = true;
+                } else if (lateral > 0.0f && lateral <= rib.thickness * 0.5f + shadows[i]) {
+                    blocked = true;
+                }
+            }
+            if (!blocked) {
+                emit(p, 0.0f);
+            }
+        }
+    }
+
+    // 立板顶边：相机只看到厚度方向的一条窄带
+    for (const RibSpec& rib : shape.ribs) {
+        const Eigen::Vector2f d = (rib.b - rib.a).normalized();
+        const Eigen::Vector2f n(-d.y(), d.x());
+        const float length = (rib.b - rib.a).norm();
+        for (float t = 0.0f; t <= length; t += kStep) {
+            const float ratio = t / length;
+            const float height = rib.curved ? rib.height * (1.0f - 0.7f * ratio) : rib.height;
+            for (float lateral = -rib.thickness * 0.5f + 1.0f; lateral <= rib.thickness * 0.5f; lateral += 3.0f) {
+                emit(rib.a + d * t + n * lateral, height);
+            }
+            // 内角多次反射产生的悬空假点
+            if (unit(rng) < 0.03f) {
+                emit(rib.a + d * t + n * (rib.thickness * 0.5f + 3.0f), unit(rng) * 40.0f);
+            }
+        }
+    }
+}
+
+Scene BuildScene()
+{
+    Scene scene;
+    scene.cloud.reset(new Cloud);
+    std::mt19937 rng(20261003u);
+    std::normal_distribution<float> noise(0.0f, 0.5f);
+    std::uniform_real_distribution<float> jitter(-100.0f, 100.0f);
+    std::uniform_real_distribution<float> yaw(0.0f, 2.0f * kPi);
+
+    static const std::vector<Template> templates = MakeTemplates();
+
+    // 地面：3.2 m x 18 m，略有倾斜
+    constexpr float kGroundStep = 8.0f;
+    for (float x = 0.0f; x <= 18000.0f; x += kGroundStep) {
+        for (float y = 0.0f; y <= 3200.0f; y += kGroundStep) {
+            AddPoint(*scene.cloud, x, y, GroundZ(x, y) + noise(rng));
+        }
+    }
+
+    // 20 个槽位放 19 个工件
+    std::vector<int> slots(20);
+    for (int i = 0; i < 20; ++i) {
+        slots[static_cast<std::size_t>(i)] = i;
+    }
+    std::shuffle(slots.begin(), slots.end(), rng);
+    slots.resize(19);
+    std::sort(slots.begin(), slots.end());
+
+    for (std::size_t i = 0; i < slots.size(); ++i) {
+        const int slot = slots[i];
+        const int column = slot % 10;
+        const int row = slot / 10;
+        Pose pose;
+        pose.position = Eigen::Vector2f(900.0f + 1800.0f * static_cast<float>(column) + jitter(rng),
+                                        800.0f + 1600.0f * static_cast<float>(row) + jitter(rng));
+        pose.yaw = yaw(rng);
+        const Template& shape = templates[i % templates.size()];
+        SampleWorkpiece(shape, pose, rng, *scene.cloud);
+        scene.workpieces.push_back({&shape, pose, TemplateSeams(shape, pose)});
+    }
+
+    // 杂物：小块方料，面积低于工件下限
+    for (int i = 0; i < 4; ++i) {
+        const float cx = 1800.0f * static_cast<float>(2 * i + 1) + 400.0f;
+        const float cy = 1600.0f;
+        for (float x = -60.0f; x <= 60.0f; x += 4.0f) {
+            for (float y = -60.0f; y <= 60.0f; y += 4.0f) {
+                AddPoint(*scene.cloud, cx + x, cy + y, GroundZ(cx + x, cy + y) + 60.0f + noise(rng));
+            }
+        }
+    }
+
+    // 离群点、零点、NaN
+    std::uniform_real_distribution<float> ux(0.0f, 18000.0f);
+    std::uniform_real_distribution<float> uy(0.0f, 3200.0f);
+    std::uniform_real_distribution<float> uz(50.0f, 600.0f);
+    for (int i = 0; i < 3000; ++i) {
+        AddPoint(*scene.cloud, ux(rng), uy(rng), uz(rng));
+    }
+    for (int i = 0; i < 500; ++i) {
+        AddPoint(*scene.cloud, 0.0f, 0.0f, 0.0f);
+        AddPoint(*scene.cloud, std::numeric_limits<float>::quiet_NaN(), 1.0f, 1.0f);
+    }
+
+    scene.cloud->width = static_cast<std::uint32_t>(scene.cloud->size());
+    scene.cloud->height = 1;
+    scene.cloud->is_dense = false;
+    return scene;
+}
+
+// ---------------------------------------------------------------------------
+// 比对
+// ---------------------------------------------------------------------------
+
+bool Expect(bool condition, const std::string& message)
+{
+    if (!condition) {
+        std::cerr << "失败: " << message << '\n';
+    }
+    return condition;
+}
+
+bool SameSeam(const InitialSeam& detected, const GroundTruthSeam& truth, float tolerance)
+{
+    if (detected.type != truth.type) {
+        return false;
+    }
+    const bool direct = (detected.start - truth.start).norm() <= tolerance && (detected.end - truth.end).norm() <= tolerance;
+    const bool swapped = (detected.start - truth.end).norm() <= tolerance && (detected.end - truth.start).norm() <= tolerance;
+    return direct || swapped;
+}
+
+struct MatchReport {
+    int truthTotal = 0;
+    int truthMatched = 0;
+    int detectedTotal = 0;
+    int detectedMatched = 0;
+    int truthFlat = 0;
+    int truthVertical = 0;
+    int detectedFlat = 0;
+    int detectedVertical = 0;
+};
+
+// 真值与检出焊缝之间的端点误差，取两种端点配对中较小者。
+float SeamError(const InitialSeam& detected, const GroundTruthSeam& truth)
+{
+    const float direct = std::max((detected.start - truth.start).norm(), (detected.end - truth.end).norm());
+    const float swapped = std::max((detected.start - truth.end).norm(), (detected.end - truth.start).norm());
+    return std::min(direct, swapped);
+}
+
+MatchReport CompareSeams(const Scene& scene, const SceneSeamResult& result, float tolerance)
+{
+    MatchReport report;
+    std::vector<std::uint8_t> detectedHit(result.seams.size(), 0);
+    int reported = 0;
+    for (std::size_t pieceIndex = 0; pieceIndex < scene.workpieces.size(); ++pieceIndex) {
+        const PlacedWorkpiece& piece = scene.workpieces[pieceIndex];
+        for (const GroundTruthSeam& truth : piece.seams) {
+            ++report.truthTotal;
+            (truth.type == SeamType::FlatFillet ? report.truthFlat : report.truthVertical) += 1;
+            bool matched = false;
+            float nearest = std::numeric_limits<float>::max();
+            for (std::size_t i = 0; i < result.seams.size(); ++i) {
+                if (result.seams[i].type == truth.type) {
+                    nearest = std::min(nearest, SeamError(result.seams[i], truth));
+                }
+                if (SameSeam(result.seams[i], truth, tolerance)) {
+                    detectedHit[i] = 1;
+                    matched = true;
+                }
+            }
+            report.truthMatched += matched ? 1 : 0;
+            if (!matched && reported < 12) {
+                ++reported;
+                std::cout << "未匹配 " << piece.shape->name << " #" << pieceIndex
+                          << (truth.type == SeamType::FlatFillet ? " 平焊缝 " : " 立焊缝 ")
+                          << "长度 " << (truth.end - truth.start).norm() << " mm，最近检出误差 " << nearest << " mm\n";
+                if (std::getenv("SEAM_DEBUG")) {
+                    const InitialSeam* best = nullptr;
+                    for (const InitialSeam& seam : result.seams) {
+                        if (seam.type == truth.type && (!best || SeamError(seam, truth) < SeamError(*best, truth))) {
+                            best = &seam;
+                        }
+                    }
+                    std::cout << "  真值 " << truth.start.transpose() << " -> " << truth.end.transpose() << '\n';
+                    if (best) {
+                        std::cout << "  检出 " << best->start.transpose() << " -> " << best->end.transpose()
+                                  << "  长度 " << best->length() << '\n';
+                    }
+                }
+            }
+        }
+    }
+    report.detectedTotal = static_cast<int>(result.seams.size());
+    for (std::size_t i = 0; i < result.seams.size(); ++i) {
+        (result.seams[i].type == SeamType::FlatFillet ? report.detectedFlat : report.detectedVertical) += 1;
+        report.detectedMatched += detectedHit[i] ? 1 : 0;
+    }
+    return report;
+}
+
+// ---------------------------------------------------------------------------
+// 可视化
+// ---------------------------------------------------------------------------
+
+// 按高出地面的高度着色：地面深蓝灰，底板青绿，立板顶边橙黄。
+pcl::PointCloud<pcl::PointXYZRGB>::Ptr ColorByHeight(const Cloud& cloud, const Eigen::Vector4f& groundPlane)
+{
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr colored(new pcl::PointCloud<pcl::PointXYZRGB>);
+    colored->reserve(cloud.size());
+    constexpr float kMaxHeight = 220.0f;
+    for (const pcl::PointXYZ& p : cloud.points) {
+        const float above = p.z - PlaneZ(groundPlane, p.x, p.y);
+        const float u = std::clamp(above / kMaxHeight, 0.0f, 1.0f);
+        pcl::PointXYZRGB q;
+        q.x = p.x;
+        q.y = p.y;
+        q.z = p.z;
+        if (u < 0.5f) {
+            const float v = u * 2.0f;
+            q.r = static_cast<std::uint8_t>(55.0f + (40.0f - 55.0f) * v);
+            q.g = static_cast<std::uint8_t>(70.0f + (190.0f - 70.0f) * v);
+            q.b = static_cast<std::uint8_t>(100.0f + (170.0f - 100.0f) * v);
+        } else {
+            const float v = (u - 0.5f) * 2.0f;
+            q.r = static_cast<std::uint8_t>(40.0f + (255.0f - 40.0f) * v);
+            q.g = static_cast<std::uint8_t>(190.0f + (200.0f - 190.0f) * v);
+            q.b = static_cast<std::uint8_t>(170.0f + (60.0f - 170.0f) * v);
+        }
+        colored->push_back(q);
+    }
+    colored->width = static_cast<std::uint32_t>(colored->size());
+    colored->height = 1;
+    return colored;
+}
+
+pcl::PointXYZ ToPoint(const Eigen::Vector3f& p)
+{
+    return pcl::PointXYZ(p.x(), p.y(), p.z());
+}
+
+void AddSeamShapes(pcl::visualization::PCLVisualizer& viewer,
+                   const std::vector<InitialSeam, Eigen::aligned_allocator<InitialSeam>>& seams,
+                   const std::string& prefix,
+                   double width,
+                   int viewport)
+{
+    for (std::size_t i = 0; i < seams.size(); ++i) {
+        const InitialSeam& seam = seams[i];
+        const std::string id = prefix + std::to_string(i);
+        if (seam.type == SeamType::FlatFillet) {
+            viewer.addLine(ToPoint(seam.start), ToPoint(seam.end), 1.0, 0.25, 0.2, id, viewport);
+        } else {
+            viewer.addLine(ToPoint(seam.start), ToPoint(seam.end), 1.0, 0.65, 0.1, id, viewport);
+        }
+        viewer.setShapeRenderingProperties(pcl::visualization::PCL_VISUALIZER_LINE_WIDTH, width, id, viewport);
+    }
+}
+
+struct DetailView {
+    pcl::visualization::PCLVisualizer* viewer = nullptr;
+    const SceneSeamResult* result = nullptr;
+    int viewport = 0;
+    int current = 0;
+
+    void show()
+    {
+        viewer->removeAllPointClouds(viewport);
+        viewer->removeAllShapes(viewport);
+        if (result->workpieces.empty()) {
+            return;
+        }
+        const Workpiece& piece = result->workpieces[static_cast<std::size_t>(current)];
+
+        const pcl::PointCloud<pcl::PointXYZRGB>::Ptr colored = ColorByHeight(*piece.cloud, result->groundPlane);
+        pcl::visualization::PointCloudColorHandlerRGBField<pcl::PointXYZRGB> color(colored);
+        viewer->addPointCloud(colored, color, "detail-cloud", viewport);
+        viewer->setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 2, "detail-cloud", viewport);
+
+        for (std::size_t i = 0; i < piece.ribs.size(); ++i) {
+            const RibSegment& rib = piece.ribs[i];
+            const std::string id = "detail-rib" + std::to_string(i);
+            const float lift = 2.0f;
+            viewer->addLine(ToPoint(Eigen::Vector3f(rib.start.x(), rib.start.y(), PlaneZ(piece.basePlane, rib.start.x(), rib.start.y()) + lift)),
+                            ToPoint(Eigen::Vector3f(rib.end.x(), rib.end.y(), PlaneZ(piece.basePlane, rib.end.x(), rib.end.y()) + lift)),
+                            0.2, 0.9, 1.0, id, viewport);
+        }
+        AddSeamShapes(*viewer, piece.seams, "detail-seam", 4.0, viewport);
+
+        int flat = 0;
+        int vertical = 0;
+        for (const InitialSeam& seam : piece.seams) {
+            (seam.type == SeamType::FlatFillet ? flat : vertical) += 1;
+        }
+        const std::string text = "workpiece " + std::to_string(piece.id) + " / " + std::to_string(result->workpieces.size() - 1)
+            + "   ribs " + std::to_string(piece.ribs.size()) + "   flat " + std::to_string(flat) + "   vertical "
+            + std::to_string(vertical) + "   base " + std::to_string(static_cast<int>(std::round(piece.baseHeight)))
+            + " mm   [n] next  [p] previous";
+        viewer->addText(text, 16, 14, 16, 0.9, 0.9, 0.9, "detail-text", viewport);
+
+        const Eigen::Vector3f center(piece.center.x(), piece.center.y(), PlaneZ(piece.basePlane, piece.center.x(), piece.center.y()));
+        const float radius = std::max(400.0f, 0.5f * (piece.maxXY - piece.minXY).norm());
+        // 视线斜向穿过最长立板，避免和立板平行
+        const Eigen::Vector2f lateral = Eigen::Rotation2Df(piece.yawRad) * Eigen::Vector2f(-1.3f, -1.7f);
+        const Eigen::Vector3f eye = center + Eigen::Vector3f(lateral.x(), lateral.y(), 1.2f) * radius;
+        viewer->setCameraPosition(eye.x(), eye.y(), eye.z(), center.x(), center.y(), center.z(), 0.0, 0.0, 1.0, viewport);
+        viewer->setCameraFieldOfView(0.5, viewport);
+        viewer->setCameraClipDistances(10.0, 30000.0, viewport);
+    }
+};
+
+vtkRenderer* RendererAt(pcl::visualization::PCLVisualizer& viewer, int viewport)
+{
+    vtkRendererCollection* renderers = viewer.getRenderWindow()->GetRenderers();
+    renderers->InitTraversal();
+    int index = 0;
+    while (vtkRenderer* renderer = renderers->GetNextItem()) {
+        if (index == viewport) {
+            return renderer;
+        }
+        ++index;
+    }
+    return nullptr;
+}
+
+void ShowScene(const SceneSeamResult& result)
+{
+    pcl::visualization::PCLVisualizer viewer("Scene seams");
+    viewer.setSize(1600, 900);
+    viewer.setBackgroundColor(0.07, 0.08, 0.10);
+
+    int overview = 0;
+    int detail = 0;
+    viewer.createViewPort(0.0, 0.5, 1.0, 1.0, overview);
+    viewer.createViewPort(0.0, 0.0, 1.0, 0.5, detail);
+    viewer.createViewPortCamera(overview);
+    viewer.createViewPortCamera(detail);
+
+    const pcl::PointCloud<pcl::PointXYZRGB>::Ptr colored = ColorByHeight(*result.cloud, result.groundPlane);
+    pcl::visualization::PointCloudColorHandlerRGBField<pcl::PointXYZRGB> rgb(colored);
+    viewer.addPointCloud(colored, rgb, "scene", overview);
+    viewer.setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 1, "scene", overview);
+
+    for (const Workpiece& piece : result.workpieces) {
+        const float z0 = PlaneZ(result.groundPlane, piece.center.x(), piece.center.y());
+        const std::string id = "box" + std::to_string(piece.id);
+        viewer.addCube(piece.minXY.x(), piece.maxXY.x(), piece.minXY.y(), piece.maxXY.y(), z0, z0 + 220.0f, 0.3, 0.8, 0.4, id, overview);
+        viewer.setShapeRenderingProperties(pcl::visualization::PCL_VISUALIZER_REPRESENTATION,
+                                           pcl::visualization::PCL_VISUALIZER_REPRESENTATION_WIREFRAME, id, overview);
+        viewer.addText3D(std::to_string(piece.id), pcl::PointXYZ(piece.minXY.x(), piece.maxXY.y() + 40.0f, z0 + 220.0f), 120.0,
+                         0.3, 0.8, 0.4, "label" + std::to_string(piece.id), overview);
+    }
+    AddSeamShapes(viewer, result.seams, "seam", 2.0, overview);
+
+    viewer.addText("scene: height colored cloud, green boxes = workpieces, red = flat fillet, orange = vertical fillet",
+                   16, 14, 16, 0.9, 0.9, 0.9, "overview-text", overview);
+
+    Eigen::Vector2f minXY(std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+    Eigen::Vector2f maxXY = -minXY;
+    for (const pcl::PointXYZ& p : result.cloud->points) {
+        minXY = minXY.cwiseMin(Eigen::Vector2f(p.x, p.y));
+        maxXY = maxXY.cwiseMax(Eigen::Vector2f(p.x, p.y));
+    }
+    const Eigen::Vector2f center = 0.5f * (minXY + maxXY);
+    const Eigen::Vector2f span = maxXY - minXY;
+    viewer.setCameraPosition(center.x(), center.y(), 20000.0, center.x(), center.y(), 0.0, 0.0, 1.0, 0.0, overview);
+    viewer.setCameraClipDistances(100.0, 60000.0, overview);
+    if (vtkRenderer* renderer = RendererAt(viewer, overview)) {
+        constexpr float kAspect = 1600.0f / 450.0f;
+        renderer->GetActiveCamera()->SetParallelProjection(1);
+        renderer->GetActiveCamera()->SetParallelScale(std::max(span.y() * 0.5f, span.x() * 0.5f / kAspect) * 1.08f);
+    }
+
+    DetailView detailView;
+    detailView.viewer = &viewer;
+    detailView.result = &result;
+    detailView.viewport = detail;
+    detailView.show();
+
+    viewer.registerKeyboardCallback([&detailView](const pcl::visualization::KeyboardEvent& event) {
+        if (!event.keyDown() || detailView.result->workpieces.empty()) {
+            return;
+        }
+        const int count = static_cast<int>(detailView.result->workpieces.size());
+        if (event.getKeySym() == "n") {
+            detailView.current = (detailView.current + 1) % count;
+            detailView.show();
+        } else if (event.getKeySym() == "p") {
+            detailView.current = (detailView.current + count - 1) % count;
+            detailView.show();
+        }
+    });
+
+    if (const char* snapshot = std::getenv("SEAM_SNAPSHOT")) {
+        for (int i = 0; i < 5; ++i) {
+            viewer.spinOnce(100, true);
+        }
+        viewer.saveScreenshot(snapshot);
+        std::cout << "截图已保存到 " << snapshot << '\n';
+        return;
+    }
+
+    std::cout << "按 n / p 切换工件，关闭窗口后退出\n";
+    viewer.spin();
+}
+
+} // namespace
+
+int main(int argc, char** argv)
+{
+    bool showViewer = true;
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--no-viewer") {
+            showViewer = false;
+        }
+    }
+
+    int failures = 0;
+
+    const SceneSeamResult nullResult = ExtractSceneSeams(Cloud::ConstPtr());
+    failures += !Expect(!nullResult.success, "空指针应失败");
+
+    const Scene scene = BuildScene();
+    std::cout << "场景点数 " << scene.cloud->size() << "，工件 " << scene.workpieces.size() << " 个\n";
+
+    const auto begin = std::chrono::steady_clock::now();
+    const SceneSeamResult result = ExtractSceneSeams(scene.cloud);
+    const auto end = std::chrono::steady_clock::now();
+    std::cout << "耗时 " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " ms，"
+              << result.message << '\n';
+
+    failures += !Expect(result.success, "提取应成功");
+    failures += !Expect(result.workpieces.size() == scene.workpieces.size(), "工件数量应为 19");
+
+    const Eigen::Vector3f groundNormal = result.groundPlane.head<3>().normalized();
+    const Eigen::Vector3f expectedNormal = Eigen::Vector3f(-0.002f, 0.001f, 1.0f).normalized();
+    std::cout << "地面法向 " << groundNormal.transpose() << "  对齐 " << groundNormal.dot(expectedNormal) << '\n';
+    failures += !Expect(groundNormal.dot(expectedNormal) > 0.9999f, "地面倾斜应被估计出来");
+
+    int centerMatched = 0;
+    for (const PlacedWorkpiece& truth : scene.workpieces) {
+        for (const Workpiece& piece : result.workpieces) {
+            if ((piece.center - truth.pose.position).norm() < 150.0f) {
+                ++centerMatched;
+                const float expectedBase = truth.shape->baseThickness;
+                if (std::fabs(piece.baseHeight - expectedBase) > 3.0f) {
+                    std::cerr << "工件 " << piece.id << " 底板高度 " << piece.baseHeight << " 期望 " << expectedBase << '\n';
+                    ++failures;
+                }
+                break;
+            }
+        }
+    }
+    failures += !Expect(centerMatched == static_cast<int>(scene.workpieces.size()), "每个工件都应被定位");
+
+    if (std::getenv("SEAM_DEBUG")) {
+        for (const Workpiece& piece : result.workpieces) {
+            const PlacedWorkpiece* truth = nullptr;
+            for (const PlacedWorkpiece& candidate : scene.workpieces) {
+                if ((piece.center - candidate.pose.position).norm() < 150.0f) {
+                    truth = &candidate;
+                }
+            }
+            std::cout << "工件 " << piece.id << (truth ? " " + truth->shape->name : std::string(" ?")) << "  yaw "
+                      << piece.yawRad * 180.0f / kPi << "  立板 " << piece.ribs.size() << '\n';
+            if (truth) {
+                for (const RibSpec& rib : truth->shape->ribs) {
+                    const Eigen::Vector2f a = truth->pose.apply(rib.a);
+                    const Eigen::Vector2f b = truth->pose.apply(rib.b);
+                    std::cout << "  真值 " << a.transpose() << " -> " << b.transpose() << "  t " << rib.thickness << "  h "
+                              << rib.height << '\n';
+                }
+            }
+            for (const RibSegment& rib : piece.ribs) {
+                std::cout << "  检出 " << rib.start.transpose() << " -> " << rib.end.transpose() << "  t " << rib.thickness
+                          << "  h " << rib.height << "  conf " << rib.confidence << '\n';
+            }
+        }
+    }
+
+    const MatchReport report = CompareSeams(scene, result, 20.0f);
+    const float recall = report.truthTotal > 0 ? static_cast<float>(report.truthMatched) / report.truthTotal : 0.0f;
+    const float precision = report.detectedTotal > 0 ? static_cast<float>(report.detectedMatched) / report.detectedTotal : 0.0f;
+    std::cout << "真值焊缝 " << report.truthTotal << "（平 " << report.truthFlat << "，立 " << report.truthVertical << "）"
+              << "  检出 " << report.detectedTotal << "（平 " << report.detectedFlat << "，立 " << report.detectedVertical << "）\n"
+              << "召回 " << recall << "  精度 " << precision << '\n';
+    failures += !Expect(recall >= 0.95f, "焊缝召回应不低于 0.95");
+    failures += !Expect(precision >= 0.95f, "焊缝精度应不低于 0.95");
+
+    for (const InitialSeam& seam : result.seams) {
+        const float groundClearance = std::min(seam.start.z(), seam.end.z()) - GroundZ(seam.start.x(), seam.start.y());
+        if (groundClearance < 5.0f) {
+            std::cerr << "焊缝落到地面以下: z 高出地面 " << groundClearance << '\n';
+            ++failures;
+            break;
+        }
+    }
+
+    if (failures != 0) {
+        std::cerr << failures << " 项检查失败\n";
+        if (showViewer) {
+            ShowScene(result);
+        }
+        return EXIT_FAILURE;
+    }
+
+    std::cout << "通过\n";
+    if (showViewer) {
+        ShowScene(result);
+    }
+    return EXIT_SUCCESS;
+}
