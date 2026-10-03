@@ -14,16 +14,21 @@
  * @brief 整场点云初始焊缝提取参数。所有长度单位为毫米，角度单位为度。
  *
  * 适用场景：3D 相机光轴垂直地面向下拍摄，组立工件底板平放在地面或垫块上，
- * 立板垂直于底板。整场点云已拼接到同一坐标系，Z 轴与地面法向大致一致。
+ * 立板垂直于底板。整场点云已拼接到同一坐标系，Z 轴与地面法向大致平行；
+ * 默认按相机坐标系处理（Z 轴指向地面，地面 Z 最大），内部翻转为 Z 向上计算，
+ * 所有输出（平面、焊缝、点云）再翻转回输入坐标系。
  */
 struct SceneSeamParams {
+    // 坐标系
+    bool zAxisDown = true;              ///< 输入 Z 轴指向地面（相机深度方向）；点云 Z 轴向上时设为 false
+
     // 预处理
     float voxelSize = 4.0f;             ///< 体素下采样边长，<= 0 关闭
     float sceneResolution = 5.0f;       ///< 整场高度图栅格边长，用于分割工件
     float workpieceResolution = 2.0f;   ///< 单个工件高度图栅格边长，用于找底板和立板
 
     // 地面
-    float groundHeight = std::numeric_limits<float>::quiet_NaN(); ///< 已标定地面高度；非有限值时自动估计
+    float groundHeight = std::numeric_limits<float>::quiet_NaN(); ///< 已标定地面高度（输入坐标系的 Z 值）；非有限值时自动估计
     float groundThreshold = 3.0f;       ///< 高出地面超过该值的栅格视为物体，应小于最薄底板厚度
     float groundFitTolerance = 4.0f;    ///< 地面平面拟合内点容差
     float maxGroundTiltDeg = 5.0f;      ///< 地面法向与 Z 轴最大夹角，超出则退回水平面
@@ -134,8 +139,12 @@ float PlaneZ(const Eigen::Vector4f& plane, float x, float y);
  * 6. 立板两侧偏移半板厚得到平角焊缝，立板交点处得到立角焊缝，并给出置信度。
  *
  * 全流程确定性，同一输入得到同一输出。失败时 success 为 false 并在 message 中说明。
+ * 输出与输入点云处于同一坐标系（见 SceneSeamParams::zAxisDown）。
  */
 SceneSeamResult ExtractSceneSeams(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& cloud,
                                   const SceneSeamParams& params = SceneSeamParams());
+
+/// 把结果中的点云、平面和焊缝整体做 z -> -z 变换（相机坐标系与 Z 向上坐标系互换，用于显示或对接机器人坐标系）。
+void FlipResultZ(SceneSeamResult& result);
 
 #endif // SCENE_SEAM_EXTRACTOR_H

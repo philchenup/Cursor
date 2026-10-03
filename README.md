@@ -21,10 +21,14 @@ Handle(AIS_Shape) scaledHandle = ScaleAISShapeBy1000(ais);
 的起止点、接近方向和置信度。流程全部为确定性算法（高度图 + 直方图 + 最小二乘平面 + 形态学 + Hough），
 不依赖随机采样。
 
+默认按相机坐标系处理：Z 轴指向地面（地面 Z 最大，工件越高 Z 越小）。内部翻转为 Z 向上计算，输出再翻转回
+输入坐标系，因此焊缝坐标可直接与点云对应。点云已经是 Z 向上时，把 `zAxisDown` 设为 `false`。
+
 ```cpp
 #include "SceneSeamExtractor.h"
 
 SceneSeamParams params;              // 默认参数适用于 mm 单位、底板 ≥ 0.2 m 的工件
+params.zAxisDown = true;             // 相机坐标系（默认）；世界坐标系 Z 向上时设为 false
 SceneSeamResult result = ExtractSceneSeams(cloud, params);
 for (const Workpiece& piece : result.workpieces)
     for (const InitialSeam& seam : piece.seams)
@@ -43,12 +47,15 @@ cmake --build build -j
 直接处理拼接后的整场 PLY 点云（跳过合成场景和真值检查）：
 
 ```bash
-./build/scene_seam_test --ply scene.ply                        # 点云单位 mm
+./build/scene_seam_test --ply scene.ply                        # 相机坐标系（Z 指向地面），单位 mm
+./build/scene_seam_test --ply scene.ply --z-up                 # 点云 Z 轴向上
 ./build/scene_seam_test --ply scene.ply --scale 1000           # 点云单位 m，内部换算成 mm
-./build/scene_seam_test --ply scene.ply --export seams.csv     # 焊缝写入 CSV（起止点、接近方向、置信度）
+./build/scene_seam_test --ply scene.ply --export seams.csv     # 焊缝写入 CSV（输入坐标系）
 ./build/scene_seam_test --ply scene.ply --no-viewer            # 只打印结果不开窗口
-./build/scene_seam_test --no-viewer --save-ply scene.ply       # 把合成场景另存为 PLY，用于验证流程
+./build/scene_seam_test --no-viewer --save-ply scene.ply       # 把合成场景按相机坐标系另存为 PLY，用于验证流程
 ```
+
+Z 轴方向设错的典型症状：只分割出一个覆盖整个视场的“工件”，真实工件在其点云中表现为空洞，焊缝为 0 条。
 
 常用参数覆盖（单位 mm）：`--voxel 4`、`--rib-min-height 20`、`--rib-min-thickness 4`、`--rib-max-thickness 30`、
 `--min-area 50000`，按相机分辨率和工件板厚、筋高调整。

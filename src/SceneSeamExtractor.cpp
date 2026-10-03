@@ -1072,6 +1072,35 @@ CloudPtr Preprocess(const Cloud::ConstPtr& cloud, const SceneSeamParams& params)
     return down;
 }
 
+// ---------------------------------------------------------------------------
+// Z 轴翻转：相机坐标系（Z 指向地面）与计算用的 Z 向上坐标系互换
+// ---------------------------------------------------------------------------
+
+void NegateZ(Cloud& cloud)
+{
+    for (pcl::PointXYZ& p : cloud.points) {
+        p.z = -p.z;
+    }
+}
+
+// ax + by + cz + d = 0 在 z' = -z 下变为 ax + by - cz' + d = 0
+Eigen::Vector4f NegateZ(const Eigen::Vector4f& plane)
+{
+    return Eigen::Vector4f(plane[0], plane[1], -plane[2], plane[3]);
+}
+
+Eigen::Vector3f NegateZ(const Eigen::Vector3f& v)
+{
+    return Eigen::Vector3f(v.x(), v.y(), -v.z());
+}
+
+void NegateZ(InitialSeam& seam)
+{
+    seam.start = NegateZ(seam.start);
+    seam.end = NegateZ(seam.end);
+    seam.approachSide = NegateZ(seam.approachSide);
+}
+
 SceneSeamResult ExtractImpl(const Cloud::ConstPtr& input, const SceneSeamParams& params)
 {
     SceneSeamResult result;
@@ -1081,6 +1110,9 @@ SceneSeamResult ExtractImpl(const Cloud::ConstPtr& input, const SceneSeamParams&
     }
 
     result.cloud = Preprocess(input, params);
+    if (params.zAxisDown) {
+        NegateZ(*result.cloud);
+    }
     const Cloud& cloud = *result.cloud;
     if (cloud.size() < 100) {
         result.message = "有效点过少";
@@ -1094,7 +1126,7 @@ SceneSeamResult ExtractImpl(const Cloud::ConstPtr& input, const SceneSeamParams&
     }
 
     if (std::isfinite(params.groundHeight)) {
-        result.groundPlane = HorizontalPlane(params.groundHeight);
+        result.groundPlane = HorizontalPlane(params.zAxisDown ? -params.groundHeight : params.groundHeight);
     } else if (!FitDominantPlane(grid, nullptr, params.groundFitTolerance, params.maxGroundTiltDeg, result.groundPlane)) {
         result.message = "地面估计失败";
         return result;
@@ -1227,10 +1259,35 @@ float PlaneZ(const Eigen::Vector4f& plane, float x, float y)
 SceneSeamResult ExtractSceneSeams(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& cloud, const SceneSeamParams& params)
 {
     try {
-        return ExtractImpl(cloud, params);
+        SceneSeamResult result = ExtractImpl(cloud, params);
+        if (params.zAxisDown) {
+            FlipResultZ(result);
+        }
+        return result;
     } catch (const std::exception& error) {
         SceneSeamResult failed;
         failed.message = std::string("异常: ") + error.what();
         return failed;
+    }
+}
+
+// 高度类标量（baseHeight、ribHeight）不随坐标系翻转改变
+void FlipResultZ(SceneSeamResult& result)
+{
+    if (result.cloud) {
+        NegateZ(*result.cloud);
+    }
+    result.groundPlane = NegateZ(result.groundPlane);
+    for (Workpiece& piece : result.workpieces) {
+        piece.basePlane = NegateZ(piece.basePlane);
+        if (piece.cloud) {
+            NegateZ(*piece.cloud);
+        }
+        for (InitialSeam& seam : piece.seams) {
+            NegateZ(seam);
+        }
+    }
+    for (InitialSeam& seam : result.seams) {
+        NegateZ(seam);
     }
 }

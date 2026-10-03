@@ -43,12 +43,13 @@
 // g++ -std=c++17 -O2 -Iinclude -I/usr/include/vtk-9.1 $(pkg-config --cflags pcl_visualization) src/SceneSeamExtractorTest.cpp src/SceneSeamExtractor.cpp -Wl,--no-as-needed $(pkg-config --libs pcl_visualization pcl_filters pcl_io) $vtk_libs -o scene_seam_test && ./scene_seam_test
 //
 // 不带窗口只跑检查：./scene_seam_test --no-viewer
-// 把合成场景另存为 PLY：./scene_seam_test --no-viewer --save-ply scene.ply
+// 把合成场景按相机坐标系（Z 指向地面）另存为 PLY：./scene_seam_test --no-viewer --save-ply scene.ply
 //
 // 直接处理拼接后的整场 PLY（跳过合成场景和真值检查）：
-//   ./scene_seam_test --ply scene.ply                       点云单位 mm
+//   ./scene_seam_test --ply scene.ply                       相机坐标系，Z 指向地面，单位 mm
+//   ./scene_seam_test --ply scene.ply --z-up                点云 Z 轴向上
 //   ./scene_seam_test --ply scene.ply --scale 1000          点云单位 m，内部换算成 mm
-//   ./scene_seam_test --ply scene.ply --export seams.csv    焊缝写入 CSV
+//   ./scene_seam_test --ply scene.ply --export seams.csv    焊缝写入 CSV（输入坐标系）
 // 可按相机分辨率和工件尺寸覆盖参数：
 //   --voxel 4  --rib-min-height 20  --rib-min-thickness 4  --rib-max-thickness 30  --min-area 50000
 
@@ -768,6 +769,8 @@ bool ParseOptions(int argc, char** argv, Options& options)
         bool ok = true;
         if (arg == "--no-viewer") {
             options.showViewer = false;
+        } else if (arg == "--z-up") {
+            options.params.zAxisDown = false;
         } else if (arg == "--ply") {
             const char* text = value(i);
             ok = text != nullptr;
@@ -817,10 +820,11 @@ int RunOnPly(const Options& options)
             p.z *= options.scale;
         }
     }
-    std::cout << "读入 " << cloud->size() << " 点: " << options.plyPath << '\n';
+    std::cout << "读入 " << cloud->size() << " 点: " << options.plyPath << (options.params.zAxisDown ? "（Z 指向地面）" : "（Z 向上）")
+              << '\n';
 
     const auto begin = std::chrono::steady_clock::now();
-    const SceneSeamResult result = ExtractSceneSeams(cloud, options.params);
+    SceneSeamResult result = ExtractSceneSeams(cloud, options.params);
     const auto end = std::chrono::steady_clock::now();
     std::cout << "耗时 " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " ms\n";
     PrintResult(result);
@@ -828,10 +832,14 @@ int RunOnPly(const Options& options)
         return EXIT_FAILURE;
     }
 
+    // CSV 保持输入坐标系；可视化按 Z 向上绘制
     if (!options.exportPath.empty() && !ExportSeamsCsv(result, options.exportPath)) {
         return EXIT_FAILURE;
     }
     if (options.showViewer) {
+        if (options.params.zAxisDown) {
+            FlipResultZ(result);
+        }
         ShowScene(result);
     }
     return EXIT_SUCCESS;
@@ -857,21 +865,44 @@ int main(int argc, char** argv)
 
     const Scene scene = BuildScene();
     std::cout << "场景点数 " << scene.cloud->size() << "，工件 " << scene.workpieces.size() << " 个\n";
+    // 合成场景 Z 向上；相机坐标系版本 Z 指向地面
+    Cloud::Ptr cameraCloud(new Cloud(*scene.cloud));
+    for (pcl::PointXYZ& p : cameraCloud->points) {
+        p.z = -p.z;
+    }
     if (!options.savePlyPath.empty()) {
-        if (pcl::io::savePLYFileBinary(options.savePlyPath, *scene.cloud) < 0) {
+        if (pcl::io::savePLYFileBinary(options.savePlyPath, *cameraCloud) < 0) {
             std::cerr << "写入 PLY 失败: " << options.savePlyPath << '\n';
             return EXIT_FAILURE;
         }
-        std::cout << "合成场景已写入 " << options.savePlyPath << '\n';
+        std::cout << "合成场景已按相机坐标系写入 " << options.savePlyPath << '\n';
     }
 
+    SceneSeamParams upright;
+    upright.zAxisDown = false;
+
     const auto begin = std::chrono::steady_clock::now();
-    const SceneSeamResult result = ExtractSceneSeams(scene.cloud);
+    const SceneSeamResult result = ExtractSceneSeams(scene.cloud, upright);
     const auto end = std::chrono::steady_clock::now();
     std::cout << "耗时 " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " ms，"
               << result.message << '\n';
 
     failures += !Expect(result.success, "提取应成功");
+
+    // 默认参数按相机坐标系处理，结果应与 Z 向上版本一致（翻转回同一坐标系后比较）
+    {
+        SceneSeamResult cameraResult = ExtractSceneSeams(cameraCloud);
+        failures += !Expect(cameraResult.success, "相机坐标系提取应成功");
+        failures += !Expect(cameraResult.seams.size() == result.seams.size(), "相机坐标系焊缝数量应一致");
+        FlipResultZ(cameraResult);
+        float maxDiff = 0.0f;
+        for (std::size_t i = 0; i < std::min(cameraResult.seams.size(), result.seams.size()); ++i) {
+            maxDiff = std::max(maxDiff, (cameraResult.seams[i].start - result.seams[i].start).norm());
+            maxDiff = std::max(maxDiff, (cameraResult.seams[i].end - result.seams[i].end).norm());
+        }
+        std::cout << "相机坐标系与 Z 向上结果最大偏差 " << maxDiff << " mm\n";
+        failures += !Expect(maxDiff < 1e-3f, "相机坐标系结果翻转后应与 Z 向上结果一致");
+    }
     failures += !Expect(result.workpieces.size() == scene.workpieces.size(), "工件数量应为 19");
 
     const Eigen::Vector3f groundNormal = result.groundPlane.head<3>().normalized();
