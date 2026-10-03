@@ -40,5 +40,18 @@ cmake --build build -j
 ./build/scene_seam_test --no-viewer    # 仅运行检查
 ```
 
+直接处理拼接后的整场 PLY 点云（跳过合成场景和真值检查）：
+
+```bash
+./build/scene_seam_test --ply scene.ply                        # 点云单位 mm
+./build/scene_seam_test --ply scene.ply --scale 1000           # 点云单位 m，内部换算成 mm
+./build/scene_seam_test --ply scene.ply --export seams.csv     # 焊缝写入 CSV（起止点、接近方向、置信度）
+./build/scene_seam_test --ply scene.ply --no-viewer            # 只打印结果不开窗口
+./build/scene_seam_test --no-viewer --save-ply scene.ply       # 把合成场景另存为 PLY，用于验证流程
+```
+
+常用参数覆盖（单位 mm）：`--voxel 4`、`--rib-min-height 20`、`--rib-min-thickness 4`、`--rib-max-thickness 30`、
+`--min-area 50000`，按相机分辨率和工件板厚、筋高调整。
+
 可视化窗口上半部分为整场点云（按高度着色、工件外接框和编号、焊缝叠加），下半部分为单个工件细节，
 按 `n` / `p` 切换工件；红色为平角焊缝，橙色为立角焊缝，青色为立板中心线。

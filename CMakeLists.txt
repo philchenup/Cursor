@@ -10,7 +10,7 @@ endif()
 
 # 先找一遍 MPI，使 VTK::mpi 的链接接口能够解析
 find_package(MPI QUIET)
-find_package(PCL 1.10 REQUIRED COMPONENTS common filters visualization)
+find_package(PCL 1.10 REQUIRED COMPONENTS common filters io visualization)
 
 add_library(scene_seam_extractor STATIC
     src/SceneSeamExtractor.cpp

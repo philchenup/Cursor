@@ -1,5 +1,6 @@
 #include "SceneSeamExtractor.h"
 
+#include <pcl/io/ply_io.h>
 #include <pcl/visualization/pcl_visualizer.h>
 #include <pcl/visualization/point_cloud_color_handlers.h>
 
@@ -15,6 +16,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <random>
@@ -38,9 +40,17 @@
 //
 // 在仓库根目录编译运行（Ubuntu，PCL 1.14，VTK 9.1）：
 // vtk_libs=$(ldd /usr/lib/x86_64-linux-gnu/libpcl_visualization.so | awk '/vtk/ {so=$1; sub(/\.so.*/, "", so); sub(/^lib/, "-l", so); printf "%s ", so}')
-// g++ -std=c++17 -O2 -Iinclude -I/usr/include/vtk-9.1 $(pkg-config --cflags pcl_visualization) src/SceneSeamExtractorTest.cpp src/SceneSeamExtractor.cpp -Wl,--no-as-needed $(pkg-config --libs pcl_visualization pcl_filters) $vtk_libs -o scene_seam_test && ./scene_seam_test
+// g++ -std=c++17 -O2 -Iinclude -I/usr/include/vtk-9.1 $(pkg-config --cflags pcl_visualization) src/SceneSeamExtractorTest.cpp src/SceneSeamExtractor.cpp -Wl,--no-as-needed $(pkg-config --libs pcl_visualization pcl_filters pcl_io) $vtk_libs -o scene_seam_test && ./scene_seam_test
 //
 // 不带窗口只跑检查：./scene_seam_test --no-viewer
+// 把合成场景另存为 PLY：./scene_seam_test --no-viewer --save-ply scene.ply
+//
+// 直接处理拼接后的整场 PLY（跳过合成场景和真值检查）：
+//   ./scene_seam_test --ply scene.ply                       点云单位 mm
+//   ./scene_seam_test --ply scene.ply --scale 1000          点云单位 m，内部换算成 mm
+//   ./scene_seam_test --ply scene.ply --export seams.csv    焊缝写入 CSV
+// 可按相机分辨率和工件尺寸覆盖参数：
+//   --voxel 4  --rib-min-height 20  --rib-min-thickness 4  --rib-max-thickness 30  --min-area 50000
 
 namespace {
 
@@ -683,16 +693,162 @@ void ShowScene(const SceneSeamResult& result)
     viewer.spin();
 }
 
+// ---------------------------------------------------------------------------
+// 处理拼接后的整场 PLY
+// ---------------------------------------------------------------------------
+
+const char* SeamTypeName(SeamType type)
+{
+    return type == SeamType::FlatFillet ? "flat" : "vertical";
+}
+
+void PrintResult(const SceneSeamResult& result)
+{
+    const Eigen::Vector3f normal = result.groundPlane.head<3>().normalized();
+    std::cout << result.message << "\n地面法向 " << normal.transpose() << "  工件 " << result.workpieces.size() << " 个，焊缝 "
+              << result.seams.size() << " 条\n";
+    for (const Workpiece& piece : result.workpieces) {
+        int flat = 0;
+        int vertical = 0;
+        for (const InitialSeam& seam : piece.seams) {
+            (seam.type == SeamType::FlatFillet ? flat : vertical) += 1;
+        }
+        std::cout << "工件 " << piece.id << "  中心 (" << piece.center.x() << ", " << piece.center.y() << ")  尺寸 "
+                  << (piece.maxXY - piece.minXY).x() << " x " << (piece.maxXY - piece.minXY).y() << "  底板高 " << piece.baseHeight
+                  << "  立板 " << piece.ribs.size() << "  平角焊缝 " << flat << "  立角焊缝 " << vertical << '\n';
+    }
+}
+
+bool ExportSeamsCsv(const SceneSeamResult& result, const std::string& path)
+{
+    std::ofstream out(path);
+    if (!out) {
+        std::cerr << "无法写入 " << path << '\n';
+        return false;
+    }
+    out << "workpiece,type,start_x,start_y,start_z,end_x,end_y,end_z,approach_x,approach_y,approach_z,rib_height,confidence\n";
+    for (const InitialSeam& seam : result.seams) {
+        out << seam.workpieceId << ',' << SeamTypeName(seam.type) << ',' << seam.start.x() << ',' << seam.start.y() << ','
+            << seam.start.z() << ',' << seam.end.x() << ',' << seam.end.y() << ',' << seam.end.z() << ',' << seam.approachSide.x()
+            << ',' << seam.approachSide.y() << ',' << seam.approachSide.z() << ',' << seam.ribHeight << ',' << seam.confidence << '\n';
+    }
+    std::cout << "焊缝已写入 " << path << '\n';
+    return true;
+}
+
+struct Options {
+    bool showViewer = true;
+    std::string plyPath;      ///< 为空时运行合成场景检查
+    float scale = 1.0f;       ///< 读入坐标乘以该系数，PLY 为 m 时填 1000
+    std::string exportPath;   ///< 焊缝 CSV 输出路径
+    std::string savePlyPath;  ///< 合成场景另存为 PLY
+    SceneSeamParams params;
+};
+
+bool ParseOptions(int argc, char** argv, Options& options)
+{
+    auto value = [&](int& i) -> const char* {
+        if (i + 1 >= argc) {
+            std::cerr << argv[i] << " 缺少参数\n";
+            return nullptr;
+        }
+        return argv[++i];
+    };
+    auto number = [&](int& i, float& target) {
+        const char* text = value(i);
+        if (!text) {
+            return false;
+        }
+        target = std::strtof(text, nullptr);
+        return true;
+    };
+
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        bool ok = true;
+        if (arg == "--no-viewer") {
+            options.showViewer = false;
+        } else if (arg == "--ply") {
+            const char* text = value(i);
+            ok = text != nullptr;
+            if (ok) options.plyPath = text;
+        } else if (arg == "--export") {
+            const char* text = value(i);
+            ok = text != nullptr;
+            if (ok) options.exportPath = text;
+        } else if (arg == "--save-ply") {
+            const char* text = value(i);
+            ok = text != nullptr;
+            if (ok) options.savePlyPath = text;
+        } else if (arg == "--scale") {
+            ok = number(i, options.scale);
+        } else if (arg == "--voxel") {
+            ok = number(i, options.params.voxelSize);
+        } else if (arg == "--rib-min-height") {
+            ok = number(i, options.params.ribMinHeight);
+        } else if (arg == "--rib-min-thickness") {
+            ok = number(i, options.params.ribMinThickness);
+        } else if (arg == "--rib-max-thickness") {
+            ok = number(i, options.params.ribMaxThickness);
+        } else if (arg == "--min-area") {
+            ok = number(i, options.params.minWorkpieceArea);
+        } else {
+            std::cerr << "未知参数 " << arg << '\n';
+            ok = false;
+        }
+        if (!ok) {
+            return false;
+        }
+    }
+    return true;
+}
+
+int RunOnPly(const Options& options)
+{
+    Cloud::Ptr cloud(new Cloud);
+    if (pcl::io::loadPLYFile<pcl::PointXYZ>(options.plyPath, *cloud) < 0) {
+        std::cerr << "读取 PLY 失败: " << options.plyPath << '\n';
+        return EXIT_FAILURE;
+    }
+    if (options.scale != 1.0f) {
+        for (pcl::PointXYZ& p : cloud->points) {
+            p.x *= options.scale;
+            p.y *= options.scale;
+            p.z *= options.scale;
+        }
+    }
+    std::cout << "读入 " << cloud->size() << " 点: " << options.plyPath << '\n';
+
+    const auto begin = std::chrono::steady_clock::now();
+    const SceneSeamResult result = ExtractSceneSeams(cloud, options.params);
+    const auto end = std::chrono::steady_clock::now();
+    std::cout << "耗时 " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " ms\n";
+    PrintResult(result);
+    if (!result.success) {
+        return EXIT_FAILURE;
+    }
+
+    if (!options.exportPath.empty() && !ExportSeamsCsv(result, options.exportPath)) {
+        return EXIT_FAILURE;
+    }
+    if (options.showViewer) {
+        ShowScene(result);
+    }
+    return EXIT_SUCCESS;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
 {
-    bool showViewer = true;
-    for (int i = 1; i < argc; ++i) {
-        if (std::string(argv[i]) == "--no-viewer") {
-            showViewer = false;
-        }
+    Options options;
+    if (!ParseOptions(argc, argv, options)) {
+        return EXIT_FAILURE;
     }
+    if (!options.plyPath.empty()) {
+        return RunOnPly(options);
+    }
+    const bool showViewer = options.showViewer;
 
     int failures = 0;
 
@@ -701,6 +857,13 @@ int main(int argc, char** argv)
 
     const Scene scene = BuildScene();
     std::cout << "场景点数 " << scene.cloud->size() << "，工件 " << scene.workpieces.size() << " 个\n";
+    if (!options.savePlyPath.empty()) {
+        if (pcl::io::savePLYFileBinary(options.savePlyPath, *scene.cloud) < 0) {
+            std::cerr << "写入 PLY 失败: " << options.savePlyPath << '\n';
+            return EXIT_FAILURE;
+        }
+        std::cout << "合成场景已写入 " << options.savePlyPath << '\n';
+    }
 
     const auto begin = std::chrono::steady_clock::now();
     const SceneSeamResult result = ExtractSceneSeams(scene.cloud);
