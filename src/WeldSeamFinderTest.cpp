@@ -2,6 +2,10 @@
 
 #include <pcl/visualization/pcl_visualizer.h>
 
+#include <vtkCamera.h>
+#include <vtkRenderWindow.h>
+#include <vtkRenderer.h>
+
 #include <Eigen/Geometry>
 
 #include <cmath>
@@ -11,8 +15,8 @@
 #include <limits>
 #include <string>
 
-// 合成一块 T 型板点云，检查 FindWeldSeam 的焊缝方向，并打开窗口显示。
-// 灰色是原始点云，红色是空洞区域，绿色箭头是空洞 PCA 主方向。
+// 合成一块 T 型板点云，检查 FindWeldSeam 的焊缝方向，并俯视显示投影到地面后的结果。
+// 灰色是地面，黄色是平面外点在地面上的投影，红色是空洞，绿色箭头是主方向。
 //
 // 底板在 z = 0，中间留一条沿 X 的缝隙；立板立在缝隙上方。
 // 点云里混入零点、NaN、远离主体的小团块，以及一块更小的干扰平面，
@@ -103,27 +107,12 @@ bool Expect(bool condition, const std::string& message)
     return condition;
 }
 
-pcl::PointCloud<pcl::PointXYZ>::Ptr FinitePoints(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& cloud)
-{
-    pcl::PointCloud<pcl::PointXYZ>::Ptr finite(new pcl::PointCloud<pcl::PointXYZ>);
-    finite->reserve(cloud->size());
-    for (const pcl::PointXYZ& point : cloud->points) {
-        if (std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z)) {
-            finite->push_back(point);
-        }
-    }
-    finite->width = static_cast<std::uint32_t>(finite->size());
-    finite->height = 1;
-    finite->is_dense = true;
-    return finite;
-}
-
 void AddDirectionArrow(pcl::visualization::PCLVisualizer& viewer, const WeldSeamResult& result)
 {
     const Eigen::Vector3f direction = result.direction.normalized();
     const Eigen::Vector3f normal = result.plane.head<3>().normalized();
     const Eigen::Vector3f side = normal.cross(direction).normalized();
-    const Eigen::Vector3f lift = normal * 6.0f;
+    const Eigen::Vector3f lift = normal * 6.0f + side * 16.0f;
 
     float minOffset = 0.0f;
     float maxOffset = 0.0f;
@@ -158,36 +147,66 @@ void AddDirectionArrow(pcl::visualization::PCLVisualizer& viewer, const WeldSeam
     viewer.setShapeRenderingProperties(pcl::visualization::PCL_VISUALIZER_LINE_WIDTH, 5.0, "seam-head-right");
 }
 
-void ShowClouds(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& original, const WeldSeamResult& result)
+float ParallelScale(const WeldSeamResult& result, const Eigen::Vector3f& direction, const Eigen::Vector3f& side)
 {
-    const pcl::PointCloud<pcl::PointXYZ>::Ptr drawable = FinitePoints(original);
+    float halfAlong = 1.0f;
+    float halfAcross = 1.0f;
+    auto accumulate = [&](const pcl::PointCloud<pcl::PointXYZ>& cloud) {
+        for (const pcl::PointXYZ& point : cloud.points) {
+            const Eigen::Vector3f offset = point.getVector3fMap() - result.centroid;
+            halfAlong = std::max(halfAlong, std::fabs(offset.dot(direction)));
+            halfAcross = std::max(halfAcross, std::fabs(offset.dot(side)));
+        }
+    };
+    accumulate(*result.ground);
+    accumulate(*result.projected);
+    accumulate(*result.hollow);
 
-    pcl::visualization::PCLVisualizer viewer("T-plate weld");
+    constexpr float kAspect = 1280.0f / 800.0f;
+    const float scale = std::max(halfAcross, halfAlong / kAspect) * 1.18f;
+    return scale;
+}
+
+void ShowProjection(const WeldSeamResult& result)
+{
+    pcl::visualization::PCLVisualizer viewer("Ground projection");
     viewer.setSize(1280, 800);
     viewer.setBackgroundColor(0.07, 0.08, 0.10);
-    viewer.addText("gray: original cloud", 16, 64, 18, 0.82, 0.84, 0.86, "label-original");
+    viewer.addText("gray: ground", 16, 90, 18, 0.78, 0.80, 0.84, "label-ground");
+    viewer.addText("yellow: projected onto ground", 16, 64, 18, 1.0, 0.78, 0.20, "label-projected");
     viewer.addText("red: hollow region", 16, 38, 18, 1.0, 0.35, 0.28, "label-hollow");
     viewer.addText("green: principal direction", 16, 12, 18, 0.25, 0.95, 0.35, "label-direction");
 
-    pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> originalColor(drawable, 186, 194, 204);
-    viewer.addPointCloud(drawable, originalColor, "original");
-    viewer.setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 3, "original");
+    pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> groundColor(result.ground, 176, 184, 194);
+    viewer.addPointCloud(result.ground, groundColor, "ground");
+    viewer.setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 3, "ground");
 
-    pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> hollowColor(result.hollow, 255, 72, 56);
+    pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> hollowColor(result.hollow, 255, 64, 48);
     viewer.addPointCloud(result.hollow, hollowColor, "hollow");
-    viewer.setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 8, "hollow");
+    viewer.setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 7, "hollow");
+
+    const Eigen::Vector3f normal = result.plane.head<3>().normalized();
+    pcl::PointCloud<pcl::PointXYZ>::Ptr projectedView(new pcl::PointCloud<pcl::PointXYZ>(*result.projected));
+    for (pcl::PointXYZ& point : projectedView->points) {
+        point.getVector3fMap() += normal * 2.0f;
+    }
+    pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> projectedColor(projectedView, 255, 210, 40);
+    viewer.addPointCloud(projectedView, projectedColor, "projected");
+    viewer.setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 5, "projected");
 
     AddDirectionArrow(viewer, result);
 
-    const Eigen::Vector3f normal = result.plane.head<3>().normalized();
     const Eigen::Vector3f direction = result.direction.normalized();
     const Eigen::Vector3f side = normal.cross(direction).normalized();
-    const Eigen::Vector3f eye = result.centroid + normal * 760.0f + side * 460.0f - direction * 40.0f;
+    const Eigen::Vector3f eye = result.centroid + normal * 900.0f;
     viewer.setCameraPosition(eye.x(), eye.y(), eye.z(),
                              result.centroid.x(), result.centroid.y(), result.centroid.z(),
-                             normal.x(), normal.y(), normal.z());
-    viewer.setCameraFieldOfView(0.62);
+                             side.x(), side.y(), side.z());
     viewer.setCameraClipDistances(10.0, 5000.0);
+
+    vtkRenderer* renderer = viewer.getRenderWindow()->GetRenderers()->GetFirstRenderer();
+    renderer->GetActiveCamera()->SetParallelProjection(1);
+    renderer->GetActiveCamera()->SetParallelScale(ParallelScale(result, direction, side));
 
     std::cout << "关闭窗口后退出\n";
     viewer.spin();
@@ -240,6 +259,17 @@ int main()
         failures += !Expect(inPlane < 1e-3f, "方向应位于地面内");
         failures += !Expect(centroidError < 30.0f, "质心应落在焊缝附近");
         failures += !Expect(result.hollow && result.hollow->size() > 50, "空洞点数过少");
+        failures += !Expect(result.projected && result.projected->size() > 100, "投影点过少");
+
+        float maxProjectedDistance = 0.0f;
+        const Eigen::Vector3f normal = result.plane.head<3>();
+        for (const pcl::PointXYZ& point : result.projected->points) {
+            const float distance = std::fabs(normal.dot(point.getVector3fMap()) + result.plane[3]);
+            maxProjectedDistance = std::max(maxProjectedDistance, distance);
+        }
+        std::cout << "投影点数 " << result.projected->size()
+                  << "  离面 " << maxProjectedDistance << " mm\n";
+        failures += !Expect(maxProjectedDistance < 0.5f, "投影点应落在地面上");
     }
 
     if (failures != 0) {
@@ -248,6 +278,6 @@ int main()
     }
 
     std::cout << "通过\n";
-    ShowClouds(cloud, result);
+    ShowProjection(result);
     return EXIT_SUCCESS;
 }

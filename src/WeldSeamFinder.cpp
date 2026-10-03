@@ -504,6 +504,8 @@ WeldSeamResult FindWeldSeamImpl(const Cloud::ConstPtr& cloud, const WeldSeamPara
         return result;
     }
 
+    result.ground = onPlane.makeShared();
+    result.projected = projected;
     result.plane = plane;
     result.success = true;
     return result;

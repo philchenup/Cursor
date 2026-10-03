@@ -29,16 +29,21 @@ struct WeldSeamParams {
  * direction 为单位向量，位于地面平面内，是空洞区域 PCA 的第一主方向。
  * centroid 为空洞质心，与 direction 一起确定焊缝直线。
  * plane 为地面方程 ax + by + cz + d = 0，法向已单位化。
+ * ground 为地面点，projected 为平面外点在地面上的投影，两者都位于该平面上。
  */
 struct WeldSeamResult {
     bool success = false;
     Eigen::Vector3f direction = Eigen::Vector3f::Zero();
     Eigen::Vector3f centroid = Eigen::Vector3f::Zero();
     Eigen::Vector4f plane = Eigen::Vector4f::Zero();
+    pcl::PointCloud<pcl::PointXYZ>::Ptr ground;
+    pcl::PointCloud<pcl::PointXYZ>::Ptr projected;
     pcl::PointCloud<pcl::PointXYZ>::Ptr hollow;
 
     WeldSeamResult()
-        : hollow(new pcl::PointCloud<pcl::PointXYZ>)
+        : ground(new pcl::PointCloud<pcl::PointXYZ>)
+        , projected(new pcl::PointCloud<pcl::PointXYZ>)
+        , hollow(new pcl::PointCloud<pcl::PointXYZ>)
     {
     }
 
