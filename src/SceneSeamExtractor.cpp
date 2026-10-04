@@ -206,6 +206,49 @@ Mask Close(const Mask& src, int cols, int rows, int radius)
     return Erode(Dilate(src, cols, rows, radius), cols, rows, radius);
 }
 
+// 填充被前景包围的空洞：从栅格边界沿 4 邻域淹没背景，淹不到的背景就是内部空洞。
+Mask FillEnclosedHoles(const Mask& src, int cols, int rows)
+{
+    Mask outside(src.size(), 0);
+    std::vector<int> stack;
+    auto push = [&](int c, int r) {
+        if (c < 0 || r < 0 || c >= cols || r >= rows) {
+            return;
+        }
+        const std::size_t id = static_cast<std::size_t>(r) * cols + c;
+        if (src[id] || outside[id]) {
+            return;
+        }
+        outside[id] = 1;
+        stack.push_back(static_cast<int>(id));
+    };
+    for (int c = 0; c < cols; ++c) {
+        push(c, 0);
+        push(c, rows - 1);
+    }
+    for (int r = 0; r < rows; ++r) {
+        push(0, r);
+        push(cols - 1, r);
+    }
+    while (!stack.empty()) {
+        const int id = stack.back();
+        stack.pop_back();
+        const int c = id % cols;
+        const int r = id / cols;
+        push(c + 1, r);
+        push(c - 1, r);
+        push(c, r + 1);
+        push(c, r - 1);
+    }
+    Mask filled(src.size(), 1);
+    for (std::size_t i = 0; i < src.size(); ++i) {
+        if (outside[i]) {
+            filled[i] = 0;
+        }
+    }
+    return filled;
+}
+
 struct Component {
     int label = 0;
     int count = 0;
@@ -762,21 +805,68 @@ struct Junction {
     float tB = 0.0f;
 };
 
+/// 立板越过交点至少这么长才算有一条臂，用于判断 T 形 / 十字接头的象限
+constexpr float kMinArm = 15.0f;
+
+// 底板视图：区分“有底板”“确认没有底板（地面）”和“无数据（阴影）”三种状态
 struct BaseMaskView {
     const HeightGrid* grid = nullptr;
-    const Mask* mask = nullptr;
+    const Mask* footprint = nullptr;          ///< 底板轮廓：底板栅格 + 被底板包围的空洞（阴影、立板根部）
+    const std::vector<float>* aboveBase = nullptr;
+    float tolerance = 0.0f;
 
-    bool inside(const Eigen::Vector2f& xy) const
+    bool hasBase(const Eigen::Vector2f& xy) const
     {
         int c = 0;
         int r = 0;
-        return grid->cellOf(xy.x(), xy.y(), c, r) && (*mask)[grid->index(c, r)];
+        return grid->cellOf(xy.x(), xy.y(), c, r) && (*footprint)[grid->index(c, r)];
+    }
+
+    /// 栅格有数据且明显低于底板平面（地面）时确认没有底板；阴影等无数据栅格视为未知
+    bool confirmedNoBase(const Eigen::Vector2f& xy) const
+    {
+        int c = 0;
+        int r = 0;
+        if (!grid->cellOf(xy.x(), xy.y(), c, r)) {
+            return true;
+        }
+        const std::size_t id = grid->index(c, r);
+        if ((*footprint)[id] || !std::isfinite(grid->z[id])) {
+            return false;
+        }
+        return (*aboveBase)[id] < -tolerance;
     }
 };
 
 Eigen::Vector3f Lift(const Eigen::Vector4f& plane, const Eigen::Vector2f& xy, float above = 0.0f)
 {
     return Eigen::Vector3f(xy.x(), xy.y(), PlaneZ(plane, xy.x(), xy.y()) + above);
+}
+
+// 该侧是否有底板：沿法向从板根外侧一直探到立板高度量级的距离，碰到底板即算有，碰到地面即算无。
+// 阴影宽度不会超过立板高度，所以不依赖固定的探测距离。
+bool SideHasBase(const BaseMaskView& base, const RibCandidate& rib, const Eigen::Vector2f& normal, float side, float res)
+{
+    constexpr int kSamples = 7;
+    const float nearDist = rib.thickness * 0.5f + 12.0f;
+    const float farDist = rib.thickness * 0.5f + std::max(60.0f, rib.height);
+    const float step = std::max(2.0f * res, 4.0f);
+    int hits = 0;
+    for (int s = 0; s < kSamples; ++s) {
+        const float t = rib.tMin + (rib.tMax - rib.tMin) * (static_cast<float>(s) + 0.5f) / kSamples;
+        const Eigen::Vector2f foot = rib.center + rib.dir * t;
+        for (float d = nearDist; d <= farDist; d += step) {
+            const Eigen::Vector2f probe = foot + normal * side * d;
+            if (base.hasBase(probe)) {
+                ++hits;
+                break;
+            }
+            if (base.confirmedNoBase(probe)) {
+                break;
+            }
+        }
+    }
+    return hits * 2 >= kSamples;
 }
 
 void BuildFlatSeams(const Workpiece& piece,
@@ -786,47 +876,60 @@ void BuildFlatSeams(const Workpiece& piece,
                     const SceneSeamParams& params,
                     std::vector<InitialSeam, Eigen::aligned_allocator<InitialSeam>>& seams)
 {
+    using Cuts = std::vector<std::pair<float, float>>;
     for (std::size_t i = 0; i < ribs.size(); ++i) {
         const RibCandidate& rib = ribs[i];
         const Eigen::Vector2f normal = Perp(rib.dir);
 
-        std::vector<std::pair<float, float>> cuts;
+        // 接头处的切口只加在对方立板实际延伸过来的那一侧；T 形端部的另一侧焊缝保持连续
+        Cuts cutsPositive;
+        Cuts cutsNegative;
         for (const Junction& junction : junctions) {
+            int otherIndex = -1;
+            float tSelf = 0.0f;
+            float tOther = 0.0f;
             if (junction.ribA == static_cast<int>(i)) {
-                const float half = ribs[static_cast<std::size_t>(junction.ribB)].thickness * 0.5f + params.seamClearance;
-                cuts.emplace_back(junction.tA - half, junction.tA + half);
+                otherIndex = junction.ribB;
+                tSelf = junction.tA;
+                tOther = junction.tB;
             } else if (junction.ribB == static_cast<int>(i)) {
-                const float half = ribs[static_cast<std::size_t>(junction.ribA)].thickness * 0.5f + params.seamClearance;
-                cuts.emplace_back(junction.tB - half, junction.tB + half);
+                otherIndex = junction.ribA;
+                tSelf = junction.tB;
+                tOther = junction.tA;
+            } else {
+                continue;
+            }
+            const RibCandidate& other = ribs[static_cast<std::size_t>(otherIndex)];
+            const float half = other.thickness * 0.5f + params.seamClearance;
+            const float arm = rib.thickness * 0.5f + kMinArm;
+            const bool otherForwardIsPositive = normal.dot(other.dir) >= 0.0f;
+            if (other.tMax >= tOther + arm) {
+                (otherForwardIsPositive ? cutsPositive : cutsNegative).emplace_back(tSelf - half, tSelf + half);
+            }
+            if (other.tMin <= tOther - arm) {
+                (otherForwardIsPositive ? cutsNegative : cutsPositive).emplace_back(tSelf - half, tSelf + half);
             }
         }
-        std::sort(cuts.begin(), cuts.end());
+        std::sort(cutsPositive.begin(), cutsPositive.end());
+        std::sort(cutsNegative.begin(), cutsNegative.end());
 
         for (float side : {1.0f, -1.0f}) {
             const Eigen::Vector2f offset = normal * side * rib.thickness * 0.5f;
 
             // 该侧必须有底板，否则是板边立板，不焊
-            int insideCount = 0;
-            constexpr int kSamples = 7;
-            const Eigen::Vector2f probeOffset = normal * side * (rib.thickness * 0.5f + 12.0f);
-            for (int s = 0; s < kSamples; ++s) {
-                const float t = rib.tMin + (rib.tMax - rib.tMin) * (static_cast<float>(s) + 0.5f) / kSamples;
-                if (base.inside(rib.center + rib.dir * t + probeOffset)) {
-                    ++insideCount;
-                }
-            }
-            if (insideCount * 2 < kSamples) {
+            if (!SideHasBase(base, rib, normal, side, base.grid->res)) {
                 continue;
             }
+            const Cuts& cuts = side > 0.0f ? cutsPositive : cutsNegative;
 
             float cursor = rib.tMin;
             auto emit = [&](float t0, float t1) {
-                // 端点退到底板范围内
+                // 焊缝长度以立板顶边为准，只有确认探到地面时才收缩端点；阴影不收缩
                 const float step = 2.0f;
-                while (t1 - t0 >= params.minSeamLength && !base.inside(rib.center + rib.dir * t0 + offset)) {
+                while (t1 - t0 >= params.minSeamLength && base.confirmedNoBase(rib.center + rib.dir * t0 + offset)) {
                     t0 += step;
                 }
-                while (t1 - t0 >= params.minSeamLength && !base.inside(rib.center + rib.dir * t1 + offset)) {
+                while (t1 - t0 >= params.minSeamLength && base.confirmedNoBase(rib.center + rib.dir * t1 + offset)) {
                     t1 -= step;
                 }
                 if (t1 - t0 < params.minSeamLength) {
@@ -862,7 +965,6 @@ void BuildVerticalSeams(const Workpiece& piece,
                         const std::vector<Junction>& junctions,
                         std::vector<InitialSeam, Eigen::aligned_allocator<InitialSeam>>& seams)
 {
-    constexpr float kMinArm = 15.0f;
     for (const Junction& junction : junctions) {
         const RibCandidate& a = ribs[static_cast<std::size_t>(junction.ribA)];
         const RibCandidate& b = ribs[static_cast<std::size_t>(junction.ribB)];
@@ -950,6 +1052,8 @@ bool ProcessWorkpiece(const Cloud& scene,
     }
     const int closeCells = static_cast<int>(std::ceil((params.ribMaxThickness * 0.5f + 10.0f) / grid.res));
     baseMask = Close(baseMask, grid.cols, grid.rows, closeCells);
+    // 立板阴影和根部遮挡总是被底板包围，填掉这些内部空洞得到底板轮廓，而真正的板边是开放的
+    const Mask footprint = FillEnclosedHoles(baseMask, grid.cols, grid.rows);
 
     // 立板顶边是一条连续窄带，附近没有其他高点的栅格是离群点或反射假点
     std::vector<RibCell> ribCells;
@@ -1030,7 +1134,7 @@ bool ProcessWorkpiece(const Cloud& scene,
         }
     }
 
-    BaseMaskView base{&grid, &baseMask};
+    BaseMaskView base{&grid, &footprint, &aboveBase, params.basePlaneTolerance};
     piece.seams.clear();
     BuildFlatSeams(piece, ribs, junctions, base, params, piece.seams);
     BuildVerticalSeams(piece, ribs, junctions, piece.seams);
