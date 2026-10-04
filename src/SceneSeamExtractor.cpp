@@ -475,7 +475,8 @@ void SplitRuns(const std::vector<std::pair<float, int>>& sorted, float gap, std:
     runs.emplace_back(begin, static_cast<int>(sorted.size()));
 }
 
-// 把一段两端栅格稀疏的部分收掉，避免零星高点把立板拉长。
+// 只去掉两端几乎没有点的切片，避免零星高点把立板拉长。
+// 连续但被阴影削薄的顶边每片仍有点，必须保留，否则一根筋的端部被收掉，两侧焊缝一起变短。
 void TrimRun(const std::vector<std::pair<float, int>>& sorted, float res, int& begin, int& end)
 {
     const float sliceWidth = 3.0f * res;
@@ -485,15 +486,7 @@ void TrimRun(const std::vector<std::pair<float, int>>& sorted, float res, int& b
     for (int i = begin; i < end; ++i) {
         ++counts[static_cast<std::size_t>((sorted[static_cast<std::size_t>(i)].first - t0) / sliceWidth)];
     }
-    std::vector<int> occupied;
-    for (int count : counts) {
-        if (count > 0) {
-            occupied.push_back(count);
-        }
-    }
-    std::nth_element(occupied.begin(), occupied.begin() + static_cast<std::ptrdiff_t>(occupied.size() / 2), occupied.end());
-    const int median = occupied[occupied.size() / 2];
-    const int minCellsPerSlice = std::max(2, static_cast<int>(std::round(0.3f * static_cast<float>(median))));
+    const int minCellsPerSlice = 2;
 
     int firstDense = 0;
     while (firstDense < sliceCount && counts[static_cast<std::size_t>(firstDense)] < minCellsPerSlice) {
@@ -764,6 +757,87 @@ bool IntersectLines(const RibCandidate& a, const RibCandidate& b, float& ta, flo
     ta = (delta.x() * b.dir.y() - delta.y() * b.dir.x()) / cross;
     tb = (delta.x() * a.dir.y() - delta.y() * a.dir.x()) / cross;
     return true;
+}
+
+// 同一块立板被横穿立板的提取带宽或阴影切成两段后，两段共线，间隙里正好有另一块立板穿过。
+// 合并回一条，平焊缝才不会在两侧同时断开；真正挡住焊缝的那一侧仍由接头切口处理。
+void MergeColinearRibs(std::vector<RibCandidate>& ribs, float res, const SceneSeamParams& params)
+{
+    const float parallel = std::cos(Deg2Rad(8.0f));
+    // 交叉立板被提取时会占掉带宽内的栅格，留下的空洞约等于带宽，和 ribGapTolerance 取谁无关
+    const float band = params.ribMaxThickness + 2.0f * res;
+    bool merged = true;
+    while (merged) {
+        merged = false;
+        for (std::size_t i = 0; i < ribs.size() && !merged; ++i) {
+            for (std::size_t j = i + 1; j < ribs.size() && !merged; ++j) {
+                RibCandidate& a = ribs[i];
+                RibCandidate& b = ribs[j];
+                if (std::fabs(a.dir.dot(b.dir)) < parallel) {
+                    continue;
+                }
+                const Eigen::Vector2f normal = Perp(a.dir);
+                if (std::fabs(normal.dot(b.center - a.center)) > std::max(a.thickness, b.thickness) + res) {
+                    continue;
+                }
+
+                const float shift = a.dir.dot(b.center - a.center);
+                const float sign = a.dir.dot(b.dir) >= 0.0f ? 1.0f : -1.0f;
+                const float bLo = shift + std::min(sign * b.tMin, sign * b.tMax);
+                const float bHi = shift + std::max(sign * b.tMin, sign * b.tMax);
+                float gap = 0.0f;
+                float gapLo = 0.0f;
+                float gapHi = 0.0f;
+                if (bLo > a.tMax) {
+                    gap = bLo - a.tMax;
+                    gapLo = a.tMax;
+                    gapHi = bLo;
+                } else if (a.tMin > bHi) {
+                    gap = a.tMin - bHi;
+                    gapLo = bHi;
+                    gapHi = a.tMin;
+                }
+                if (gap > band) {
+                    continue;
+                }
+
+                bool bridge = gap <= params.ribGapTolerance;
+                for (std::size_t k = 0; k < ribs.size() && !bridge; ++k) {
+                    if (k == i || k == j) {
+                        continue;
+                    }
+                    float along = 0.0f;
+                    float across = 0.0f;
+                    if (!IntersectLines(a, ribs[k], along, across)) {
+                        continue;
+                    }
+                    const float reach = ribs[k].thickness;
+                    if (along < gapLo - reach || along > gapHi + reach) {
+                        continue;
+                    }
+                    if (across < ribs[k].tMin - reach || across > ribs[k].tMax + reach) {
+                        continue;
+                    }
+                    bridge = true;
+                }
+                if (!bridge) {
+                    continue;
+                }
+
+                // 保留较高的那一段的中心线：飞点带比顶边矮，不能让它把中心线带走
+                RibCandidate& keep = a.height >= b.height ? a : b;
+                const RibCandidate& drop = a.height >= b.height ? b : a;
+                const float keepShift = keep.dir.dot(drop.center - keep.center);
+                const float keepSign = keep.dir.dot(drop.dir) >= 0.0f ? 1.0f : -1.0f;
+                const float dropLo = keepShift + std::min(keepSign * drop.tMin, keepSign * drop.tMax);
+                const float dropHi = keepShift + std::max(keepSign * drop.tMin, keepSign * drop.tMax);
+                keep.tMin = std::min(keep.tMin, dropLo);
+                keep.tMax = std::max(keep.tMax, dropHi);
+                ribs.erase(ribs.begin() + static_cast<std::ptrdiff_t>(a.height >= b.height ? j : i));
+                merged = true;
+            }
+        }
+    }
 }
 
 // T 形搭接：立板端部靠近另一块立板时，把端部修到对方板面。
@@ -1085,6 +1159,7 @@ bool ProcessWorkpiece(const Cloud& scene,
 
     std::vector<RibCandidate> ribs = ExtractRibs(ribCells, grid.res, params);
     SnapDirections(ribs, params.ribSnapAngleDeg);
+    MergeColinearRibs(ribs, grid.res, params);
     SnapJunctions(ribs, params);
     for (RibCandidate& rib : ribs) {
         rib.center += localCenter;

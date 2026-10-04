@@ -1032,6 +1032,19 @@ int main(int argc, char** argv)
               << "  检出 " << report.detectedTotal << "（平 " << report.detectedFlat << "，立 " << report.detectedVertical << "）\n"
               << "召回 " << recall << "  精度 " << precision << '\n';
     failures += !Expect(recall >= 0.95f, "焊缝召回应不低于 0.95");
+
+    // 间隙阈值小于立板提取带宽时，横穿立板会把一根筋切成两段，两侧焊缝一起断开。
+    // 共线合并应把它们接回去，召回不下降。
+    {
+        SceneSeamParams tight;
+        tight.ribGapTolerance = 20.0f;
+        const SceneSeamResult tightResult = ExtractSceneSeams(scene.cloud, tight);
+        const MatchReport tightReport = CompareSeams(scene, tightResult, 20.0f);
+        const float tightRecall = tightReport.truthTotal > 0
+            ? static_cast<float>(tightReport.truthMatched) / tightReport.truthTotal : 0.0f;
+        std::cout << "ribGapTolerance 20 mm 召回 " << tightRecall << "  检出 " << tightReport.detectedTotal << '\n';
+        failures += !Expect(tightRecall >= 0.95f, "间隙阈值 20 mm 时共线立板应合并");
+    }
     failures += !Expect(precision >= 0.95f, "焊缝精度应不低于 0.95");
 
     // 相机坐标系中离相机越近 z 越小，焊缝 z 应小于地面 z
