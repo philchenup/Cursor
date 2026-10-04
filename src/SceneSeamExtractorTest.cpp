@@ -1032,6 +1032,51 @@ int main(int argc, char** argv)
     failures += !Expect(recall >= 0.95f, "焊缝召回应不低于 0.95");
     failures += !Expect(precision >= 0.95f, "焊缝精度应不低于 0.95");
 
+    // 等厚立板的自由端是一条板厚短边。两侧长平焊缝不能收到同一个点。
+    // 端点容差 20 mm 盖不住这个尖角，所以单独查两条长边是否在同一点掉头。
+    int hairpins = 0;
+    for (const Workpiece& piece : result.workpieces) {
+        std::vector<const InitialSeam*> flats;
+        for (const InitialSeam& seam : piece.seams) {
+            if (seam.type == SeamType::FlatFillet && seam.length() > 80.0f) {
+                flats.push_back(&seam);
+            }
+        }
+        for (std::size_t i = 0; i < flats.size(); ++i) {
+            const Eigen::Vector2f a0 = flats[i]->start.head<2>();
+            const Eigen::Vector2f a1 = flats[i]->end.head<2>();
+            Eigen::Vector2f dirI = a1 - a0;
+            const float lenI = dirI.norm();
+            if (lenI < 1e-3f) {
+                continue;
+            }
+            dirI /= lenI;
+            for (std::size_t j = i + 1; j < flats.size(); ++j) {
+                const Eigen::Vector2f b0 = flats[j]->start.head<2>();
+                const Eigen::Vector2f b1 = flats[j]->end.head<2>();
+                const bool share = (a0 - b0).norm() < 0.5f || (a0 - b1).norm() < 0.5f || (a1 - b0).norm() < 0.5f
+                    || (a1 - b1).norm() < 0.5f;
+                if (!share) {
+                    continue;
+                }
+                Eigen::Vector2f dirJ = b1 - b0;
+                const float lenJ = dirJ.norm();
+                if (lenJ < 1e-3f) {
+                    continue;
+                }
+                dirJ /= lenJ;
+                if (std::fabs(dirI.dot(dirJ)) > 0.7f && dirI.dot(dirJ) < 0.0f) {
+                    ++hairpins;
+                    if (hairpins <= 6) {
+                        std::cerr << "尖角 工件 " << piece.id << "  " << a0.transpose() << " -> " << a1.transpose() << " 与 "
+                                  << b0.transpose() << " -> " << b1.transpose() << '\n';
+                    }
+                }
+            }
+        }
+    }
+    failures += !Expect(hairpins == 0, "长平焊缝不应在自由端收成尖角");
+
     // 相机坐标系中离相机越近 z 越小，焊缝 z 应小于地面 z
     for (const InitialSeam& seam : result.seams) {
         const float groundClearance = GroundZ(seam.start.x(), seam.start.y()) - std::max(seam.start.z(), seam.end.z());
