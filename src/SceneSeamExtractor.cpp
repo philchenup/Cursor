@@ -31,7 +31,12 @@ constexpr float kTopTolerance = 4.0f;          ///< 同一顶面允许的高差
 constexpr float kPlateStep = 24.0f;            ///< 超过该高差视为另一块板的台阶，不能把矮板削掉
 constexpr float kTopSupportRadius = 4.0f;      ///< 孤立高点过滤半径
 constexpr float kTopCloseRadius = 4.0f;        ///< 补顶面栅格缺口，把贴在一起的立板连成一块
-constexpr float kContourEpsilon = 32.0f;       ///< 轮廓折线拟合的允许偏差，吸收栅格台阶，不抹平两块板的搭接
+// 折线拟合的偏差不能超过一个栅格。立板轮廓只有一个板厚那么宽，半宽大约 3–5 mm；
+// 偏差更大时，从自由端栅格点拉到接头的弦会把两侧平行边收成一个尖角。
+constexpr float kRasterEpsilon = 2.0f;
+// 同一条直边上、偏离不超过这个值的弯折可以并掉。板端掉头不在此列。
+constexpr float kSameDirectionJog = 28.0f;
+constexpr float kCornerLookahead = 24.0f;
 constexpr float kMinCornerTurnDeg = 35.0f;     ///< 行走方向右转超过该角度才是凹拐角
 constexpr float kMinConfidence = 0.3f;
 
@@ -537,33 +542,126 @@ std::vector<Eigen::Vector2f> SimplifyLoop(std::vector<Eigen::Vector2f> pts, floa
     loop.insert(loop.end(), first.begin(), first.end() - 1);
     loop.insert(loop.end(), second.begin(), second.end() - 1);
 
-    // 吞掉栅格台阶和近似共线的折点。两块长板交成的锐拐角两侧都长，不能并掉。
+    // 沿轮廓向前、向后各走一段，看整体方向还是不是同一条边。
+    // 自由端会在一个板厚之内掉头，这个点必须留下，否则两侧焊缝收到尖角。
+    auto turnsAround = [](const std::vector<Eigen::Vector2f>& poly, std::size_t index) {
+        const std::size_t n = poly.size();
+        auto walk = [&](int sign) {
+            float walked = 0.0f;
+            Eigen::Vector2f pos = poly[index];
+            std::size_t cursor = index;
+            while (walked < kCornerLookahead) {
+                cursor = static_cast<std::size_t>((static_cast<int>(cursor) + sign + static_cast<int>(n)) % static_cast<int>(n));
+                if (cursor == index) {
+                    break;
+                }
+                const float step = (poly[cursor] - pos).norm();
+                walked += step;
+                pos = poly[cursor];
+                if (step < 1e-6f) {
+                    continue;
+                }
+            }
+            return pos;
+        };
+        const Eigen::Vector2f incoming = poly[index] - walk(-1);
+        const Eigen::Vector2f outgoing = walk(1) - poly[index];
+        const float inLen = incoming.norm();
+        const float outLen = outgoing.norm();
+        if (inLen < 1e-3f || outLen < 1e-3f) {
+            return true;
+        }
+        return incoming.dot(outgoing) < 0.75f * inLen * outLen;
+    };
+
     bool changed = true;
     while (changed && loop.size() > 4) {
         changed = false;
         for (std::size_t i = 0; i < loop.size();) {
             const std::size_t n = loop.size();
-            const Eigen::Vector2f& prev = loop[(i + n - 1) % n];
-            const Eigen::Vector2f& cur = loop[i];
-            const Eigen::Vector2f& next = loop[(i + 1) % n];
-            const Eigen::Vector2f in = cur - prev;
-            const Eigen::Vector2f out = next - cur;
-            const float lenIn = in.norm();
-            const float lenOut = out.norm();
+            const Eigen::Vector2f prev = loop[(i + n - 1) % n];
+            const Eigen::Vector2f cur = loop[i];
+            const Eigen::Vector2f next = loop[(i + 1) % n];
+            const float lenIn = (cur - prev).norm();
+            const float lenOut = (next - cur).norm();
             if (lenIn < 1e-3f || lenOut < 1e-3f) {
                 loop.erase(loop.begin() + static_cast<std::ptrdiff_t>(i));
                 changed = true;
                 continue;
             }
-            const float cross = in.x() * out.y() - in.y() * out.x();
-            const float turn = std::atan2(cross, in.dot(out));
-            const bool plateCorner = std::fabs(turn) > kPi / 3.0f && lenIn > kContourEpsilon && lenOut > kContourEpsilon;
-            if (!plateCorner && PointSegmentDistance(cur, prev, next) <= kContourEpsilon) {
+            if (!turnsAround(loop, i) && PointSegmentDistance(cur, prev, next) <= kSameDirectionJog) {
                 loop.erase(loop.begin() + static_cast<std::ptrdiff_t>(i));
                 changed = true;
-            } else {
-                ++i;
+                continue;
             }
+            ++i;
+        }
+    }
+
+    // 两块板的直角会被栅格磨成一条十几毫米的短边，立焊缝因此对不上拐角。
+    // 短边两端都是长边、转角接近 90° 时，收到两条长边的交点。
+    // 自由端是两侧长边掉头，转角接近 180°，中间隔着板厚，不能收到一个点。
+    constexpr float kMinArm = 30.0f;
+    constexpr float kMaxChamfer = 40.0f;
+    bool snapped = true;
+    while (snapped && loop.size() > 4) {
+        snapped = false;
+        const std::size_t n = loop.size();
+        for (std::size_t i = 0; i < n; ++i) {
+            const std::size_t i1 = (i + 1) % n;
+            const Eigen::Vector2f in = loop[i1] - loop[i];
+            if (in.norm() < kMinArm) {
+                continue;
+            }
+            std::size_t k = i1;
+            float chamfer = 0.0f;
+            int steps = 0;
+            while (steps < 8) {
+                const std::size_t nxt = (k + 1) % n;
+                if (nxt == i) {
+                    break;
+                }
+                const float step = (loop[nxt] - loop[k]).norm();
+                if (step >= kMinArm || chamfer + step > kMaxChamfer) {
+                    break;
+                }
+                chamfer += step;
+                k = nxt;
+                ++steps;
+            }
+            if (steps < 1) {
+                continue;
+            }
+            const std::size_t m = (k + 1) % n;
+            const Eigen::Vector2f out = loop[m] - loop[k];
+            if (out.norm() < kMinArm || m == i) {
+                continue;
+            }
+            const float cross = in.x() * out.y() - in.y() * out.x();
+            const float turnDeg = std::fabs(std::atan2(cross, in.dot(out))) * 180.0f / kPi;
+            if (turnDeg < 50.0f || turnDeg > 130.0f || std::fabs(cross) < 1e-4f) {
+                continue;
+            }
+            const Eigen::Vector2f delta = loop[k] - loop[i];
+            const float t = (delta.x() * out.y() - delta.y() * out.x()) / cross;
+            const Eigen::Vector2f hit = loop[i] + in * t;
+            if ((hit - loop[i1]).norm() > kMaxChamfer || (hit - loop[k]).norm() > kMaxChamfer) {
+                continue;
+            }
+            std::vector<Eigen::Vector2f> next;
+            next.reserve(n);
+            for (std::size_t p = m;; p = (p + 1) % n) {
+                next.push_back(loop[p]);
+                if (p == i) {
+                    break;
+                }
+            }
+            next.push_back(hit);
+            if (next.size() >= 4) {
+                loop.swap(next);
+                snapped = true;
+            }
+            break;
         }
     }
     return loop;
@@ -662,7 +760,7 @@ std::vector<std::vector<Eigen::Vector2f>> TraceContours(const Mask& mask, const 
         if ((raw.front() - raw.back()).squaredNorm() > grid.res * grid.res) {
             continue;
         }
-        std::vector<Eigen::Vector2f> loop = SimplifyLoop(std::move(raw), std::max(kContourEpsilon, grid.res));
+        std::vector<Eigen::Vector2f> loop = SimplifyLoop(std::move(raw), std::max(kRasterEpsilon, grid.res));
         if (loop.size() >= 4) {
             loops.push_back(std::move(loop));
         }
