@@ -1,0 +1,1241 @@
+#include "SceneSeamExtractor.h"
+
+#include <pcl/filters/voxel_grid.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <queue>
+#include <stdexcept>
+#include <tuple>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+namespace {
+
+using Cloud = pcl::PointCloud<pcl::PointXYZ>;
+using CloudPtr = Cloud::Ptr;
+
+constexpr float kNaN = std::numeric_limits<float>::quiet_NaN();
+constexpr float kPi = 3.14159265358979323846f;
+
+// 与具体组立件无关的内部常数。换工件时不应靠这些值调焊缝。
+constexpr float kGroundFitTolerance = 4.0f;
+constexpr float kMaxGroundTiltDeg = 5.0f;
+constexpr float kWorkpieceCloseRadius = 15.0f; ///< 底板掩码闭运算，补阴影缺口
+constexpr float kBasePlaneTolerance = 4.0f;
+constexpr float kTopNeighborhood = 4.0f;       ///< 判断飞点的邻域半径
+constexpr float kTopTolerance = 4.0f;          ///< 同一顶面允许的高差
+constexpr float kPlateStep = 24.0f;            ///< 超过该高差视为另一块板的台阶，不能把矮板削掉
+constexpr float kTopSupportRadius = 4.0f;      ///< 孤立高点过滤半径
+constexpr float kTopCloseRadius = 4.0f;        ///< 补顶面栅格缺口，把贴在一起的立板连成一块
+constexpr float kContourEpsilon = 32.0f;       ///< 轮廓折线拟合的允许偏差，吸收栅格台阶，不抹平两块板的搭接
+constexpr float kMinCornerTurnDeg = 35.0f;     ///< 行走方向右转超过该角度才是凹拐角
+constexpr float kMinConfidence = 0.3f;
+
+float Percentile(std::vector<float> values, float fraction)
+{
+    if (values.empty()) {
+        return 0.0f;
+    }
+    const std::size_t index = static_cast<std::size_t>(
+        std::min<float>(static_cast<float>(values.size() - 1), std::floor(fraction * static_cast<float>(values.size()))));
+    std::nth_element(values.begin(), values.begin() + static_cast<std::ptrdiff_t>(index), values.end());
+    return values[index];
+}
+
+// ---------------------------------------------------------------------------
+// 高度图
+// ---------------------------------------------------------------------------
+
+struct HeightGrid {
+    int cols = 0;
+    int rows = 0;
+    float res = 1.0f;
+    Eigen::Vector2f origin = Eigen::Vector2f::Zero();
+    std::vector<float> z; ///< 每格最高点，无数据为 NaN
+
+    std::size_t index(int c, int r) const
+    {
+        return static_cast<std::size_t>(r) * static_cast<std::size_t>(cols) + static_cast<std::size_t>(c);
+    }
+
+    bool inside(int c, int r) const
+    {
+        return c >= 0 && r >= 0 && c < cols && r < rows;
+    }
+
+    bool cellOf(float x, float y, int& c, int& r) const
+    {
+        c = static_cast<int>(std::floor((x - origin.x()) / res));
+        r = static_cast<int>(std::floor((y - origin.y()) / res));
+        return inside(c, r);
+    }
+
+    Eigen::Vector2f center(int c, int r) const
+    {
+        return origin + Eigen::Vector2f((static_cast<float>(c) + 0.5f) * res, (static_cast<float>(r) + 0.5f) * res);
+    }
+
+    Eigen::Vector2f corner(int c, int r) const
+    {
+        return origin + Eigen::Vector2f(static_cast<float>(c) * res, static_cast<float>(r) * res);
+    }
+};
+
+bool BuildHeightGrid(const Cloud& cloud, const std::vector<int>* indices, float res, HeightGrid& grid)
+{
+    Eigen::Vector2f minXY(std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+    Eigen::Vector2f maxXY = -minXY;
+
+    auto forEach = [&](auto&& fn) {
+        if (indices) {
+            for (int i : *indices) {
+                fn(cloud[static_cast<std::size_t>(i)]);
+            }
+        } else {
+            for (const pcl::PointXYZ& p : cloud.points) {
+                fn(p);
+            }
+        }
+    };
+
+    std::size_t count = 0;
+    forEach([&](const pcl::PointXYZ& p) {
+        minXY = minXY.cwiseMin(Eigen::Vector2f(p.x, p.y));
+        maxXY = maxXY.cwiseMax(Eigen::Vector2f(p.x, p.y));
+        ++count;
+    });
+    if (count == 0) {
+        return false;
+    }
+
+    grid.res = res;
+    grid.origin = minXY - Eigen::Vector2f(res, res);
+    const Eigen::Vector2f span = maxXY - grid.origin + Eigen::Vector2f(res, res);
+    grid.cols = std::max(1, static_cast<int>(std::ceil(span.x() / res)));
+    grid.rows = std::max(1, static_cast<int>(std::ceil(span.y() / res)));
+    if (static_cast<long long>(grid.cols) * grid.rows > 60000000LL) {
+        return false;
+    }
+    grid.z.assign(static_cast<std::size_t>(grid.cols) * static_cast<std::size_t>(grid.rows), kNaN);
+
+    forEach([&](const pcl::PointXYZ& p) {
+        int c = 0;
+        int r = 0;
+        if (!grid.cellOf(p.x, p.y, c, r)) {
+            return;
+        }
+        float& cell = grid.z[grid.index(c, r)];
+        if (!std::isfinite(cell) || p.z > cell) {
+            cell = p.z;
+        }
+    });
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// 二值图形态学与连通域
+// ---------------------------------------------------------------------------
+
+using Mask = std::vector<std::uint8_t>;
+
+std::vector<std::pair<int, int>> DiskOffsets(int radius)
+{
+    std::vector<std::pair<int, int>> offsets;
+    for (int dy = -radius; dy <= radius; ++dy) {
+        for (int dx = -radius; dx <= radius; ++dx) {
+            if (dx * dx + dy * dy <= radius * radius) {
+                offsets.emplace_back(dx, dy);
+            }
+        }
+    }
+    return offsets;
+}
+
+Mask Dilate(const Mask& src, int cols, int rows, int radius)
+{
+    if (radius <= 0) {
+        return src;
+    }
+    const std::vector<std::pair<int, int>> offsets = DiskOffsets(radius);
+    Mask dst(src.size(), 0);
+    for (int r = 0; r < rows; ++r) {
+        for (int c = 0; c < cols; ++c) {
+            if (!src[static_cast<std::size_t>(r) * cols + c]) {
+                continue;
+            }
+            for (const auto& [dx, dy] : offsets) {
+                const int cc = c + dx;
+                const int rr = r + dy;
+                if (cc >= 0 && rr >= 0 && cc < cols && rr < rows) {
+                    dst[static_cast<std::size_t>(rr) * cols + cc] = 1;
+                }
+            }
+        }
+    }
+    return dst;
+}
+
+Mask Erode(const Mask& src, int cols, int rows, int radius)
+{
+    if (radius <= 0) {
+        return src;
+    }
+    const std::vector<std::pair<int, int>> offsets = DiskOffsets(radius);
+    Mask dst(src.size(), 0);
+    for (int r = 0; r < rows; ++r) {
+        for (int c = 0; c < cols; ++c) {
+            if (!src[static_cast<std::size_t>(r) * cols + c]) {
+                continue;
+            }
+            bool keep = true;
+            for (const auto& [dx, dy] : offsets) {
+                const int cc = c + dx;
+                const int rr = r + dy;
+                if (cc < 0 || rr < 0 || cc >= cols || rr >= rows || !src[static_cast<std::size_t>(rr) * cols + cc]) {
+                    keep = false;
+                    break;
+                }
+            }
+            dst[static_cast<std::size_t>(r) * cols + c] = keep ? 1 : 0;
+        }
+    }
+    return dst;
+}
+
+Mask Close(const Mask& src, int cols, int rows, int radius)
+{
+    return Erode(Dilate(src, cols, rows, radius), cols, rows, radius);
+}
+
+struct Component {
+    int label = 0;
+    int count = 0;
+    int minC = 0;
+    int minR = 0;
+    int maxC = 0;
+    int maxR = 0;
+};
+
+std::vector<Component> LabelComponents(const Mask& mask, int cols, int rows, std::vector<int>& labels)
+{
+    labels.assign(mask.size(), 0);
+    std::vector<Component> components;
+    const int stepC[8] = {1, -1, 0, 0, 1, 1, -1, -1};
+    const int stepR[8] = {0, 0, 1, -1, 1, -1, 1, -1};
+
+    for (int r = 0; r < rows; ++r) {
+        for (int c = 0; c < cols; ++c) {
+            const std::size_t id = static_cast<std::size_t>(r) * cols + c;
+            if (!mask[id] || labels[id] != 0) {
+                continue;
+            }
+            Component comp;
+            comp.label = static_cast<int>(components.size()) + 1;
+            comp.minC = comp.maxC = c;
+            comp.minR = comp.maxR = r;
+            std::queue<std::pair<int, int>> queue;
+            queue.emplace(c, r);
+            labels[id] = comp.label;
+            while (!queue.empty()) {
+                const auto [cc, cr] = queue.front();
+                queue.pop();
+                ++comp.count;
+                comp.minC = std::min(comp.minC, cc);
+                comp.maxC = std::max(comp.maxC, cc);
+                comp.minR = std::min(comp.minR, cr);
+                comp.maxR = std::max(comp.maxR, cr);
+                for (int k = 0; k < 8; ++k) {
+                    const int nc = cc + stepC[k];
+                    const int nr = cr + stepR[k];
+                    if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) {
+                        continue;
+                    }
+                    const std::size_t nid = static_cast<std::size_t>(nr) * cols + nc;
+                    if (!mask[nid] || labels[nid] != 0) {
+                        continue;
+                    }
+                    labels[nid] = comp.label;
+                    queue.emplace(nc, nr);
+                }
+            }
+            components.push_back(comp);
+        }
+    }
+    return components;
+}
+
+int CellsOf(float length, float res)
+{
+    return std::max(1, static_cast<int>(std::round(length / std::max(res, 1e-3f))));
+}
+
+// ---------------------------------------------------------------------------
+// 平面拟合
+// ---------------------------------------------------------------------------
+
+Eigen::Vector4f HorizontalPlane(float z)
+{
+    return Eigen::Vector4f(0.0f, 0.0f, 1.0f, -z);
+}
+
+// 最小二乘拟合 z = a x + b y + c，返回法向朝上的归一化平面。
+bool FitPlaneLeastSquares(const std::vector<Eigen::Vector3f>& points, Eigen::Vector4f& plane)
+{
+    if (points.size() < 3) {
+        return false;
+    }
+    Eigen::Vector3d mean = Eigen::Vector3d::Zero();
+    for (const Eigen::Vector3f& p : points) {
+        mean += p.cast<double>();
+    }
+    mean /= static_cast<double>(points.size());
+
+    Eigen::Matrix2d ata = Eigen::Matrix2d::Zero();
+    Eigen::Vector2d atb = Eigen::Vector2d::Zero();
+    for (const Eigen::Vector3f& p : points) {
+        const Eigen::Vector3d q = p.cast<double>() - mean;
+        const Eigen::Vector2d xy(q.x(), q.y());
+        ata += xy * xy.transpose();
+        atb += xy * q.z();
+    }
+    if (std::fabs(ata.determinant()) < 1e-9) {
+        plane = HorizontalPlane(static_cast<float>(mean.z()));
+        return true;
+    }
+    const Eigen::Vector2d ab = ata.ldlt().solve(atb);
+    Eigen::Vector3d normal(-ab.x(), -ab.y(), 1.0);
+    const double norm = normal.norm();
+    normal /= norm;
+    const double d = -normal.dot(mean);
+    plane << static_cast<float>(normal.x()), static_cast<float>(normal.y()), static_cast<float>(normal.z()),
+        static_cast<float>(d);
+    return true;
+}
+
+float PlaneTiltDeg(const Eigen::Vector4f& plane)
+{
+    const float cosTilt = std::min(1.0f, std::fabs(plane[2]) / plane.head<3>().norm());
+    return std::acos(cosTilt) * 180.0f / kPi;
+}
+
+// 高度直方图中最低的一层显著高度。倾斜地面的高度会铺开成一段，
+// 其中最低的区段只含地面，不会混入底板；工件内部最低的一层则是底板上表面。
+bool HistogramBaseLevel(const std::vector<float>& values, float bin, float& level)
+{
+    if (values.empty()) {
+        return false;
+    }
+    float minV = std::numeric_limits<float>::max();
+    float maxV = std::numeric_limits<float>::lowest();
+    for (float v : values) {
+        minV = std::min(minV, v);
+        maxV = std::max(maxV, v);
+    }
+    const long long binCount = static_cast<long long>((maxV - minV) / bin) + 1;
+    if (binCount > 2000000LL) {
+        return false;
+    }
+    std::vector<int> histogram(static_cast<std::size_t>(binCount), 0);
+    for (float v : values) {
+        ++histogram[static_cast<std::size_t>((v - minV) / bin)];
+    }
+    const int peak = *std::max_element(histogram.begin(), histogram.end());
+    const int significant = std::max(1, static_cast<int>(0.3f * static_cast<float>(peak)));
+    for (std::size_t i = 0; i < histogram.size(); ++i) {
+        if (histogram[i] >= significant) {
+            level = minV + (static_cast<float>(i) + 0.5f) * bin;
+            return true;
+        }
+    }
+    return false;
+}
+
+// 用最低显著高度做初值，再迭代最小二乘拟合主平面。
+bool FitDominantPlane(const HeightGrid& grid,
+                      const Mask* candidate,
+                      float tolerance,
+                      float maxTiltDeg,
+                      Eigen::Vector4f& plane)
+{
+    std::vector<float> heights;
+    heights.reserve(grid.z.size() / 4);
+    for (int r = 0; r < grid.rows; ++r) {
+        for (int c = 0; c < grid.cols; ++c) {
+            const std::size_t id = grid.index(c, r);
+            if (!std::isfinite(grid.z[id]) || (candidate && !(*candidate)[id])) {
+                continue;
+            }
+            heights.push_back(grid.z[id]);
+        }
+    }
+
+    float mode = 0.0f;
+    if (!HistogramBaseLevel(heights, std::max(tolerance * 0.5f, 0.5f), mode)) {
+        return false;
+    }
+    plane = HorizontalPlane(mode);
+
+    std::vector<Eigen::Vector3f> inliers;
+    for (int iteration = 0; iteration < 4; ++iteration) {
+        inliers.clear();
+        for (int r = 0; r < grid.rows; ++r) {
+            for (int c = 0; c < grid.cols; ++c) {
+                const std::size_t id = grid.index(c, r);
+                if (!std::isfinite(grid.z[id]) || (candidate && !(*candidate)[id])) {
+                    continue;
+                }
+                const Eigen::Vector2f xy = grid.center(c, r);
+                if (std::fabs(grid.z[id] - PlaneZ(plane, xy.x(), xy.y())) <= tolerance) {
+                    inliers.emplace_back(xy.x(), xy.y(), grid.z[id]);
+                }
+            }
+        }
+        Eigen::Vector4f fitted;
+        if (!FitPlaneLeastSquares(inliers, fitted)) {
+            break;
+        }
+        if (PlaneTiltDeg(fitted) > maxTiltDeg) {
+            plane = HorizontalPlane(mode);
+            break;
+        }
+        plane = fitted;
+    }
+    return true;
+}
+
+Eigen::Vector3f Lift(const Eigen::Vector4f& plane, const Eigen::Vector2f& xy, float above = 0.0f)
+{
+    return Eigen::Vector3f(xy.x(), xy.y(), PlaneZ(plane, xy.x(), xy.y()) + above);
+}
+
+// ---------------------------------------------------------------------------
+// 顶面轮廓
+// ---------------------------------------------------------------------------
+
+// 材料在行进方向左侧。外轮廓逆时针，孔洞顺时针绕空洞、材料仍在左侧。
+// 方向：0 +x，1 +y，2 -x，3 -y。
+constexpr int kDirX[4] = {1, 0, -1, 0};
+constexpr int kDirY[4] = {0, 1, 0, -1};
+
+bool MaskAt(const Mask& mask, int cols, int rows, int c, int r)
+{
+    return c >= 0 && r >= 0 && c < cols && r < rows && mask[static_cast<std::size_t>(r) * cols + c];
+}
+
+float PointSegmentDistance(const Eigen::Vector2f& p, const Eigen::Vector2f& a, const Eigen::Vector2f& b)
+{
+    const Eigen::Vector2f ab = b - a;
+    const float len2 = ab.squaredNorm();
+    if (len2 < 1e-12f) {
+        return (p - a).norm();
+    }
+    const float t = std::clamp((p - a).dot(ab) / len2, 0.0f, 1.0f);
+    return (p - (a + ab * t)).norm();
+}
+
+void DouglasPeucker(const std::vector<Eigen::Vector2f>& pts, int i, int j, float epsilon, std::vector<char>& keep)
+{
+    if (j <= i + 1) {
+        return;
+    }
+    float best = 0.0f;
+    int split = -1;
+    for (int t = i + 1; t < j; ++t) {
+        const float distance = PointSegmentDistance(pts[static_cast<std::size_t>(t)], pts[static_cast<std::size_t>(i)],
+                                                     pts[static_cast<std::size_t>(j)]);
+        if (distance > best) {
+            best = distance;
+            split = t;
+        }
+    }
+    if (split >= 0 && best > epsilon) {
+        keep[static_cast<std::size_t>(split)] = 1;
+        DouglasPeucker(pts, i, split, epsilon, keep);
+        DouglasPeucker(pts, split, j, epsilon, keep);
+    }
+}
+
+std::vector<Eigen::Vector2f> Chain(const std::vector<Eigen::Vector2f>& pts, int from, int to)
+{
+    std::vector<Eigen::Vector2f> chain;
+    const int n = static_cast<int>(pts.size());
+    if (n == 0) {
+        return chain;
+    }
+    for (int i = from;; i = (i + 1) % n) {
+        chain.push_back(pts[static_cast<std::size_t>(i)]);
+        if (i == to || static_cast<int>(chain.size()) > n) {
+            break;
+        }
+    }
+    return chain;
+}
+
+std::vector<Eigen::Vector2f> SimplifyChain(const std::vector<Eigen::Vector2f>& chain, float epsilon)
+{
+    std::vector<Eigen::Vector2f> simplified;
+    if (chain.size() < 2) {
+        return chain;
+    }
+    std::vector<char> keep(chain.size(), 0);
+    keep.front() = 1;
+    keep.back() = 1;
+    DouglasPeucker(chain, 0, static_cast<int>(chain.size()) - 1, epsilon, keep);
+    for (std::size_t i = 0; i < chain.size(); ++i) {
+        if (keep[i]) {
+            simplified.push_back(chain[i]);
+        }
+    }
+    return simplified;
+}
+
+// 闭环：取距质心最远点和距该点最远点把环拆成两段再拟合，避免首尾弦长为零。
+std::vector<Eigen::Vector2f> SimplifyLoop(std::vector<Eigen::Vector2f> pts, float epsilon)
+{
+    if (pts.size() >= 2 && (pts.front() - pts.back()).norm() < 1e-4f) {
+        pts.pop_back();
+    }
+    if (pts.size() < 4) {
+        return {};
+    }
+
+    Eigen::Vector2f mean = Eigen::Vector2f::Zero();
+    for (const Eigen::Vector2f& p : pts) {
+        mean += p;
+    }
+    mean /= static_cast<float>(pts.size());
+
+    int far = 0;
+    float farDist = -1.0f;
+    for (int i = 0; i < static_cast<int>(pts.size()); ++i) {
+        const float distance = (pts[static_cast<std::size_t>(i)] - mean).squaredNorm();
+        if (distance > farDist) {
+            farDist = distance;
+            far = i;
+        }
+    }
+    int opposite = far;
+    float oppositeDist = -1.0f;
+    for (int i = 0; i < static_cast<int>(pts.size()); ++i) {
+        const float distance = (pts[static_cast<std::size_t>(i)] - pts[static_cast<std::size_t>(far)]).squaredNorm();
+        if (distance > oppositeDist) {
+            oppositeDist = distance;
+            opposite = i;
+        }
+    }
+    if (opposite == far) {
+        return {};
+    }
+
+    const std::vector<Eigen::Vector2f> first = SimplifyChain(Chain(pts, far, opposite), epsilon);
+    const std::vector<Eigen::Vector2f> second = SimplifyChain(Chain(pts, opposite, far), epsilon);
+    std::vector<Eigen::Vector2f> loop;
+    loop.insert(loop.end(), first.begin(), first.end() - 1);
+    loop.insert(loop.end(), second.begin(), second.end() - 1);
+
+    // 吞掉栅格台阶和近似共线的折点。两块长板交成的锐拐角两侧都长，不能并掉。
+    bool changed = true;
+    while (changed && loop.size() > 4) {
+        changed = false;
+        for (std::size_t i = 0; i < loop.size();) {
+            const std::size_t n = loop.size();
+            const Eigen::Vector2f& prev = loop[(i + n - 1) % n];
+            const Eigen::Vector2f& cur = loop[i];
+            const Eigen::Vector2f& next = loop[(i + 1) % n];
+            const Eigen::Vector2f in = cur - prev;
+            const Eigen::Vector2f out = next - cur;
+            const float lenIn = in.norm();
+            const float lenOut = out.norm();
+            if (lenIn < 1e-3f || lenOut < 1e-3f) {
+                loop.erase(loop.begin() + static_cast<std::ptrdiff_t>(i));
+                changed = true;
+                continue;
+            }
+            const float cross = in.x() * out.y() - in.y() * out.x();
+            const float turn = std::atan2(cross, in.dot(out));
+            const bool plateCorner = std::fabs(turn) > kPi / 3.0f && lenIn > kContourEpsilon && lenOut > kContourEpsilon;
+            if (!plateCorner && PointSegmentDistance(cur, prev, next) <= kContourEpsilon) {
+                loop.erase(loop.begin() + static_cast<std::ptrdiff_t>(i));
+                changed = true;
+            } else {
+                ++i;
+            }
+        }
+    }
+    return loop;
+}
+
+std::vector<std::vector<Eigen::Vector2f>> TraceContours(const Mask& mask, const HeightGrid& grid)
+{
+    const int cols = grid.cols;
+    const int rows = grid.rows;
+    const int stride = cols + 1;
+    std::unordered_map<std::uint64_t, std::uint8_t> outgoing;
+    outgoing.reserve(static_cast<std::size_t>(std::min(cols, rows)) * 8);
+
+    auto keyOf = [stride](int x, int y) {
+        return static_cast<std::uint64_t>(y) * static_cast<std::uint64_t>(stride) + static_cast<std::uint64_t>(x);
+    };
+    auto addEdge = [&](int x, int y, int dir) {
+        outgoing[keyOf(x, y)] |= static_cast<std::uint8_t>(1u << dir);
+    };
+
+    std::vector<std::tuple<int, int, int>> edges;
+    edges.reserve(static_cast<std::size_t>(cols + rows) * 4);
+    for (int r = 0; r < rows; ++r) {
+        for (int c = 0; c < cols; ++c) {
+            if (!MaskAt(mask, cols, rows, c, r)) {
+                continue;
+            }
+            // 底边向右、右边向上、顶边向左、左边向下，材料保持在左侧
+            if (!MaskAt(mask, cols, rows, c, r - 1)) {
+                addEdge(c, r, 0);
+                edges.emplace_back(c, r, 0);
+            }
+            if (!MaskAt(mask, cols, rows, c + 1, r)) {
+                addEdge(c + 1, r, 1);
+                edges.emplace_back(c + 1, r, 1);
+            }
+            if (!MaskAt(mask, cols, rows, c, r + 1)) {
+                addEdge(c + 1, r + 1, 2);
+                edges.emplace_back(c + 1, r + 1, 2);
+            }
+            if (!MaskAt(mask, cols, rows, c - 1, r)) {
+                addEdge(c, r + 1, 3);
+                edges.emplace_back(c, r + 1, 3);
+            }
+        }
+    }
+
+    auto take = [&](int x, int y, int dir) {
+        const auto it = outgoing.find(keyOf(x, y));
+        if (it == outgoing.end() || (it->second & static_cast<std::uint8_t>(1u << dir)) == 0) {
+            return false;
+        }
+        it->second = static_cast<std::uint8_t>(it->second & ~static_cast<std::uint8_t>(1u << dir));
+        return true;
+    };
+    auto nextDir = [&](int x, int y, int incoming, int& dir) {
+        const auto it = outgoing.find(keyOf(x, y));
+        if (it == outgoing.end() || it->second == 0) {
+            return false;
+        }
+        const int order[4] = {(incoming + 1) & 3, incoming & 3, (incoming + 3) & 3, (incoming + 2) & 3};
+        for (int candidate : order) {
+            if ((it->second & static_cast<std::uint8_t>(1u << candidate)) == 0) {
+                continue;
+            }
+            it->second = static_cast<std::uint8_t>(it->second & ~static_cast<std::uint8_t>(1u << candidate));
+            dir = candidate;
+            return true;
+        }
+        return false;
+    };
+
+    std::vector<std::vector<Eigen::Vector2f>> loops;
+    const int guardLimit = static_cast<int>(edges.size()) + 2;
+    for (const auto& [sx, sy, sdir] : edges) {
+        if (!take(sx, sy, sdir)) {
+            continue;
+        }
+        std::vector<Eigen::Vector2f> raw;
+        raw.push_back(grid.corner(sx, sy));
+        int x = sx + kDirX[sdir];
+        int y = sy + kDirY[sdir];
+        int incoming = sdir;
+        raw.push_back(grid.corner(x, y));
+        int guard = 0;
+        while ((x != sx || y != sy) && guard++ < guardLimit) {
+            int dir = 0;
+            if (!nextDir(x, y, incoming, dir)) {
+                break;
+            }
+            x += kDirX[dir];
+            y += kDirY[dir];
+            incoming = dir;
+            raw.push_back(grid.corner(x, y));
+        }
+        if ((raw.front() - raw.back()).squaredNorm() > grid.res * grid.res) {
+            continue;
+        }
+        std::vector<Eigen::Vector2f> loop = SimplifyLoop(std::move(raw), std::max(kContourEpsilon, grid.res));
+        if (loop.size() >= 4) {
+            loops.push_back(std::move(loop));
+        }
+    }
+    return loops;
+}
+
+// 沿轮廓边、朝材料内侧采样顶面高度。anchor 为端点，toward 指向边的内部。
+float SampleEdgeHeight(const HeightGrid& grid,
+                       const Mask& crest,
+                       const std::vector<float>& above,
+                       const Eigen::Vector2f& anchor,
+                       const Eigen::Vector2f& toward,
+                       const Eigen::Vector2f& inward)
+{
+    const float alongReach = 28.0f;
+    const float depth = 20.0f;
+    const int pad = CellsOf(std::max(alongReach, depth) + grid.res, grid.res) + 1;
+    int ac = 0;
+    int ar = 0;
+    if (!grid.cellOf(anchor.x(), anchor.y(), ac, ar)) {
+        ac = static_cast<int>(std::floor((anchor.x() - grid.origin.x()) / grid.res));
+        ar = static_cast<int>(std::floor((anchor.y() - grid.origin.y()) / grid.res));
+    }
+
+    std::vector<float> heights;
+    for (int r = ar - pad; r <= ar + pad; ++r) {
+        for (int c = ac - pad; c <= ac + pad; ++c) {
+            if (!grid.inside(c, r) || !crest[grid.index(c, r)]) {
+                continue;
+            }
+            const Eigen::Vector2f delta = grid.center(c, r) - anchor;
+            const float along = delta.dot(toward);
+            const float side = delta.dot(inward);
+            if (along < -grid.res || along > alongReach || side < -grid.res || side > depth) {
+                continue;
+            }
+            heights.push_back(above[grid.index(c, r)]);
+        }
+    }
+    if (heights.empty()) {
+        for (int r = ar - pad; r <= ar + pad; ++r) {
+            for (int c = ac - pad; c <= ac + pad; ++c) {
+                if (!grid.inside(c, r) || !crest[grid.index(c, r)]) {
+                    continue;
+                }
+                if ((grid.center(c, r) - anchor).norm() <= 36.0f) {
+                    heights.push_back(above[grid.index(c, r)]);
+                }
+            }
+        }
+    }
+    if (heights.empty()) {
+        return 0.0f;
+    }
+    return Percentile(std::move(heights), 0.6f);
+}
+
+struct VerticalCandidate {
+    Eigen::Vector2f xy = Eigen::Vector2f::Zero();
+    float height = 0.0f;
+    float confidence = 0.0f;
+    int edgeA = -1;
+    int edgeB = -1;
+    Eigen::Vector2f approach = Eigen::Vector2f::Zero();
+};
+
+bool ProcessWorkpiece(const Cloud& scene,
+                      const std::vector<int>& indices,
+                      const Eigen::Vector4f& groundPlane,
+                      const SceneSeamParams& params,
+                      Workpiece& piece)
+{
+    HeightGrid grid;
+    if (!BuildHeightGrid(scene, &indices, params.workpieceResolution, grid)) {
+        return false;
+    }
+
+    Mask aboveGround(grid.z.size(), 0);
+    for (int r = 0; r < grid.rows; ++r) {
+        for (int c = 0; c < grid.cols; ++c) {
+            const std::size_t id = grid.index(c, r);
+            if (!std::isfinite(grid.z[id])) {
+                continue;
+            }
+            const Eigen::Vector2f xy = grid.center(c, r);
+            if (grid.z[id] - PlaneZ(groundPlane, xy.x(), xy.y()) > params.groundThreshold) {
+                aboveGround[id] = 1;
+            }
+        }
+    }
+    if (!FitDominantPlane(grid, &aboveGround, kBasePlaneTolerance, kMaxGroundTiltDeg, piece.basePlane)) {
+        return false;
+    }
+
+    std::vector<float> above(grid.z.size(), 0.0f);
+    Mask crest(grid.z.size(), 0);
+    const int topRadius = CellsOf(kTopNeighborhood, grid.res);
+    for (int r = 0; r < grid.rows; ++r) {
+        for (int c = 0; c < grid.cols; ++c) {
+            const std::size_t id = grid.index(c, r);
+            if (!std::isfinite(grid.z[id])) {
+                continue;
+            }
+            const Eigen::Vector2f xy = grid.center(c, r);
+            const float h = grid.z[id] - PlaneZ(piece.basePlane, xy.x(), xy.y());
+            above[id] = h;
+            if (h < params.ribMinHeight) {
+                continue;
+            }
+            // 飞点沿视线从顶边斜着落到板上，邻域里只高出一截。
+            // 另一块更高的立板是台阶，高差更大，矮板自己的顶面要保留，否则接头处轮廓断开。
+            bool faceSlope = false;
+            for (int dr = -topRadius; dr <= topRadius && !faceSlope; ++dr) {
+                for (int dc = -topRadius; dc <= topRadius; ++dc) {
+                    if ((dr == 0 && dc == 0) || !grid.inside(c + dc, r + dr)) {
+                        continue;
+                    }
+                    const std::size_t nid = grid.index(c + dc, r + dr);
+                    if (!std::isfinite(grid.z[nid])) {
+                        continue;
+                    }
+                    const Eigen::Vector2f nxy = grid.center(c + dc, r + dr);
+                    const float rise = grid.z[nid] - PlaneZ(piece.basePlane, nxy.x(), nxy.y()) - h;
+                    if (rise > kTopTolerance && rise < kPlateStep) {
+                        faceSlope = true;
+                        break;
+                    }
+                }
+            }
+            if (!faceSlope) {
+                crest[id] = 1;
+            }
+        }
+    }
+
+    const int supportRadius = CellsOf(kTopSupportRadius, grid.res);
+    Mask supported(grid.z.size(), 0);
+    for (int r = 0; r < grid.rows; ++r) {
+        for (int c = 0; c < grid.cols; ++c) {
+            if (!crest[grid.index(c, r)]) {
+                continue;
+            }
+            int neighbours = 0;
+            for (int dr = -supportRadius; dr <= supportRadius && neighbours == 0; ++dr) {
+                for (int dc = -supportRadius; dc <= supportRadius; ++dc) {
+                    if ((dr != 0 || dc != 0) && grid.inside(c + dc, r + dr) && crest[grid.index(c + dc, r + dr)]) {
+                        ++neighbours;
+                        break;
+                    }
+                }
+            }
+            if (neighbours > 0) {
+                supported[grid.index(c, r)] = 1;
+            }
+        }
+    }
+
+    const Mask top = Close(supported, grid.cols, grid.rows, CellsOf(kTopCloseRadius, grid.res));
+    const std::vector<std::vector<Eigen::Vector2f>> loops = TraceContours(top, grid);
+
+    const Eigen::Vector2f localCenter = 0.5f * (piece.minXY + piece.maxXY);
+    piece.baseHeight = PlaneZ(piece.basePlane, localCenter.x(), localCenter.y())
+        - PlaneZ(groundPlane, localCenter.x(), localCenter.y());
+
+    struct EdgeRecord {
+        Eigen::Vector2f a;
+        Eigen::Vector2f b;
+        Eigen::Vector2f inward;
+        float height = 0.0f;
+        float confidence = 0.0f;
+    };
+    std::vector<EdgeRecord> edges;
+    std::vector<VerticalCandidate> verticals;
+
+    for (const std::vector<Eigen::Vector2f>& loop : loops) {
+        const int n = static_cast<int>(loop.size());
+        std::vector<int> edgeIndex(static_cast<std::size_t>(n), -1);
+        for (int i = 0; i < n; ++i) {
+            const Eigen::Vector2f& a = loop[static_cast<std::size_t>(i)];
+            const Eigen::Vector2f& b = loop[static_cast<std::size_t>((i + 1) % n)];
+            const Eigen::Vector2f delta = b - a;
+            const float length = delta.norm();
+            if (length < params.minSeamLength) {
+                continue;
+            }
+            const Eigen::Vector2f dir = delta / length;
+            const Eigen::Vector2f inward(-dir.y(), dir.x()); // 材料在左侧
+            const float h0 = SampleEdgeHeight(grid, supported, above, a, dir, inward);
+            const float h1 = SampleEdgeHeight(grid, supported, above, b, -dir, inward);
+            EdgeRecord edge;
+            edge.a = a;
+            edge.b = b;
+            edge.inward = inward;
+            edge.height = std::max(h0, h1);
+            edge.confidence = edge.height >= params.ribMinHeight ? 0.9f : 0.55f;
+            edgeIndex[static_cast<std::size_t>(i)] = static_cast<int>(edges.size());
+            edges.push_back(edge);
+        }
+
+        for (int i = 0; i < n; ++i) {
+            const int incoming = edgeIndex[static_cast<std::size_t>((i + n - 1) % n)];
+            const int outgoing = edgeIndex[static_cast<std::size_t>(i)];
+            if (incoming < 0 || outgoing < 0) {
+                continue;
+            }
+            const EdgeRecord& prev = edges[static_cast<std::size_t>(incoming)];
+            const EdgeRecord& next = edges[static_cast<std::size_t>(outgoing)];
+            const Eigen::Vector2f inDir = (prev.b - prev.a).normalized();
+            const Eigen::Vector2f outDir = (next.b - next.a).normalized();
+            const float cross = inDir.x() * outDir.y() - inDir.y() * outDir.x();
+            const float dot = inDir.dot(outDir);
+            const float turnDeg = std::atan2(cross, dot) * 180.0f / kPi;
+            // 材料在左侧时，凹拐角是右转
+            if (turnDeg > -kMinCornerTurnDeg) {
+                continue;
+            }
+            const float height = std::min(prev.height > 1.0f ? prev.height : next.height,
+                                          next.height > 1.0f ? next.height : prev.height);
+            if (height < params.ribMinHeight) {
+                continue;
+            }
+            const Eigen::Vector2f outwardIn(inDir.y(), -inDir.x());
+            const Eigen::Vector2f outwardOut(outDir.y(), -outDir.x());
+            Eigen::Vector2f approach = outwardIn + outwardOut;
+            if (approach.norm() < 1e-4f) {
+                approach = outwardIn;
+            }
+            approach.normalize();
+            verticals.push_back({loop[static_cast<std::size_t>(i)], height, std::min(prev.confidence, next.confidence),
+                                 incoming, outgoing, approach});
+        }
+    }
+
+    // 圆角上挨得很近的两个凹点并成一个，距离小于最薄板厚，不会把 T 形两侧的立焊缝并掉
+    std::vector<char> used(verticals.size(), 0);
+    std::vector<VerticalCandidate> merged;
+    constexpr float kVerticalMerge = 3.0f;
+    for (std::size_t i = 0; i < verticals.size(); ++i) {
+        if (used[i]) {
+            continue;
+        }
+        Eigen::Vector2f sum = verticals[i].xy;
+        float heightSum = verticals[i].height;
+        Eigen::Vector2f approachSum = verticals[i].approach;
+        float confidence = verticals[i].confidence;
+        int count = 1;
+        int edgeA = verticals[i].edgeA;
+        int edgeB = verticals[i].edgeB;
+        used[i] = 1;
+        for (std::size_t j = i + 1; j < verticals.size(); ++j) {
+            if (used[j] || (verticals[j].xy - verticals[i].xy).norm() > kVerticalMerge) {
+                continue;
+            }
+            used[j] = 1;
+            sum += verticals[j].xy;
+            heightSum += verticals[j].height;
+            approachSum += verticals[j].approach;
+            confidence = std::min(confidence, verticals[j].confidence);
+            ++count;
+        }
+        VerticalCandidate corner;
+        corner.xy = sum / static_cast<float>(count);
+        corner.height = heightSum / static_cast<float>(count);
+        corner.confidence = confidence;
+        corner.edgeA = edgeA;
+        corner.edgeB = edgeB;
+        corner.approach = approachSum.norm() > 1e-4f ? approachSum.normalized() : verticals[i].approach;
+        merged.push_back(corner);
+    }
+
+    piece.ribs.clear();
+    piece.seams.clear();
+    float longest = 0.0f;
+    for (std::size_t i = 0; i < edges.size(); ++i) {
+        const EdgeRecord& edge = edges[i];
+        RibSegment rib;
+        rib.id = static_cast<int>(i);
+        rib.start = edge.a;
+        rib.end = edge.b;
+        rib.height = edge.height;
+        rib.confidence = edge.confidence;
+        piece.ribs.push_back(rib);
+        if (rib.length() > longest) {
+            longest = rib.length();
+            float yaw = std::atan2(edge.b.y() - edge.a.y(), edge.b.x() - edge.a.x());
+            if (yaw < 0.0f) {
+                yaw += kPi;
+            }
+            piece.yawRad = yaw;
+        }
+
+        InitialSeam seam;
+        seam.workpieceId = piece.id;
+        seam.type = SeamType::FlatFillet;
+        seam.start = Lift(piece.basePlane, edge.a);
+        seam.end = Lift(piece.basePlane, edge.b);
+        seam.approachSide = Eigen::Vector3f(-edge.inward.x(), -edge.inward.y(), 0.0f);
+        seam.ribHeight = edge.height;
+        seam.confidence = edge.confidence;
+        seam.ribA = rib.id;
+        piece.seams.push_back(seam);
+    }
+    for (const VerticalCandidate& corner : merged) {
+        InitialSeam seam;
+        seam.workpieceId = piece.id;
+        seam.type = SeamType::VerticalFillet;
+        seam.start = Lift(piece.basePlane, corner.xy);
+        seam.end = Lift(piece.basePlane, corner.xy, corner.height);
+        seam.approachSide = Eigen::Vector3f(corner.approach.x(), corner.approach.y(), 0.0f);
+        seam.ribHeight = corner.height;
+        seam.confidence = corner.confidence;
+        seam.ribA = corner.edgeA;
+        seam.ribB = corner.edgeB;
+        piece.seams.push_back(seam);
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// 整场流程
+// ---------------------------------------------------------------------------
+
+CloudPtr Preprocess(const Cloud::ConstPtr& cloud, const SceneSeamParams& params)
+{
+    CloudPtr valid(new Cloud);
+    valid->reserve(cloud->size());
+    for (const pcl::PointXYZ& p : cloud->points) {
+        if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) {
+            continue;
+        }
+        if (std::fabs(p.x) < 1e-4f && std::fabs(p.y) < 1e-4f && std::fabs(p.z) < 1e-4f) {
+            continue;
+        }
+        valid->push_back(p);
+    }
+    valid->width = static_cast<std::uint32_t>(valid->size());
+    valid->height = 1;
+    valid->is_dense = true;
+
+    if (params.voxelSize <= 0.0f || valid->empty()) {
+        return valid;
+    }
+    CloudPtr down(new Cloud);
+    pcl::VoxelGrid<pcl::PointXYZ> voxel;
+    voxel.setInputCloud(valid);
+    voxel.setLeafSize(params.voxelSize, params.voxelSize, params.voxelSize);
+    voxel.filter(*down);
+    if (down->empty()) {
+        return valid;
+    }
+    return down;
+}
+
+// ---------------------------------------------------------------------------
+// Z 轴翻转：相机坐标系（Z 指向地面）与计算用的 Z 向上坐标系互换
+// ---------------------------------------------------------------------------
+
+void NegateZ(Cloud& cloud)
+{
+    for (pcl::PointXYZ& p : cloud.points) {
+        p.z = -p.z;
+    }
+}
+
+// ax + by + cz + d = 0 在 z' = -z 下变为 ax + by - cz' + d = 0
+Eigen::Vector4f NegateZ(const Eigen::Vector4f& plane)
+{
+    return Eigen::Vector4f(plane[0], plane[1], -plane[2], plane[3]);
+}
+
+Eigen::Vector3f NegateZ(const Eigen::Vector3f& v)
+{
+    return Eigen::Vector3f(v.x(), v.y(), -v.z());
+}
+
+void NegateZ(InitialSeam& seam)
+{
+    seam.start = NegateZ(seam.start);
+    seam.end = NegateZ(seam.end);
+    seam.approachSide = NegateZ(seam.approachSide);
+}
+
+SceneSeamResult ExtractImpl(const Cloud::ConstPtr& input, const SceneSeamParams& params)
+{
+    SceneSeamResult result;
+    if (!input || input->empty()) {
+        result.message = "输入点云为空";
+        return result;
+    }
+    if (params.sceneResolution <= 0.0f || params.workpieceResolution <= 0.0f) {
+        result.message = "栅格分辨率必须为正";
+        return result;
+    }
+
+    result.cloud = Preprocess(input, params);
+    if (params.zAxisDown) {
+        NegateZ(*result.cloud);
+    }
+    const Cloud& cloud = *result.cloud;
+    if (cloud.size() < 100) {
+        result.message = "有效点过少";
+        return result;
+    }
+
+    HeightGrid grid;
+    if (!BuildHeightGrid(cloud, nullptr, params.sceneResolution, grid)) {
+        result.message = "整场高度图过大或为空";
+        return result;
+    }
+
+    if (std::isfinite(params.groundHeight)) {
+        result.groundPlane = HorizontalPlane(params.zAxisDown ? -params.groundHeight : params.groundHeight);
+    } else if (!FitDominantPlane(grid, nullptr, kGroundFitTolerance, kMaxGroundTiltDeg, result.groundPlane)) {
+        result.message = "地面估计失败";
+        return result;
+    }
+
+    Mask objectMask(grid.z.size(), 0);
+    for (int r = 0; r < grid.rows; ++r) {
+        for (int c = 0; c < grid.cols; ++c) {
+            const std::size_t id = grid.index(c, r);
+            if (!std::isfinite(grid.z[id])) {
+                continue;
+            }
+            const Eigen::Vector2f xy = grid.center(c, r);
+            if (grid.z[id] - PlaneZ(result.groundPlane, xy.x(), xy.y()) > params.groundThreshold) {
+                objectMask[id] = 1;
+            }
+        }
+    }
+    objectMask = Close(objectMask, grid.cols, grid.rows, CellsOf(kWorkpieceCloseRadius, grid.res));
+
+    std::vector<int> labels;
+    const std::vector<Component> components = LabelComponents(objectMask, grid.cols, grid.rows, labels);
+
+    std::vector<int> labelToPiece(components.size() + 1, -1);
+    const float cellArea = grid.res * grid.res;
+    for (const Component& comp : components) {
+        const float area = static_cast<float>(comp.count) * cellArea;
+        const float sizeX = static_cast<float>(comp.maxC - comp.minC + 1) * grid.res;
+        const float sizeY = static_cast<float>(comp.maxR - comp.minR + 1) * grid.res;
+        if (area < params.minWorkpieceArea || std::min(sizeX, sizeY) < params.minWorkpieceSize) {
+            continue;
+        }
+        Workpiece piece;
+        piece.id = static_cast<int>(result.workpieces.size());
+        piece.minXY = grid.origin + Eigen::Vector2f(static_cast<float>(comp.minC), static_cast<float>(comp.minR)) * grid.res;
+        piece.maxXY = grid.origin + Eigen::Vector2f(static_cast<float>(comp.maxC + 1), static_cast<float>(comp.maxR + 1)) * grid.res;
+        piece.center = 0.5f * (piece.minXY + piece.maxXY);
+        labelToPiece[static_cast<std::size_t>(comp.label)] = piece.id;
+        result.workpieces.push_back(piece);
+    }
+
+    std::vector<std::vector<int>> pieceIndices(result.workpieces.size());
+    for (std::size_t i = 0; i < cloud.size(); ++i) {
+        int c = 0;
+        int r = 0;
+        if (!grid.cellOf(cloud[i].x, cloud[i].y, c, r)) {
+            continue;
+        }
+        const int label = labels[grid.index(c, r)];
+        if (label == 0) {
+            continue;
+        }
+        const int pieceId = labelToPiece[static_cast<std::size_t>(label)];
+        if (pieceId >= 0) {
+            pieceIndices[static_cast<std::size_t>(pieceId)].push_back(static_cast<int>(i));
+        }
+    }
+
+    std::size_t rejected = 0;
+    for (Workpiece& piece : result.workpieces) {
+        const std::vector<int>& indices = pieceIndices[static_cast<std::size_t>(piece.id)];
+        piece.cloud->reserve(indices.size());
+        for (int index : indices) {
+            piece.cloud->push_back(cloud[static_cast<std::size_t>(index)]);
+        }
+        piece.cloud->width = static_cast<std::uint32_t>(piece.cloud->size());
+        piece.cloud->height = 1;
+        piece.cloud->is_dense = true;
+
+        if (!ProcessWorkpiece(cloud, indices, result.groundPlane, params, piece)) {
+            continue;
+        }
+        for (const InitialSeam& seam : piece.seams) {
+            if (seam.confidence >= kMinConfidence) {
+                result.seams.push_back(seam);
+            } else {
+                ++rejected;
+            }
+        }
+    }
+
+    result.success = true;
+    result.message = "工件 " + std::to_string(result.workpieces.size()) + " 个，焊缝 " + std::to_string(result.seams.size())
+        + " 条，低置信度 " + std::to_string(rejected) + " 条";
+    return result;
+}
+
+} // namespace
+
+// ---------------------------------------------------------------------------
+// 公共接口
+// ---------------------------------------------------------------------------
+
+Eigen::Vector2f RibSegment::direction() const
+{
+    const Eigen::Vector2f d = end - start;
+    const float n = d.norm();
+    return n > 1e-6f ? Eigen::Vector2f(d / n) : Eigen::Vector2f(1.0f, 0.0f);
+}
+
+float RibSegment::length() const
+{
+    return (end - start).norm();
+}
+
+float InitialSeam::length() const
+{
+    return (end - start).norm();
+}
+
+Workpiece::Workpiece()
+    : cloud(new pcl::PointCloud<pcl::PointXYZ>)
+{
+}
+
+SceneSeamResult::SceneSeamResult()
+    : cloud(new pcl::PointCloud<pcl::PointXYZ>)
+{
+}
+
+float PlaneZ(const Eigen::Vector4f& plane, float x, float y)
+{
+    if (std::fabs(plane[2]) < 1e-6f) {
+        return 0.0f;
+    }
+    return -(plane[0] * x + plane[1] * y + plane[3]) / plane[2];
+}
+
+SceneSeamResult ExtractSceneSeams(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& cloud, const SceneSeamParams& params)
+{
+    try {
+        SceneSeamResult result = ExtractImpl(cloud, params);
+        if (params.zAxisDown) {
+            FlipResultZ(result);
+        }
+        return result;
+    } catch (const std::exception& error) {
+        SceneSeamResult failed;
+        failed.message = std::string("异常: ") + error.what();
+        return failed;
+    }
+}
+
+// 高度类标量（baseHeight、ribHeight）不随坐标系翻转改变
+void FlipResultZ(SceneSeamResult& result)
+{
+    if (result.cloud) {
+        NegateZ(*result.cloud);
+    }
+    result.groundPlane = NegateZ(result.groundPlane);
+    for (Workpiece& piece : result.workpieces) {
+        piece.basePlane = NegateZ(piece.basePlane);
+        if (piece.cloud) {
+            NegateZ(*piece.cloud);
+        }
+        for (InitialSeam& seam : piece.seams) {
+            NegateZ(seam);
+        }
+    }
+    for (InitialSeam& seam : result.seams) {
+        NegateZ(seam);
+    }
+}
