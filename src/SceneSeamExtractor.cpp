@@ -2,15 +2,16 @@
 
 #include <pcl/filters/voxel_grid.h>
 
-#include <Eigen/Eigenvalues>
-
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <queue>
 #include <stdexcept>
+#include <tuple>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -20,15 +21,19 @@ using CloudPtr = Cloud::Ptr;
 constexpr float kNaN = std::numeric_limits<float>::quiet_NaN();
 constexpr float kPi = 3.14159265358979323846f;
 
-float Deg2Rad(float deg)
-{
-    return deg * kPi / 180.0f;
-}
-
-Eigen::Vector2f Perp(const Eigen::Vector2f& d)
-{
-    return Eigen::Vector2f(-d.y(), d.x());
-}
+// 与具体组立件无关的内部常数。换工件时不应靠这些值调焊缝。
+constexpr float kGroundFitTolerance = 4.0f;
+constexpr float kMaxGroundTiltDeg = 5.0f;
+constexpr float kWorkpieceCloseRadius = 15.0f; ///< 底板掩码闭运算，补阴影缺口
+constexpr float kBasePlaneTolerance = 4.0f;
+constexpr float kTopNeighborhood = 4.0f;       ///< 判断飞点的邻域半径
+constexpr float kTopTolerance = 4.0f;          ///< 同一顶面允许的高差
+constexpr float kPlateStep = 24.0f;            ///< 超过该高差视为另一块板的台阶，不能把矮板削掉
+constexpr float kTopSupportRadius = 4.0f;      ///< 孤立高点过滤半径
+constexpr float kTopCloseRadius = 4.0f;        ///< 补顶面栅格缺口，把贴在一起的立板连成一块
+constexpr float kContourEpsilon = 32.0f;       ///< 轮廓折线拟合的允许偏差，吸收栅格台阶，不抹平两块板的搭接
+constexpr float kMinCornerTurnDeg = 35.0f;     ///< 行走方向右转超过该角度才是凹拐角
+constexpr float kMinConfidence = 0.3f;
 
 float Percentile(std::vector<float> values, float fraction)
 {
@@ -74,9 +79,9 @@ struct HeightGrid {
         return origin + Eigen::Vector2f((static_cast<float>(c) + 0.5f) * res, (static_cast<float>(r) + 0.5f) * res);
     }
 
-    bool hasData(int c, int r) const
+    Eigen::Vector2f corner(int c, int r) const
     {
-        return inside(c, r) && std::isfinite(z[index(c, r)]);
+        return origin + Eigen::Vector2f(static_cast<float>(c) * res, static_cast<float>(r) * res);
     }
 };
 
@@ -206,49 +211,6 @@ Mask Close(const Mask& src, int cols, int rows, int radius)
     return Erode(Dilate(src, cols, rows, radius), cols, rows, radius);
 }
 
-// 填充被前景包围的空洞：从栅格边界沿 4 邻域淹没背景，淹不到的背景就是内部空洞。
-Mask FillEnclosedHoles(const Mask& src, int cols, int rows)
-{
-    Mask outside(src.size(), 0);
-    std::vector<int> stack;
-    auto push = [&](int c, int r) {
-        if (c < 0 || r < 0 || c >= cols || r >= rows) {
-            return;
-        }
-        const std::size_t id = static_cast<std::size_t>(r) * cols + c;
-        if (src[id] || outside[id]) {
-            return;
-        }
-        outside[id] = 1;
-        stack.push_back(static_cast<int>(id));
-    };
-    for (int c = 0; c < cols; ++c) {
-        push(c, 0);
-        push(c, rows - 1);
-    }
-    for (int r = 0; r < rows; ++r) {
-        push(0, r);
-        push(cols - 1, r);
-    }
-    while (!stack.empty()) {
-        const int id = stack.back();
-        stack.pop_back();
-        const int c = id % cols;
-        const int r = id / cols;
-        push(c + 1, r);
-        push(c - 1, r);
-        push(c, r + 1);
-        push(c, r - 1);
-    }
-    Mask filled(src.size(), 1);
-    for (std::size_t i = 0; i < src.size(); ++i) {
-        if (outside[i]) {
-            filled[i] = 0;
-        }
-    }
-    return filled;
-}
-
 struct Component {
     int label = 0;
     int count = 0;
@@ -304,6 +266,11 @@ std::vector<Component> LabelComponents(const Mask& mask, int cols, int rows, std
         }
     }
     return components;
+}
+
+int CellsOf(float length, float res)
+{
+    return std::max(1, static_cast<int>(std::round(length / std::max(res, 1e-3f))));
 }
 
 // ---------------------------------------------------------------------------
@@ -440,636 +407,328 @@ bool FitDominantPlane(const HeightGrid& grid,
     return true;
 }
 
-// ---------------------------------------------------------------------------
-// 立板提取
-// ---------------------------------------------------------------------------
-
-struct RibCell {
-    Eigen::Vector2f p; ///< 相对工件中心的平面坐标
-    float h;           ///< 高出底板
-};
-
-struct RibCandidate {
-    Eigen::Vector2f center;
-    Eigen::Vector2f dir;
-    float tMin = 0.0f;
-    float tMax = 0.0f;
-    float thickness = 0.0f;
-    float height = 0.0f;
-    float confidence = 0.0f;
-};
-
-void SplitRuns(const std::vector<std::pair<float, int>>& sorted, float gap, std::vector<std::pair<int, int>>& runs)
-{
-    runs.clear();
-    if (sorted.empty()) {
-        return;
-    }
-    int begin = 0;
-    for (int i = 1; i < static_cast<int>(sorted.size()); ++i) {
-        if (sorted[static_cast<std::size_t>(i)].first - sorted[static_cast<std::size_t>(i - 1)].first > gap) {
-            runs.emplace_back(begin, i);
-            begin = i;
-        }
-    }
-    runs.emplace_back(begin, static_cast<int>(sorted.size()));
-}
-
-// 只去掉两端几乎没有点的切片，避免零星高点把立板拉长。
-// 连续但被阴影削薄的顶边每片仍有点，必须保留，否则一根筋的端部被收掉，两侧焊缝一起变短。
-void TrimRun(const std::vector<std::pair<float, int>>& sorted, float res, int& begin, int& end)
-{
-    const float sliceWidth = 3.0f * res;
-    const float t0 = sorted[static_cast<std::size_t>(begin)].first;
-    const int sliceCount = static_cast<int>((sorted[static_cast<std::size_t>(end - 1)].first - t0) / sliceWidth) + 1;
-    std::vector<int> counts(static_cast<std::size_t>(sliceCount), 0);
-    for (int i = begin; i < end; ++i) {
-        ++counts[static_cast<std::size_t>((sorted[static_cast<std::size_t>(i)].first - t0) / sliceWidth)];
-    }
-    const int minCellsPerSlice = 2;
-
-    int firstDense = 0;
-    while (firstDense < sliceCount && counts[static_cast<std::size_t>(firstDense)] < minCellsPerSlice) {
-        ++firstDense;
-    }
-    int lastDense = sliceCount - 1;
-    while (lastDense > firstDense && counts[static_cast<std::size_t>(lastDense)] < minCellsPerSlice) {
-        --lastDense;
-    }
-    if (firstDense >= sliceCount) {
-        end = begin;
-        return;
-    }
-    const float tLow = t0 + static_cast<float>(firstDense) * sliceWidth;
-    const float tHigh = t0 + static_cast<float>(lastDense + 1) * sliceWidth;
-    while (begin < end && sorted[static_cast<std::size_t>(begin)].first < tLow) {
-        ++begin;
-    }
-    while (end > begin && sorted[static_cast<std::size_t>(end - 1)].first > tHigh) {
-        --end;
-    }
-}
-
-bool PrincipalDirection(const std::vector<RibCell>& cells, const std::vector<int>& ids, Eigen::Vector2f& center,
-                        Eigen::Vector2f& dir)
-{
-    if (ids.size() < 2) {
-        return false;
-    }
-    Eigen::Vector2d mean = Eigen::Vector2d::Zero();
-    for (int id : ids) {
-        mean += cells[static_cast<std::size_t>(id)].p.cast<double>();
-    }
-    mean /= static_cast<double>(ids.size());
-    Eigen::Matrix2d cov = Eigen::Matrix2d::Zero();
-    for (int id : ids) {
-        const Eigen::Vector2d q = cells[static_cast<std::size_t>(id)].p.cast<double>() - mean;
-        cov += q * q.transpose();
-    }
-    Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> solver(cov);
-    if (solver.info() != Eigen::Success) {
-        return false;
-    }
-    const Eigen::Vector2d major = solver.eigenvectors().col(1);
-    center = mean.cast<float>();
-    dir = major.cast<float>().normalized();
-    return true;
-}
-
-// 对一组共线栅格估计板厚、高度、置信度，并把直线横向重新居中。
-RibCandidate MakeCandidate(const std::vector<RibCell>& cells,
-                           const std::vector<std::pair<float, int>>& sorted,
-                           int begin,
-                           int end,
-                           const Eigen::Vector2f& center,
-                           const Eigen::Vector2f& dir,
-                           float res,
-                           const SceneSeamParams& params)
-{
-    const Eigen::Vector2f normal = Perp(dir);
-    std::vector<float> lateral;
-    std::vector<float> absLateral;
-    std::vector<float> heights;
-    lateral.reserve(static_cast<std::size_t>(end - begin));
-    for (int i = begin; i < end; ++i) {
-        const RibCell& cell = cells[static_cast<std::size_t>(sorted[static_cast<std::size_t>(i)].second)];
-        const float d = normal.dot(cell.p - center);
-        lateral.push_back(d);
-        heights.push_back(cell.h);
-    }
-    const float median = Percentile(lateral, 0.5f);
-    for (float d : lateral) {
-        absLateral.push_back(std::fabs(d - median));
-    }
-
-    RibCandidate candidate;
-    candidate.center = center + normal * median;
-    candidate.dir = dir;
-    candidate.tMin = sorted[static_cast<std::size_t>(begin)].first - res * 0.5f;
-    candidate.tMax = sorted[static_cast<std::size_t>(end - 1)].first + res * 0.5f;
-    candidate.thickness = std::clamp(2.0f * Percentile(absLateral, 0.9f) + res, params.ribMinThickness,
-                                     params.ribMaxThickness);
-    candidate.height = Percentile(heights, 0.95f);
-
-    // 置信度：沿线有数据支撑的比例 x 直线度
-    const float sliceWidth = 4.0f * res;
-    const int sliceCount = std::max(1, static_cast<int>(std::ceil((candidate.tMax - candidate.tMin) / sliceWidth)));
-    std::vector<double> sliceSum(static_cast<std::size_t>(sliceCount), 0.0);
-    std::vector<int> sliceCountPerBin(static_cast<std::size_t>(sliceCount), 0);
-    for (int i = begin; i < end; ++i) {
-        const float t = sorted[static_cast<std::size_t>(i)].first;
-        int slice = static_cast<int>((t - candidate.tMin) / sliceWidth);
-        slice = std::clamp(slice, 0, sliceCount - 1);
-        sliceSum[static_cast<std::size_t>(slice)] += lateral[static_cast<std::size_t>(i - begin)] - median;
-        ++sliceCountPerBin[static_cast<std::size_t>(slice)];
-    }
-    int supported = 0;
-    double straightness = 0.0;
-    for (int s = 0; s < sliceCount; ++s) {
-        if (sliceCountPerBin[static_cast<std::size_t>(s)] == 0) {
-            continue;
-        }
-        ++supported;
-        const double mean = sliceSum[static_cast<std::size_t>(s)] / sliceCountPerBin[static_cast<std::size_t>(s)];
-        straightness += mean * mean;
-    }
-    const float support = static_cast<float>(supported) / static_cast<float>(sliceCount);
-    const float rms = supported > 0 ? static_cast<float>(std::sqrt(straightness / supported)) : 0.0f;
-    candidate.confidence = support * std::clamp(1.0f - rms / (2.0f * res), 0.0f, 1.0f);
-    return candidate;
-}
-
-// Hough 直线迭代提取立板落地轮廓。确定性，不依赖随机采样。
-std::vector<RibCandidate> ExtractRibs(const std::vector<RibCell>& cells, float res, const SceneSeamParams& params)
-{
-    std::vector<RibCandidate> ribs;
-    if (cells.size() < 4) {
-        return ribs;
-    }
-
-    const int thetaBins = std::max(1, static_cast<int>(std::round(180.0f / params.houghAngleStepDeg)));
-    std::vector<float> cosTable(static_cast<std::size_t>(thetaBins));
-    std::vector<float> sinTable(static_cast<std::size_t>(thetaBins));
-    for (int t = 0; t < thetaBins; ++t) {
-        const float theta = Deg2Rad(static_cast<float>(t) * params.houghAngleStepDeg);
-        cosTable[static_cast<std::size_t>(t)] = std::cos(theta);
-        sinTable[static_cast<std::size_t>(t)] = std::sin(theta);
-    }
-
-    float rhoMax = 0.0f;
-    for (const RibCell& cell : cells) {
-        rhoMax = std::max(rhoMax, cell.p.norm());
-    }
-    const float rhoStep = res;
-    rhoMax += rhoStep;
-    const int rhoBins = static_cast<int>(std::ceil(2.0f * rhoMax / rhoStep)) + 1;
-    if (static_cast<long long>(thetaBins) * rhoBins > 50000000LL) {
-        return ribs;
-    }
-
-    const float bandHalf = params.ribMaxThickness * 0.5f + res;
-    const int minVotes = std::max(4, static_cast<int>(0.6f * params.ribMinLength / res));
-    std::vector<std::uint8_t> used(cells.size(), 0);
-    std::vector<int> accumulator(static_cast<std::size_t>(thetaBins) * static_cast<std::size_t>(rhoBins));
-    std::vector<int> band;
-    std::vector<std::pair<float, int>> sorted;
-    std::vector<std::pair<int, int>> runs;
-
-    for (int iteration = 0; iteration < 64; ++iteration) {
-        std::fill(accumulator.begin(), accumulator.end(), 0);
-        int remaining = 0;
-        for (std::size_t i = 0; i < cells.size(); ++i) {
-            if (used[i]) {
-                continue;
-            }
-            ++remaining;
-            const Eigen::Vector2f& p = cells[i].p;
-            for (int t = 0; t < thetaBins; ++t) {
-                const float rho = p.x() * cosTable[static_cast<std::size_t>(t)] + p.y() * sinTable[static_cast<std::size_t>(t)];
-                const int bin = static_cast<int>((rho + rhoMax) / rhoStep);
-                if (bin >= 0 && bin < rhoBins) {
-                    ++accumulator[static_cast<std::size_t>(t) * rhoBins + bin];
-                }
-            }
-        }
-        if (remaining < minVotes) {
-            break;
-        }
-
-        const auto peak = std::max_element(accumulator.begin(), accumulator.end());
-        if (*peak < minVotes) {
-            break;
-        }
-        const int peakIndex = static_cast<int>(peak - accumulator.begin());
-        const int thetaIndex = peakIndex / rhoBins;
-        const float rho = static_cast<float>(peakIndex % rhoBins) * rhoStep - rhoMax + rhoStep * 0.5f;
-        const Eigen::Vector2f normal(cosTable[static_cast<std::size_t>(thetaIndex)], sinTable[static_cast<std::size_t>(thetaIndex)]);
-
-        band.clear();
-        for (std::size_t i = 0; i < cells.size(); ++i) {
-            if (!used[i] && std::fabs(normal.dot(cells[i].p) - rho) <= bandHalf) {
-                band.push_back(static_cast<int>(i));
-            }
-        }
-
-        Eigen::Vector2f center;
-        Eigen::Vector2f dir;
-        if (band.size() < static_cast<std::size_t>(minVotes) || !PrincipalDirection(cells, band, center, dir)) {
-            for (int id : band) {
-                used[static_cast<std::size_t>(id)] = 1;
-            }
-            continue;
-        }
-
-        // 用 PCA 方向重新取带内栅格，减少 Hough 角度量化误差
-        const Eigen::Vector2f refinedNormal = Perp(dir);
-        band.clear();
-        for (std::size_t i = 0; i < cells.size(); ++i) {
-            if (!used[i] && std::fabs(refinedNormal.dot(cells[i].p - center)) <= bandHalf) {
-                band.push_back(static_cast<int>(i));
-            }
-        }
-
-        sorted.clear();
-        for (int id : band) {
-            sorted.emplace_back(dir.dot(cells[static_cast<std::size_t>(id)].p - center), id);
-        }
-        std::sort(sorted.begin(), sorted.end());
-        SplitRuns(sorted, params.ribGapTolerance, runs);
-
-        for (auto [begin, end] : runs) {
-            TrimRun(sorted, res, begin, end);
-            if (end - begin < minVotes) {
-                continue;
-            }
-            const float length = sorted[static_cast<std::size_t>(end - 1)].first - sorted[static_cast<std::size_t>(begin)].first + res;
-            if (length < params.ribMinLength) {
-                continue;
-            }
-            ribs.push_back(MakeCandidate(cells, sorted, begin, end, center, dir, res, params));
-        }
-        for (int id : band) {
-            used[static_cast<std::size_t>(id)] = 1;
-        }
-    }
-    return ribs;
-}
-
-// 把与最长立板平行或垂直的立板吸附到该方向。
-void SnapDirections(std::vector<RibCandidate>& ribs, float snapDeg)
-{
-    if (ribs.empty()) {
-        return;
-    }
-    const auto longest = std::max_element(ribs.begin(), ribs.end(), [](const RibCandidate& a, const RibCandidate& b) {
-        return (a.tMax - a.tMin) < (b.tMax - b.tMin);
-    });
-    const float theta0 = std::atan2(longest->dir.y(), longest->dir.x());
-    const float snap = Deg2Rad(snapDeg);
-
-    for (RibCandidate& rib : ribs) {
-        const float theta = std::atan2(rib.dir.y(), rib.dir.x());
-        float delta = theta - theta0;
-        const float quarter = kPi * 0.5f;
-        const float k = std::round(delta / quarter);
-        const float residual = delta - k * quarter;
-        if (std::fabs(residual) > snap) {
-            continue;
-        }
-        const float snapped = theta0 + k * quarter;
-        const Eigen::Vector2f newDir(std::cos(snapped), std::sin(snapped));
-        const Eigen::Vector2f mid = rib.center + rib.dir * 0.5f * (rib.tMin + rib.tMax);
-        const float half = 0.5f * (rib.tMax - rib.tMin);
-        rib.center = mid;
-        rib.dir = newDir;
-        rib.tMin = -half;
-        rib.tMax = half;
-    }
-}
-
-bool IntersectLines(const RibCandidate& a, const RibCandidate& b, float& ta, float& tb)
-{
-    const float cross = a.dir.x() * b.dir.y() - a.dir.y() * b.dir.x();
-    if (std::fabs(cross) < std::sin(Deg2Rad(10.0f))) {
-        return false;
-    }
-    const Eigen::Vector2f delta = b.center - a.center;
-    ta = (delta.x() * b.dir.y() - delta.y() * b.dir.x()) / cross;
-    tb = (delta.x() * a.dir.y() - delta.y() * a.dir.x()) / cross;
-    return true;
-}
-
-// 同一块立板被横穿立板的提取带宽或阴影切成两段后，两段共线，间隙里正好有另一块立板穿过。
-// 合并回一条，平焊缝才不会在两侧同时断开；真正挡住焊缝的那一侧仍由接头切口处理。
-void MergeColinearRibs(std::vector<RibCandidate>& ribs, float res, const SceneSeamParams& params)
-{
-    const float parallel = std::cos(Deg2Rad(8.0f));
-    // 交叉立板被提取时会占掉带宽内的栅格，留下的空洞约等于带宽，和 ribGapTolerance 取谁无关
-    const float band = params.ribMaxThickness + 2.0f * res;
-    bool merged = true;
-    while (merged) {
-        merged = false;
-        for (std::size_t i = 0; i < ribs.size() && !merged; ++i) {
-            for (std::size_t j = i + 1; j < ribs.size() && !merged; ++j) {
-                RibCandidate& a = ribs[i];
-                RibCandidate& b = ribs[j];
-                if (std::fabs(a.dir.dot(b.dir)) < parallel) {
-                    continue;
-                }
-                const Eigen::Vector2f normal = Perp(a.dir);
-                if (std::fabs(normal.dot(b.center - a.center)) > std::max(a.thickness, b.thickness) + res) {
-                    continue;
-                }
-
-                const float shift = a.dir.dot(b.center - a.center);
-                const float sign = a.dir.dot(b.dir) >= 0.0f ? 1.0f : -1.0f;
-                const float bLo = shift + std::min(sign * b.tMin, sign * b.tMax);
-                const float bHi = shift + std::max(sign * b.tMin, sign * b.tMax);
-                float gap = 0.0f;
-                float gapLo = 0.0f;
-                float gapHi = 0.0f;
-                if (bLo > a.tMax) {
-                    gap = bLo - a.tMax;
-                    gapLo = a.tMax;
-                    gapHi = bLo;
-                } else if (a.tMin > bHi) {
-                    gap = a.tMin - bHi;
-                    gapLo = bHi;
-                    gapHi = a.tMin;
-                }
-                if (gap > band) {
-                    continue;
-                }
-
-                bool bridge = gap <= params.ribGapTolerance;
-                for (std::size_t k = 0; k < ribs.size() && !bridge; ++k) {
-                    if (k == i || k == j) {
-                        continue;
-                    }
-                    float along = 0.0f;
-                    float across = 0.0f;
-                    if (!IntersectLines(a, ribs[k], along, across)) {
-                        continue;
-                    }
-                    const float reach = ribs[k].thickness;
-                    if (along < gapLo - reach || along > gapHi + reach) {
-                        continue;
-                    }
-                    if (across < ribs[k].tMin - reach || across > ribs[k].tMax + reach) {
-                        continue;
-                    }
-                    bridge = true;
-                }
-                if (!bridge) {
-                    continue;
-                }
-
-                // 保留较高的那一段的中心线：飞点带比顶边矮，不能让它把中心线带走
-                RibCandidate& keep = a.height >= b.height ? a : b;
-                const RibCandidate& drop = a.height >= b.height ? b : a;
-                const float keepShift = keep.dir.dot(drop.center - keep.center);
-                const float keepSign = keep.dir.dot(drop.dir) >= 0.0f ? 1.0f : -1.0f;
-                const float dropLo = keepShift + std::min(keepSign * drop.tMin, keepSign * drop.tMax);
-                const float dropHi = keepShift + std::max(keepSign * drop.tMin, keepSign * drop.tMax);
-                keep.tMin = std::min(keep.tMin, dropLo);
-                keep.tMax = std::max(keep.tMax, dropHi);
-                ribs.erase(ribs.begin() + static_cast<std::ptrdiff_t>(a.height >= b.height ? j : i));
-                merged = true;
-            }
-        }
-    }
-}
-
-// T 形搭接：立板端部靠近另一块立板时，把端部修到对方板面。
-void SnapJunctions(std::vector<RibCandidate>& ribs, const SceneSeamParams& params)
-{
-    for (RibCandidate& rib : ribs) {
-        for (const RibCandidate& other : ribs) {
-            if (&rib == &other) {
-                continue;
-            }
-            float tRib = 0.0f;
-            float tOther = 0.0f;
-            if (!IntersectLines(rib, other, tRib, tOther)) {
-                continue;
-            }
-            if (tOther < other.tMin - params.junctionTolerance || tOther > other.tMax + params.junctionTolerance) {
-                continue;
-            }
-            const float face = other.thickness * 0.5f;
-            const float reach = params.junctionTolerance + face;
-            const float minLength = params.ribMinLength;
-            if (std::fabs(tRib - rib.tMin) <= reach && tRib + face < rib.tMax - minLength) {
-                rib.tMin = tRib + face;
-            } else if (std::fabs(tRib - rib.tMax) <= reach && tRib - face > rib.tMin + minLength) {
-                rib.tMax = tRib - face;
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// 工件处理
-// ---------------------------------------------------------------------------
-
-struct Junction {
-    int ribA = 0;
-    int ribB = 0;
-    float tA = 0.0f;
-    float tB = 0.0f;
-};
-
-/// 立板越过交点至少这么长才算有一条臂。
-/// 小于它的伸出是板厚范围内的顶边或飞点，不能据此把另一侧焊缝切开，也不能生成立焊缝。
-constexpr float kMinArm = 50.0f;
-
-// 底板视图：区分“有底板”“确认没有底板（地面）”和“无数据（阴影）”三种状态
-struct BaseMaskView {
-    const HeightGrid* grid = nullptr;
-    const Mask* footprint = nullptr;          ///< 底板轮廓：底板栅格 + 被底板包围的空洞（阴影、立板根部）
-    const std::vector<float>* aboveBase = nullptr;
-    float tolerance = 0.0f;
-
-    bool hasBase(const Eigen::Vector2f& xy) const
-    {
-        int c = 0;
-        int r = 0;
-        return grid->cellOf(xy.x(), xy.y(), c, r) && (*footprint)[grid->index(c, r)];
-    }
-
-    /// 栅格有数据且明显低于底板平面（地面）时确认没有底板；阴影等无数据栅格视为未知
-    bool confirmedNoBase(const Eigen::Vector2f& xy) const
-    {
-        int c = 0;
-        int r = 0;
-        if (!grid->cellOf(xy.x(), xy.y(), c, r)) {
-            return true;
-        }
-        const std::size_t id = grid->index(c, r);
-        if ((*footprint)[id] || !std::isfinite(grid->z[id])) {
-            return false;
-        }
-        return (*aboveBase)[id] < -tolerance;
-    }
-};
-
 Eigen::Vector3f Lift(const Eigen::Vector4f& plane, const Eigen::Vector2f& xy, float above = 0.0f)
 {
     return Eigen::Vector3f(xy.x(), xy.y(), PlaneZ(plane, xy.x(), xy.y()) + above);
 }
 
-// 该侧是否有底板：沿法向从板根外侧一直探到立板高度量级的距离，碰到底板即算有，碰到地面即算无。
-// 阴影宽度不会超过立板高度，所以不依赖固定的探测距离。
-bool SideHasBase(const BaseMaskView& base, const RibCandidate& rib, const Eigen::Vector2f& normal, float side, float res)
+// ---------------------------------------------------------------------------
+// 顶面轮廓
+// ---------------------------------------------------------------------------
+
+// 材料在行进方向左侧。外轮廓逆时针，孔洞顺时针绕空洞、材料仍在左侧。
+// 方向：0 +x，1 +y，2 -x，3 -y。
+constexpr int kDirX[4] = {1, 0, -1, 0};
+constexpr int kDirY[4] = {0, 1, 0, -1};
+
+bool MaskAt(const Mask& mask, int cols, int rows, int c, int r)
 {
-    constexpr int kSamples = 7;
-    const float nearDist = rib.thickness * 0.5f + 12.0f;
-    const float farDist = rib.thickness * 0.5f + std::max(60.0f, rib.height);
-    const float step = std::max(2.0f * res, 4.0f);
-    int hits = 0;
-    for (int s = 0; s < kSamples; ++s) {
-        const float t = rib.tMin + (rib.tMax - rib.tMin) * (static_cast<float>(s) + 0.5f) / kSamples;
-        const Eigen::Vector2f foot = rib.center + rib.dir * t;
-        for (float d = nearDist; d <= farDist; d += step) {
-            const Eigen::Vector2f probe = foot + normal * side * d;
-            if (base.hasBase(probe)) {
-                ++hits;
-                break;
-            }
-            if (base.confirmedNoBase(probe)) {
-                break;
-            }
-        }
-    }
-    return hits * 2 >= kSamples;
+    return c >= 0 && r >= 0 && c < cols && r < rows && mask[static_cast<std::size_t>(r) * cols + c];
 }
 
-void BuildFlatSeams(const Workpiece& piece,
-                    const std::vector<RibCandidate>& ribs,
-                    const std::vector<Junction>& junctions,
-                    const BaseMaskView& base,
-                    const SceneSeamParams& params,
-                    std::vector<InitialSeam, Eigen::aligned_allocator<InitialSeam>>& seams)
+float PointSegmentDistance(const Eigen::Vector2f& p, const Eigen::Vector2f& a, const Eigen::Vector2f& b)
 {
-    using Cuts = std::vector<std::pair<float, float>>;
-    for (std::size_t i = 0; i < ribs.size(); ++i) {
-        const RibCandidate& rib = ribs[i];
-        const Eigen::Vector2f normal = Perp(rib.dir);
+    const Eigen::Vector2f ab = b - a;
+    const float len2 = ab.squaredNorm();
+    if (len2 < 1e-12f) {
+        return (p - a).norm();
+    }
+    const float t = std::clamp((p - a).dot(ab) / len2, 0.0f, 1.0f);
+    return (p - (a + ab * t)).norm();
+}
 
-        // 接头处的切口只加在对方立板实际延伸过来的那一侧；T 形端部的另一侧焊缝保持连续
-        Cuts cutsPositive;
-        Cuts cutsNegative;
-        for (const Junction& junction : junctions) {
-            int otherIndex = -1;
-            float tSelf = 0.0f;
-            float tOther = 0.0f;
-            if (junction.ribA == static_cast<int>(i)) {
-                otherIndex = junction.ribB;
-                tSelf = junction.tA;
-                tOther = junction.tB;
-            } else if (junction.ribB == static_cast<int>(i)) {
-                otherIndex = junction.ribA;
-                tSelf = junction.tB;
-                tOther = junction.tA;
+void DouglasPeucker(const std::vector<Eigen::Vector2f>& pts, int i, int j, float epsilon, std::vector<char>& keep)
+{
+    if (j <= i + 1) {
+        return;
+    }
+    float best = 0.0f;
+    int split = -1;
+    for (int t = i + 1; t < j; ++t) {
+        const float distance = PointSegmentDistance(pts[static_cast<std::size_t>(t)], pts[static_cast<std::size_t>(i)],
+                                                     pts[static_cast<std::size_t>(j)]);
+        if (distance > best) {
+            best = distance;
+            split = t;
+        }
+    }
+    if (split >= 0 && best > epsilon) {
+        keep[static_cast<std::size_t>(split)] = 1;
+        DouglasPeucker(pts, i, split, epsilon, keep);
+        DouglasPeucker(pts, split, j, epsilon, keep);
+    }
+}
+
+std::vector<Eigen::Vector2f> Chain(const std::vector<Eigen::Vector2f>& pts, int from, int to)
+{
+    std::vector<Eigen::Vector2f> chain;
+    const int n = static_cast<int>(pts.size());
+    if (n == 0) {
+        return chain;
+    }
+    for (int i = from;; i = (i + 1) % n) {
+        chain.push_back(pts[static_cast<std::size_t>(i)]);
+        if (i == to || static_cast<int>(chain.size()) > n) {
+            break;
+        }
+    }
+    return chain;
+}
+
+std::vector<Eigen::Vector2f> SimplifyChain(const std::vector<Eigen::Vector2f>& chain, float epsilon)
+{
+    std::vector<Eigen::Vector2f> simplified;
+    if (chain.size() < 2) {
+        return chain;
+    }
+    std::vector<char> keep(chain.size(), 0);
+    keep.front() = 1;
+    keep.back() = 1;
+    DouglasPeucker(chain, 0, static_cast<int>(chain.size()) - 1, epsilon, keep);
+    for (std::size_t i = 0; i < chain.size(); ++i) {
+        if (keep[i]) {
+            simplified.push_back(chain[i]);
+        }
+    }
+    return simplified;
+}
+
+// 闭环：取距质心最远点和距该点最远点把环拆成两段再拟合，避免首尾弦长为零。
+std::vector<Eigen::Vector2f> SimplifyLoop(std::vector<Eigen::Vector2f> pts, float epsilon)
+{
+    if (pts.size() >= 2 && (pts.front() - pts.back()).norm() < 1e-4f) {
+        pts.pop_back();
+    }
+    if (pts.size() < 4) {
+        return {};
+    }
+
+    Eigen::Vector2f mean = Eigen::Vector2f::Zero();
+    for (const Eigen::Vector2f& p : pts) {
+        mean += p;
+    }
+    mean /= static_cast<float>(pts.size());
+
+    int far = 0;
+    float farDist = -1.0f;
+    for (int i = 0; i < static_cast<int>(pts.size()); ++i) {
+        const float distance = (pts[static_cast<std::size_t>(i)] - mean).squaredNorm();
+        if (distance > farDist) {
+            farDist = distance;
+            far = i;
+        }
+    }
+    int opposite = far;
+    float oppositeDist = -1.0f;
+    for (int i = 0; i < static_cast<int>(pts.size()); ++i) {
+        const float distance = (pts[static_cast<std::size_t>(i)] - pts[static_cast<std::size_t>(far)]).squaredNorm();
+        if (distance > oppositeDist) {
+            oppositeDist = distance;
+            opposite = i;
+        }
+    }
+    if (opposite == far) {
+        return {};
+    }
+
+    const std::vector<Eigen::Vector2f> first = SimplifyChain(Chain(pts, far, opposite), epsilon);
+    const std::vector<Eigen::Vector2f> second = SimplifyChain(Chain(pts, opposite, far), epsilon);
+    std::vector<Eigen::Vector2f> loop;
+    loop.insert(loop.end(), first.begin(), first.end() - 1);
+    loop.insert(loop.end(), second.begin(), second.end() - 1);
+
+    // 吞掉栅格台阶和近似共线的折点。两块长板交成的锐拐角两侧都长，不能并掉。
+    bool changed = true;
+    while (changed && loop.size() > 4) {
+        changed = false;
+        for (std::size_t i = 0; i < loop.size();) {
+            const std::size_t n = loop.size();
+            const Eigen::Vector2f& prev = loop[(i + n - 1) % n];
+            const Eigen::Vector2f& cur = loop[i];
+            const Eigen::Vector2f& next = loop[(i + 1) % n];
+            const Eigen::Vector2f in = cur - prev;
+            const Eigen::Vector2f out = next - cur;
+            const float lenIn = in.norm();
+            const float lenOut = out.norm();
+            if (lenIn < 1e-3f || lenOut < 1e-3f) {
+                loop.erase(loop.begin() + static_cast<std::ptrdiff_t>(i));
+                changed = true;
+                continue;
+            }
+            const float cross = in.x() * out.y() - in.y() * out.x();
+            const float turn = std::atan2(cross, in.dot(out));
+            const bool plateCorner = std::fabs(turn) > kPi / 3.0f && lenIn > kContourEpsilon && lenOut > kContourEpsilon;
+            if (!plateCorner && PointSegmentDistance(cur, prev, next) <= kContourEpsilon) {
+                loop.erase(loop.begin() + static_cast<std::ptrdiff_t>(i));
+                changed = true;
             } else {
-                continue;
-            }
-            const RibCandidate& other = ribs[static_cast<std::size_t>(otherIndex)];
-            const float half = other.thickness * 0.5f + params.seamClearance;
-            const float arm = rib.thickness * 0.5f + kMinArm;
-            const bool otherForwardIsPositive = normal.dot(other.dir) >= 0.0f;
-            if (other.tMax >= tOther + arm) {
-                (otherForwardIsPositive ? cutsPositive : cutsNegative).emplace_back(tSelf - half, tSelf + half);
-            }
-            if (other.tMin <= tOther - arm) {
-                (otherForwardIsPositive ? cutsNegative : cutsPositive).emplace_back(tSelf - half, tSelf + half);
-            }
-        }
-        std::sort(cutsPositive.begin(), cutsPositive.end());
-        std::sort(cutsNegative.begin(), cutsNegative.end());
-
-        for (float side : {1.0f, -1.0f}) {
-            const Eigen::Vector2f offset = normal * side * rib.thickness * 0.5f;
-
-            // 该侧必须有底板，否则是板边立板，不焊
-            if (!SideHasBase(base, rib, normal, side, base.grid->res)) {
-                continue;
-            }
-            const Cuts& cuts = side > 0.0f ? cutsPositive : cutsNegative;
-
-            float cursor = rib.tMin;
-            auto emit = [&](float t0, float t1) {
-                // 焊缝长度以立板顶边为准。端部落在阴影里时旁边能看到地面，
-                // 不能据此把两侧端点往回收，否则焊缝到不了端板。
-                if (t1 - t0 < params.minSeamLength) {
-                    return;
-                }
-                InitialSeam seam;
-                seam.workpieceId = piece.id;
-                seam.type = SeamType::FlatFillet;
-                seam.start = Lift(piece.basePlane, rib.center + rib.dir * t0 + offset);
-                seam.end = Lift(piece.basePlane, rib.center + rib.dir * t1 + offset);
-                seam.approachSide = Eigen::Vector3f(normal.x() * side, normal.y() * side, 0.0f);
-                seam.ribHeight = rib.height;
-                seam.confidence = rib.confidence;
-                seam.ribA = static_cast<int>(i);
-                seams.push_back(seam);
-            };
-
-            for (const auto& [cutBegin, cutEnd] : cuts) {
-                if (cutBegin > cursor) {
-                    emit(cursor, std::min(cutBegin, rib.tMax));
-                }
-                cursor = std::max(cursor, cutEnd);
-            }
-            if (cursor < rib.tMax) {
-                emit(cursor, rib.tMax);
+                ++i;
             }
         }
     }
+    return loop;
 }
 
-void BuildVerticalSeams(const Workpiece& piece,
-                        const std::vector<RibCandidate>& ribs,
-                        const std::vector<Junction>& junctions,
-                        std::vector<InitialSeam, Eigen::aligned_allocator<InitialSeam>>& seams)
+std::vector<std::vector<Eigen::Vector2f>> TraceContours(const Mask& mask, const HeightGrid& grid)
 {
-    for (const Junction& junction : junctions) {
-        const RibCandidate& a = ribs[static_cast<std::size_t>(junction.ribA)];
-        const RibCandidate& b = ribs[static_cast<std::size_t>(junction.ribB)];
-        const Eigen::Vector2f cross = a.center + a.dir * junction.tA;
-        const float height = std::min(a.height, b.height);
+    const int cols = grid.cols;
+    const int rows = grid.rows;
+    const int stride = cols + 1;
+    std::unordered_map<std::uint64_t, std::uint8_t> outgoing;
+    outgoing.reserve(static_cast<std::size_t>(std::min(cols, rows)) * 8);
 
-        for (float sa : {1.0f, -1.0f}) {
-            const bool armA = sa > 0.0f ? a.tMax >= junction.tA + b.thickness * 0.5f + kMinArm
-                                        : a.tMin <= junction.tA - b.thickness * 0.5f - kMinArm;
-            if (!armA) {
+    auto keyOf = [stride](int x, int y) {
+        return static_cast<std::uint64_t>(y) * static_cast<std::uint64_t>(stride) + static_cast<std::uint64_t>(x);
+    };
+    auto addEdge = [&](int x, int y, int dir) {
+        outgoing[keyOf(x, y)] |= static_cast<std::uint8_t>(1u << dir);
+    };
+
+    std::vector<std::tuple<int, int, int>> edges;
+    edges.reserve(static_cast<std::size_t>(cols + rows) * 4);
+    for (int r = 0; r < rows; ++r) {
+        for (int c = 0; c < cols; ++c) {
+            if (!MaskAt(mask, cols, rows, c, r)) {
                 continue;
             }
-            for (float sb : {1.0f, -1.0f}) {
-                const bool armB = sb > 0.0f ? b.tMax >= junction.tB + a.thickness * 0.5f + kMinArm
-                                            : b.tMin <= junction.tB - a.thickness * 0.5f - kMinArm;
-                if (!armB) {
+            // 底边向右、右边向上、顶边向左、左边向下，材料保持在左侧
+            if (!MaskAt(mask, cols, rows, c, r - 1)) {
+                addEdge(c, r, 0);
+                edges.emplace_back(c, r, 0);
+            }
+            if (!MaskAt(mask, cols, rows, c + 1, r)) {
+                addEdge(c + 1, r, 1);
+                edges.emplace_back(c + 1, r, 1);
+            }
+            if (!MaskAt(mask, cols, rows, c, r + 1)) {
+                addEdge(c + 1, r + 1, 2);
+                edges.emplace_back(c + 1, r + 1, 2);
+            }
+            if (!MaskAt(mask, cols, rows, c - 1, r)) {
+                addEdge(c, r + 1, 3);
+                edges.emplace_back(c, r + 1, 3);
+            }
+        }
+    }
+
+    auto take = [&](int x, int y, int dir) {
+        const auto it = outgoing.find(keyOf(x, y));
+        if (it == outgoing.end() || (it->second & static_cast<std::uint8_t>(1u << dir)) == 0) {
+            return false;
+        }
+        it->second = static_cast<std::uint8_t>(it->second & ~static_cast<std::uint8_t>(1u << dir));
+        return true;
+    };
+    auto nextDir = [&](int x, int y, int incoming, int& dir) {
+        const auto it = outgoing.find(keyOf(x, y));
+        if (it == outgoing.end() || it->second == 0) {
+            return false;
+        }
+        const int order[4] = {(incoming + 1) & 3, incoming & 3, (incoming + 3) & 3, (incoming + 2) & 3};
+        for (int candidate : order) {
+            if ((it->second & static_cast<std::uint8_t>(1u << candidate)) == 0) {
+                continue;
+            }
+            it->second = static_cast<std::uint8_t>(it->second & ~static_cast<std::uint8_t>(1u << candidate));
+            dir = candidate;
+            return true;
+        }
+        return false;
+    };
+
+    std::vector<std::vector<Eigen::Vector2f>> loops;
+    const int guardLimit = static_cast<int>(edges.size()) + 2;
+    for (const auto& [sx, sy, sdir] : edges) {
+        if (!take(sx, sy, sdir)) {
+            continue;
+        }
+        std::vector<Eigen::Vector2f> raw;
+        raw.push_back(grid.corner(sx, sy));
+        int x = sx + kDirX[sdir];
+        int y = sy + kDirY[sdir];
+        int incoming = sdir;
+        raw.push_back(grid.corner(x, y));
+        int guard = 0;
+        while ((x != sx || y != sy) && guard++ < guardLimit) {
+            int dir = 0;
+            if (!nextDir(x, y, incoming, dir)) {
+                break;
+            }
+            x += kDirX[dir];
+            y += kDirY[dir];
+            incoming = dir;
+            raw.push_back(grid.corner(x, y));
+        }
+        if ((raw.front() - raw.back()).squaredNorm() > grid.res * grid.res) {
+            continue;
+        }
+        std::vector<Eigen::Vector2f> loop = SimplifyLoop(std::move(raw), std::max(kContourEpsilon, grid.res));
+        if (loop.size() >= 4) {
+            loops.push_back(std::move(loop));
+        }
+    }
+    return loops;
+}
+
+// 沿轮廓边、朝材料内侧采样顶面高度。anchor 为端点，toward 指向边的内部。
+float SampleEdgeHeight(const HeightGrid& grid,
+                       const Mask& crest,
+                       const std::vector<float>& above,
+                       const Eigen::Vector2f& anchor,
+                       const Eigen::Vector2f& toward,
+                       const Eigen::Vector2f& inward)
+{
+    const float alongReach = 28.0f;
+    const float depth = 20.0f;
+    const int pad = CellsOf(std::max(alongReach, depth) + grid.res, grid.res) + 1;
+    int ac = 0;
+    int ar = 0;
+    if (!grid.cellOf(anchor.x(), anchor.y(), ac, ar)) {
+        ac = static_cast<int>(std::floor((anchor.x() - grid.origin.x()) / grid.res));
+        ar = static_cast<int>(std::floor((anchor.y() - grid.origin.y()) / grid.res));
+    }
+
+    std::vector<float> heights;
+    for (int r = ar - pad; r <= ar + pad; ++r) {
+        for (int c = ac - pad; c <= ac + pad; ++c) {
+            if (!grid.inside(c, r) || !crest[grid.index(c, r)]) {
+                continue;
+            }
+            const Eigen::Vector2f delta = grid.center(c, r) - anchor;
+            const float along = delta.dot(toward);
+            const float side = delta.dot(inward);
+            if (along < -grid.res || along > alongReach || side < -grid.res || side > depth) {
+                continue;
+            }
+            heights.push_back(above[grid.index(c, r)]);
+        }
+    }
+    if (heights.empty()) {
+        for (int r = ar - pad; r <= ar + pad; ++r) {
+            for (int c = ac - pad; c <= ac + pad; ++c) {
+                if (!grid.inside(c, r) || !crest[grid.index(c, r)]) {
                     continue;
                 }
-                const Eigen::Vector2f corner = cross + a.dir * (sa * b.thickness * 0.5f) + b.dir * (sb * a.thickness * 0.5f);
-                const Eigen::Vector2f approach = (a.dir * sa + b.dir * sb).normalized();
-
-                InitialSeam seam;
-                seam.workpieceId = piece.id;
-                seam.type = SeamType::VerticalFillet;
-                seam.start = Lift(piece.basePlane, corner);
-                seam.end = Lift(piece.basePlane, corner, height);
-                seam.approachSide = Eigen::Vector3f(approach.x(), approach.y(), 0.0f);
-                seam.ribHeight = height;
-                seam.confidence = std::min(a.confidence, b.confidence);
-                seam.ribA = junction.ribA;
-                seam.ribB = junction.ribB;
-                seams.push_back(seam);
+                if ((grid.center(c, r) - anchor).norm() <= 36.0f) {
+                    heights.push_back(above[grid.index(c, r)]);
+                }
             }
         }
     }
+    if (heights.empty()) {
+        return 0.0f;
+    }
+    return Percentile(std::move(heights), 0.6f);
 }
+
+struct VerticalCandidate {
+    Eigen::Vector2f xy = Eigen::Vector2f::Zero();
+    float height = 0.0f;
+    float confidence = 0.0f;
+    int edgeA = -1;
+    int edgeB = -1;
+    Eigen::Vector2f approach = Eigen::Vector2f::Zero();
+};
 
 bool ProcessWorkpiece(const Cloud& scene,
                       const std::vector<int>& indices,
@@ -1082,7 +741,6 @@ bool ProcessWorkpiece(const Cloud& scene,
         return false;
     }
 
-    // 底板：只在高出地面的栅格中找主平面
     Mask aboveGround(grid.z.size(), 0);
     for (int r = 0; r < grid.rows; ++r) {
         for (int c = 0; c < grid.cols; ++c) {
@@ -1096,13 +754,13 @@ bool ProcessWorkpiece(const Cloud& scene,
             }
         }
     }
-    if (!FitDominantPlane(grid, &aboveGround, params.basePlaneTolerance, params.maxGroundTiltDeg, piece.basePlane)) {
+    if (!FitDominantPlane(grid, &aboveGround, kBasePlaneTolerance, kMaxGroundTiltDeg, piece.basePlane)) {
         return false;
     }
 
-    Mask baseMask(grid.z.size(), 0);
-    Mask ribMask(grid.z.size(), 0);
-    std::vector<float> aboveBase(grid.z.size(), 0.0f);
+    std::vector<float> above(grid.z.size(), 0.0f);
+    Mask crest(grid.z.size(), 0);
+    const int topRadius = CellsOf(kTopNeighborhood, grid.res);
     for (int r = 0; r < grid.rows; ++r) {
         for (int c = 0; c < grid.cols; ++c) {
             const std::size_t id = grid.index(c, r);
@@ -1110,104 +768,217 @@ bool ProcessWorkpiece(const Cloud& scene,
                 continue;
             }
             const Eigen::Vector2f xy = grid.center(c, r);
-            const float above = grid.z[id] - PlaneZ(piece.basePlane, xy.x(), xy.y());
-            aboveBase[id] = above;
-            if (std::fabs(above) <= params.basePlaneTolerance) {
-                baseMask[id] = 1;
-            } else if (above > params.ribMinHeight) {
-                ribMask[id] = 1;
-            }
-        }
-    }
-    const int closeCells = static_cast<int>(std::ceil((params.ribMaxThickness * 0.5f + 10.0f) / grid.res));
-    baseMask = Close(baseMask, grid.cols, grid.rows, closeCells);
-    // 立板阴影和根部遮挡总是被底板包围，填掉这些内部空洞得到底板轮廓，而真正的板边是开放的
-    const Mask footprint = FillEnclosedHoles(baseMask, grid.cols, grid.rows);
-
-    // 立板顶边是一条连续窄带，附近没有其他高点的栅格是离群点或反射假点
-    std::vector<RibCell> ribCells;
-    const Eigen::Vector2f localCenter = 0.5f * (piece.minXY + piece.maxXY);
-    constexpr int kNeighbourRadius = 2;
-    constexpr int kMinNeighbours = 3;
-    for (int r = 0; r < grid.rows; ++r) {
-        for (int c = 0; c < grid.cols; ++c) {
-            const std::size_t id = grid.index(c, r);
-            if (!ribMask[id]) {
+            const float h = grid.z[id] - PlaneZ(piece.basePlane, xy.x(), xy.y());
+            above[id] = h;
+            if (h < params.ribMinHeight) {
                 continue;
             }
-            int neighbours = 0;
-            for (int dr = -kNeighbourRadius; dr <= kNeighbourRadius; ++dr) {
-                for (int dc = -kNeighbourRadius; dc <= kNeighbourRadius; ++dc) {
-                    if ((dr != 0 || dc != 0) && grid.inside(c + dc, r + dr) && ribMask[grid.index(c + dc, r + dr)]) {
-                        ++neighbours;
+            // 飞点沿视线从顶边斜着落到板上，邻域里只高出一截。
+            // 另一块更高的立板是台阶，高差更大，矮板自己的顶面要保留，否则接头处轮廓断开。
+            bool faceSlope = false;
+            for (int dr = -topRadius; dr <= topRadius && !faceSlope; ++dr) {
+                for (int dc = -topRadius; dc <= topRadius; ++dc) {
+                    if ((dr == 0 && dc == 0) || !grid.inside(c + dc, r + dr)) {
+                        continue;
+                    }
+                    const std::size_t nid = grid.index(c + dc, r + dr);
+                    if (!std::isfinite(grid.z[nid])) {
+                        continue;
+                    }
+                    const Eigen::Vector2f nxy = grid.center(c + dc, r + dr);
+                    const float rise = grid.z[nid] - PlaneZ(piece.basePlane, nxy.x(), nxy.y()) - h;
+                    if (rise > kTopTolerance && rise < kPlateStep) {
+                        faceSlope = true;
+                        break;
                     }
                 }
             }
-            if (neighbours >= kMinNeighbours) {
-                ribCells.push_back({grid.center(c, r) - localCenter, aboveBase[id]});
+            if (!faceSlope) {
+                crest[id] = 1;
             }
         }
     }
 
+    const int supportRadius = CellsOf(kTopSupportRadius, grid.res);
+    Mask supported(grid.z.size(), 0);
+    for (int r = 0; r < grid.rows; ++r) {
+        for (int c = 0; c < grid.cols; ++c) {
+            if (!crest[grid.index(c, r)]) {
+                continue;
+            }
+            int neighbours = 0;
+            for (int dr = -supportRadius; dr <= supportRadius && neighbours == 0; ++dr) {
+                for (int dc = -supportRadius; dc <= supportRadius; ++dc) {
+                    if ((dr != 0 || dc != 0) && grid.inside(c + dc, r + dr) && crest[grid.index(c + dc, r + dr)]) {
+                        ++neighbours;
+                        break;
+                    }
+                }
+            }
+            if (neighbours > 0) {
+                supported[grid.index(c, r)] = 1;
+            }
+        }
+    }
+
+    const Mask top = Close(supported, grid.cols, grid.rows, CellsOf(kTopCloseRadius, grid.res));
+    const std::vector<std::vector<Eigen::Vector2f>> loops = TraceContours(top, grid);
+
+    const Eigen::Vector2f localCenter = 0.5f * (piece.minXY + piece.maxXY);
     piece.baseHeight = PlaneZ(piece.basePlane, localCenter.x(), localCenter.y())
         - PlaneZ(groundPlane, localCenter.x(), localCenter.y());
 
-    std::vector<RibCandidate> ribs = ExtractRibs(ribCells, grid.res, params);
-    SnapDirections(ribs, params.ribSnapAngleDeg);
-    MergeColinearRibs(ribs, grid.res, params);
-    SnapJunctions(ribs, params);
-    for (RibCandidate& rib : ribs) {
-        rib.center += localCenter;
+    struct EdgeRecord {
+        Eigen::Vector2f a;
+        Eigen::Vector2f b;
+        Eigen::Vector2f inward;
+        float height = 0.0f;
+        float confidence = 0.0f;
+    };
+    std::vector<EdgeRecord> edges;
+    std::vector<VerticalCandidate> verticals;
+
+    for (const std::vector<Eigen::Vector2f>& loop : loops) {
+        const int n = static_cast<int>(loop.size());
+        std::vector<int> edgeIndex(static_cast<std::size_t>(n), -1);
+        for (int i = 0; i < n; ++i) {
+            const Eigen::Vector2f& a = loop[static_cast<std::size_t>(i)];
+            const Eigen::Vector2f& b = loop[static_cast<std::size_t>((i + 1) % n)];
+            const Eigen::Vector2f delta = b - a;
+            const float length = delta.norm();
+            if (length < params.minSeamLength) {
+                continue;
+            }
+            const Eigen::Vector2f dir = delta / length;
+            const Eigen::Vector2f inward(-dir.y(), dir.x()); // 材料在左侧
+            const float h0 = SampleEdgeHeight(grid, supported, above, a, dir, inward);
+            const float h1 = SampleEdgeHeight(grid, supported, above, b, -dir, inward);
+            EdgeRecord edge;
+            edge.a = a;
+            edge.b = b;
+            edge.inward = inward;
+            edge.height = std::max(h0, h1);
+            edge.confidence = edge.height >= params.ribMinHeight ? 0.9f : 0.55f;
+            edgeIndex[static_cast<std::size_t>(i)] = static_cast<int>(edges.size());
+            edges.push_back(edge);
+        }
+
+        for (int i = 0; i < n; ++i) {
+            const int incoming = edgeIndex[static_cast<std::size_t>((i + n - 1) % n)];
+            const int outgoing = edgeIndex[static_cast<std::size_t>(i)];
+            if (incoming < 0 || outgoing < 0) {
+                continue;
+            }
+            const EdgeRecord& prev = edges[static_cast<std::size_t>(incoming)];
+            const EdgeRecord& next = edges[static_cast<std::size_t>(outgoing)];
+            const Eigen::Vector2f inDir = (prev.b - prev.a).normalized();
+            const Eigen::Vector2f outDir = (next.b - next.a).normalized();
+            const float cross = inDir.x() * outDir.y() - inDir.y() * outDir.x();
+            const float dot = inDir.dot(outDir);
+            const float turnDeg = std::atan2(cross, dot) * 180.0f / kPi;
+            // 材料在左侧时，凹拐角是右转
+            if (turnDeg > -kMinCornerTurnDeg) {
+                continue;
+            }
+            const float height = std::min(prev.height > 1.0f ? prev.height : next.height,
+                                          next.height > 1.0f ? next.height : prev.height);
+            if (height < params.ribMinHeight) {
+                continue;
+            }
+            const Eigen::Vector2f outwardIn(inDir.y(), -inDir.x());
+            const Eigen::Vector2f outwardOut(outDir.y(), -outDir.x());
+            Eigen::Vector2f approach = outwardIn + outwardOut;
+            if (approach.norm() < 1e-4f) {
+                approach = outwardIn;
+            }
+            approach.normalize();
+            verticals.push_back({loop[static_cast<std::size_t>(i)], height, std::min(prev.confidence, next.confidence),
+                                 incoming, outgoing, approach});
+        }
+    }
+
+    // 圆角上挨得很近的两个凹点并成一个，距离小于最薄板厚，不会把 T 形两侧的立焊缝并掉
+    std::vector<char> used(verticals.size(), 0);
+    std::vector<VerticalCandidate> merged;
+    constexpr float kVerticalMerge = 3.0f;
+    for (std::size_t i = 0; i < verticals.size(); ++i) {
+        if (used[i]) {
+            continue;
+        }
+        Eigen::Vector2f sum = verticals[i].xy;
+        float heightSum = verticals[i].height;
+        Eigen::Vector2f approachSum = verticals[i].approach;
+        float confidence = verticals[i].confidence;
+        int count = 1;
+        int edgeA = verticals[i].edgeA;
+        int edgeB = verticals[i].edgeB;
+        used[i] = 1;
+        for (std::size_t j = i + 1; j < verticals.size(); ++j) {
+            if (used[j] || (verticals[j].xy - verticals[i].xy).norm() > kVerticalMerge) {
+                continue;
+            }
+            used[j] = 1;
+            sum += verticals[j].xy;
+            heightSum += verticals[j].height;
+            approachSum += verticals[j].approach;
+            confidence = std::min(confidence, verticals[j].confidence);
+            ++count;
+        }
+        VerticalCandidate corner;
+        corner.xy = sum / static_cast<float>(count);
+        corner.height = heightSum / static_cast<float>(count);
+        corner.confidence = confidence;
+        corner.edgeA = edgeA;
+        corner.edgeB = edgeB;
+        corner.approach = approachSum.norm() > 1e-4f ? approachSum.normalized() : verticals[i].approach;
+        merged.push_back(corner);
     }
 
     piece.ribs.clear();
-    for (std::size_t i = 0; i < ribs.size(); ++i) {
-        RibSegment segment;
-        segment.id = static_cast<int>(i);
-        segment.start = ribs[i].center + ribs[i].dir * ribs[i].tMin;
-        segment.end = ribs[i].center + ribs[i].dir * ribs[i].tMax;
-        segment.thickness = ribs[i].thickness;
-        segment.height = ribs[i].height;
-        segment.confidence = ribs[i].confidence;
-        piece.ribs.push_back(segment);
-    }
-
-    if (!ribs.empty()) {
-        const auto longest = std::max_element(ribs.begin(), ribs.end(), [](const RibCandidate& a, const RibCandidate& b) {
-            return (a.tMax - a.tMin) < (b.tMax - b.tMin);
-        });
-        float yaw = std::atan2(longest->dir.y(), longest->dir.x());
-        if (yaw < 0.0f) {
-            yaw += kPi;
-        }
-        piece.yawRad = yaw;
-    }
-
-    std::vector<Junction> junctions;
-    constexpr float kJunctionSlack = 5.0f;
-    for (std::size_t i = 0; i < ribs.size(); ++i) {
-        for (std::size_t j = i + 1; j < ribs.size(); ++j) {
-            float ti = 0.0f;
-            float tj = 0.0f;
-            if (!IntersectLines(ribs[i], ribs[j], ti, tj)) {
-                continue;
-            }
-            const float reachI = ribs[j].thickness * 0.5f + kJunctionSlack;
-            const float reachJ = ribs[i].thickness * 0.5f + kJunctionSlack;
-            if (ti < ribs[i].tMin - reachI || ti > ribs[i].tMax + reachI) {
-                continue;
-            }
-            if (tj < ribs[j].tMin - reachJ || tj > ribs[j].tMax + reachJ) {
-                continue;
-            }
-            junctions.push_back({static_cast<int>(i), static_cast<int>(j), ti, tj});
-        }
-    }
-
-    BaseMaskView base{&grid, &footprint, &aboveBase, params.basePlaneTolerance};
     piece.seams.clear();
-    BuildFlatSeams(piece, ribs, junctions, base, params, piece.seams);
-    BuildVerticalSeams(piece, ribs, junctions, piece.seams);
+    float longest = 0.0f;
+    for (std::size_t i = 0; i < edges.size(); ++i) {
+        const EdgeRecord& edge = edges[i];
+        RibSegment rib;
+        rib.id = static_cast<int>(i);
+        rib.start = edge.a;
+        rib.end = edge.b;
+        rib.height = edge.height;
+        rib.confidence = edge.confidence;
+        piece.ribs.push_back(rib);
+        if (rib.length() > longest) {
+            longest = rib.length();
+            float yaw = std::atan2(edge.b.y() - edge.a.y(), edge.b.x() - edge.a.x());
+            if (yaw < 0.0f) {
+                yaw += kPi;
+            }
+            piece.yawRad = yaw;
+        }
+
+        InitialSeam seam;
+        seam.workpieceId = piece.id;
+        seam.type = SeamType::FlatFillet;
+        seam.start = Lift(piece.basePlane, edge.a);
+        seam.end = Lift(piece.basePlane, edge.b);
+        seam.approachSide = Eigen::Vector3f(-edge.inward.x(), -edge.inward.y(), 0.0f);
+        seam.ribHeight = edge.height;
+        seam.confidence = edge.confidence;
+        seam.ribA = rib.id;
+        piece.seams.push_back(seam);
+    }
+    for (const VerticalCandidate& corner : merged) {
+        InitialSeam seam;
+        seam.workpieceId = piece.id;
+        seam.type = SeamType::VerticalFillet;
+        seam.start = Lift(piece.basePlane, corner.xy);
+        seam.end = Lift(piece.basePlane, corner.xy, corner.height);
+        seam.approachSide = Eigen::Vector3f(corner.approach.x(), corner.approach.y(), 0.0f);
+        seam.ribHeight = corner.height;
+        seam.confidence = corner.confidence;
+        seam.ribA = corner.edgeA;
+        seam.ribB = corner.edgeB;
+        piece.seams.push_back(seam);
+    }
     return true;
 }
 
@@ -1282,6 +1053,10 @@ SceneSeamResult ExtractImpl(const Cloud::ConstPtr& input, const SceneSeamParams&
         result.message = "输入点云为空";
         return result;
     }
+    if (params.sceneResolution <= 0.0f || params.workpieceResolution <= 0.0f) {
+        result.message = "栅格分辨率必须为正";
+        return result;
+    }
 
     result.cloud = Preprocess(input, params);
     if (params.zAxisDown) {
@@ -1301,7 +1076,7 @@ SceneSeamResult ExtractImpl(const Cloud::ConstPtr& input, const SceneSeamParams&
 
     if (std::isfinite(params.groundHeight)) {
         result.groundPlane = HorizontalPlane(params.zAxisDown ? -params.groundHeight : params.groundHeight);
-    } else if (!FitDominantPlane(grid, nullptr, params.groundFitTolerance, params.maxGroundTiltDeg, result.groundPlane)) {
+    } else if (!FitDominantPlane(grid, nullptr, kGroundFitTolerance, kMaxGroundTiltDeg, result.groundPlane)) {
         result.message = "地面估计失败";
         return result;
     }
@@ -1319,8 +1094,7 @@ SceneSeamResult ExtractImpl(const Cloud::ConstPtr& input, const SceneSeamParams&
             }
         }
     }
-    const int closeCells = static_cast<int>(std::ceil(params.closeRadius / grid.res));
-    objectMask = Close(objectMask, grid.cols, grid.rows, closeCells);
+    objectMask = Close(objectMask, grid.cols, grid.rows, CellsOf(kWorkpieceCloseRadius, grid.res));
 
     std::vector<int> labels;
     const std::vector<Component> components = LabelComponents(objectMask, grid.cols, grid.rows, labels);
@@ -1375,7 +1149,7 @@ SceneSeamResult ExtractImpl(const Cloud::ConstPtr& input, const SceneSeamParams&
             continue;
         }
         for (const InitialSeam& seam : piece.seams) {
-            if (seam.confidence >= params.minConfidence) {
+            if (seam.confidence >= kMinConfidence) {
                 result.seams.push_back(seam);
             } else {
                 ++rejected;

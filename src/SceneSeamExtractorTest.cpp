@@ -39,7 +39,7 @@
 // 检查通过后打开窗口：
 //   上半部分  整场点云按高度着色，工件外接框和编号，焊缝叠加显示
 //   下半部分  单个工件细节，按 n / p 切换工件
-//   红色 平角焊缝    橙色 立角焊缝    青色 立板中心线
+//   红色 平角焊缝    橙色 立角焊缝    青色 顶部轮廓直线
 //
 // 在仓库根目录编译运行（Ubuntu，PCL 1.14，VTK 9.1）：
 // vtk_libs=$(ldd /usr/lib/x86_64-linux-gnu/libpcl_visualization.so | awk '/vtk/ {so=$1; sub(/\.so.*/, "", so); sub(/^lib/, "-l", so); printf "%s ", so}')
@@ -54,7 +54,7 @@
 //   ./scene_seam_test --ply scene.ply --scale 1000          点云单位 m，内部换算成 mm
 //   ./scene_seam_test --ply scene.ply --export seams.csv    焊缝写入 CSV（输入坐标系）
 // 可按相机分辨率和工件尺寸覆盖参数：
-//   --voxel 4  --rib-min-height 20  --rib-min-thickness 4  --rib-max-thickness 30  --min-area 50000
+//   --voxel 4  --rib-min-height 20  --min-area 50000
 
 namespace {
 
@@ -862,10 +862,8 @@ bool ParseOptions(int argc, char** argv, Options& options)
             ok = number(i, options.params.voxelSize);
         } else if (arg == "--rib-min-height") {
             ok = number(i, options.params.ribMinHeight);
-        } else if (arg == "--rib-min-thickness") {
-            ok = number(i, options.params.ribMinThickness);
-        } else if (arg == "--rib-max-thickness") {
-            ok = number(i, options.params.ribMaxThickness);
+        } else if (arg == "--min-seam-length") {
+            ok = number(i, options.params.minSeamLength);
         } else if (arg == "--min-area") {
             ok = number(i, options.params.minWorkpieceArea);
         } else {
@@ -1032,19 +1030,6 @@ int main(int argc, char** argv)
               << "  检出 " << report.detectedTotal << "（平 " << report.detectedFlat << "，立 " << report.detectedVertical << "）\n"
               << "召回 " << recall << "  精度 " << precision << '\n';
     failures += !Expect(recall >= 0.95f, "焊缝召回应不低于 0.95");
-
-    // 间隙阈值小于立板提取带宽时，横穿立板会把一根筋切成两段，两侧焊缝一起断开。
-    // 共线合并应把它们接回去，召回不下降。
-    {
-        SceneSeamParams tight;
-        tight.ribGapTolerance = 20.0f;
-        const SceneSeamResult tightResult = ExtractSceneSeams(scene.cloud, tight);
-        const MatchReport tightReport = CompareSeams(scene, tightResult, 20.0f);
-        const float tightRecall = tightReport.truthTotal > 0
-            ? static_cast<float>(tightReport.truthMatched) / tightReport.truthTotal : 0.0f;
-        std::cout << "ribGapTolerance 20 mm 召回 " << tightRecall << "  检出 " << tightReport.detectedTotal << '\n';
-        failures += !Expect(tightRecall >= 0.95f, "间隙阈值 20 mm 时共线立板应合并");
-    }
     failures += !Expect(precision >= 0.95f, "焊缝精度应不低于 0.95");
 
     // 相机坐标系中离相机越近 z 越小，焊缝 z 应小于地面 z
