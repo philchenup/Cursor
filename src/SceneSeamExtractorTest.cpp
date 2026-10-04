@@ -31,6 +31,7 @@
 //   ladder  两根长筋 + 三块两端搭接的横筋
 //   single  单筋 + 两块对称弧形肘板
 //   hbeam   工字形：长筋 + 两端端板，端板两侧带 35–60 mm 宽阴影
+//   comb    梳形：横筋 + 三块 T 形搭接竖筋，横筋外侧带 40 mm 宽飞点带
 // 相机垂直向下拍摄，点云按相机坐标系生成（Z 轴指向地面，地面 Z 最大），
 // 只采样底板上表面和立板顶边；立板根部一侧留阴影缺失，
 // 并混入地面倾斜、噪声、杂点、小块杂物、NaN 和零点。
@@ -73,6 +74,7 @@ struct RibSpec {
     bool curved;                ///< 肘板：高度从 a 端的 height 线性降到 b 端的 0.3 height
     float shadowLeft = -1.0f;   ///< 法向正侧阴影宽度 mm，< 0 时随机 0–12
     float shadowRight = 0.0f;   ///< 法向负侧阴影宽度 mm
+    float faceBand = 0.0f;      ///< 法向负侧飞点带宽度 mm：相机离轴时沿视线从顶边拖到底板的混合像素
 };
 
 struct Template {
@@ -125,6 +127,15 @@ std::vector<Template> MakeTemplates()
     hbeam.ribs.push_back({{-200.0f, -120.0f}, {-200.0f, 120.0f}, 8.0f, 180.0f, false, 60.0f, 35.0f});
     hbeam.ribs.push_back({{200.0f, -120.0f}, {200.0f, 120.0f}, 8.0f, 180.0f, false, 35.0f, 60.0f});
     templates.push_back(hbeam);
+
+    // 梳形：底部一根横筋，三块竖筋以 T 形搭在横筋上；横筋外侧带 40 mm 宽飞点带，
+    // 竖筋的 Hough 带会把这些飞点收进去而“越过”横筋，用来检查 T 形不被误判成十字、横筋外侧焊缝保持整条
+    Template comb{"comb", 900.0f, 500.0f, 10.0f, {}};
+    comb.ribs.push_back({{-400.0f, -180.0f}, {400.0f, -180.0f}, 10.0f, 150.0f, false, -1.0f, 0.0f, 40.0f});
+    for (float x : {-250.0f, 0.0f, 250.0f}) {
+        comb.ribs.push_back({{x, -175.0f}, {x, 180.0f}, 8.0f, 120.0f, false});
+    }
+    templates.push_back(comb);
 
     return templates;
 }
@@ -367,6 +378,10 @@ void SampleWorkpiece(const Template& shape, const Pose& pose, std::mt19937& rng,
             if (unit(rng) < 0.03f) {
                 emit(rib.a + d * t + n * (rib.thickness * 0.5f + 3.0f), unit(rng) * 40.0f);
             }
+            // 飞点带：高度从顶边线性降到底板，横向离板越远越低
+            for (float w = 2.0f; w <= rib.faceBand; w += 2.0f) {
+                emit(rib.a + d * t - n * (rib.thickness * 0.5f + w), height * (1.0f - w / rib.faceBand));
+            }
         }
     }
 }
@@ -526,9 +541,17 @@ MatchReport CompareSeams(const Scene& scene, const SceneSeamResult& result, floa
         }
     }
     report.detectedTotal = static_cast<int>(result.seams.size());
+    int extraReported = 0;
     for (std::size_t i = 0; i < result.seams.size(); ++i) {
         (result.seams[i].type == SeamType::FlatFillet ? report.detectedFlat : report.detectedVertical) += 1;
         report.detectedMatched += detectedHit[i] ? 1 : 0;
+        if (!detectedHit[i] && std::getenv("SEAM_DEBUG") && extraReported < 24) {
+            ++extraReported;
+            const InitialSeam& seam = result.seams[i];
+            std::cout << "多余 " << (seam.type == SeamType::FlatFillet ? "平" : "立") << " 工件 " << seam.workpieceId
+                      << " 长 " << seam.length() << " 置信 " << seam.confidence << "  " << seam.start.head<2>().transpose()
+                      << " -> " << seam.end.head<2>().transpose() << '\n';
+        }
     }
     return report;
 }
