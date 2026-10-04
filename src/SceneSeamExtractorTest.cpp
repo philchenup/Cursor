@@ -188,7 +188,7 @@ float GroundZ(float x, float y)
 std::vector<GroundTruthSeam> TemplateSeams(const Template& shape, const Pose& pose)
 {
     constexpr float kClearance = 5.0f;
-    constexpr float kMinArm = 15.0f;
+    constexpr float kMinArm = 50.0f;
     std::vector<GroundTruthSeam> seams;
 
     auto lift = [&](const Eigen::Vector2f& local, float above) {

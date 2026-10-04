@@ -879,8 +879,9 @@ struct Junction {
     float tB = 0.0f;
 };
 
-/// 立板越过交点至少这么长才算有一条臂，用于判断 T 形 / 十字接头的象限
-constexpr float kMinArm = 15.0f;
+/// 立板越过交点至少这么长才算有一条臂。
+/// 小于它的伸出是板厚范围内的顶边或飞点，不能据此把另一侧焊缝切开，也不能生成立焊缝。
+constexpr float kMinArm = 50.0f;
 
 // 底板视图：区分“有底板”“确认没有底板（地面）”和“无数据（阴影）”三种状态
 struct BaseMaskView {
@@ -998,14 +999,8 @@ void BuildFlatSeams(const Workpiece& piece,
 
             float cursor = rib.tMin;
             auto emit = [&](float t0, float t1) {
-                // 焊缝长度以立板顶边为准，只有确认探到地面时才收缩端点；阴影不收缩
-                const float step = 2.0f;
-                while (t1 - t0 >= params.minSeamLength && base.confirmedNoBase(rib.center + rib.dir * t0 + offset)) {
-                    t0 += step;
-                }
-                while (t1 - t0 >= params.minSeamLength && base.confirmedNoBase(rib.center + rib.dir * t1 + offset)) {
-                    t1 -= step;
-                }
+                // 焊缝长度以立板顶边为准。端部落在阴影里时旁边能看到地面，
+                // 不能据此把两侧端点往回收，否则焊缝到不了端板。
                 if (t1 - t0 < params.minSeamLength) {
                     return;
                 }
