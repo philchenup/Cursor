@@ -6,8 +6,13 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
 #include <queue>
 #include <stdexcept>
+#include <string>
 #include <tuple>
 #include <unordered_map>
 #include <utility>
@@ -1158,6 +1163,330 @@ void NegateZ(InitialSeam& seam)
     seam.approachSide = NegateZ(seam.approachSide);
 }
 
+// 5x7 点阵，低 5 位从左到右。只覆盖连通域编号和 keep/drop。
+const std::uint8_t* GlyphRows(char ch)
+{
+    static const std::uint8_t k0[] = {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E};
+    static const std::uint8_t k1[] = {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E};
+    static const std::uint8_t k2[] = {0x0E, 0x11, 0x01, 0x06, 0x08, 0x10, 0x1F};
+    static const std::uint8_t k3[] = {0x1E, 0x01, 0x01, 0x0E, 0x01, 0x01, 0x1E};
+    static const std::uint8_t k4[] = {0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02};
+    static const std::uint8_t k5[] = {0x1F, 0x10, 0x10, 0x1E, 0x01, 0x01, 0x1E};
+    static const std::uint8_t k6[] = {0x0E, 0x10, 0x10, 0x1E, 0x11, 0x11, 0x0E};
+    static const std::uint8_t k7[] = {0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08};
+    static const std::uint8_t k8[] = {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E};
+    static const std::uint8_t k9[] = {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x01, 0x0E};
+    static const std::uint8_t kD[] = {0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E};
+    static const std::uint8_t kE[] = {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F};
+    static const std::uint8_t kK[] = {0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11};
+    static const std::uint8_t kO[] = {0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E};
+    static const std::uint8_t kP[] = {0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10};
+    static const std::uint8_t kR[] = {0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11};
+    static const std::uint8_t kX[] = {0x11, 0x0A, 0x04, 0x04, 0x04, 0x0A, 0x11};
+    static const std::uint8_t kMinus[] = {0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00};
+    switch (ch) {
+    case '0': return k0;
+    case '1': return k1;
+    case '2': return k2;
+    case '3': return k3;
+    case '4': return k4;
+    case '5': return k5;
+    case '6': return k6;
+    case '7': return k7;
+    case '8': return k8;
+    case '9': return k9;
+    case 'D': return kD;
+    case 'E': return kE;
+    case 'K': return kK;
+    case 'O': return kO;
+    case 'P': return kP;
+    case 'R': return kR;
+    case 'X': return kX;
+    case '-': return kMinus;
+    default: return nullptr;
+    }
+}
+
+struct Rgb {
+    std::uint8_t r = 0;
+    std::uint8_t g = 0;
+    std::uint8_t b = 0;
+};
+
+Rgb FromHue(float hue, float sat, float val)
+{
+    const float h = hue * 6.0f;
+    const int sector = static_cast<int>(h) % 6;
+    const float f = h - std::floor(h);
+    const float p = val * (1.0f - sat);
+    const float q = val * (1.0f - sat * f);
+    const float t = val * (1.0f - sat * (1.0f - f));
+    float rf = 0.0f;
+    float gf = 0.0f;
+    float bf = 0.0f;
+    switch (sector) {
+    case 0: rf = val; gf = t; bf = p; break;
+    case 1: rf = q; gf = val; bf = p; break;
+    case 2: rf = p; gf = val; bf = t; break;
+    case 3: rf = p; gf = q; bf = val; break;
+    case 4: rf = t; gf = p; bf = val; break;
+    default: rf = val; gf = p; bf = q; break;
+    }
+    return Rgb{static_cast<std::uint8_t>(rf * 255.0f), static_cast<std::uint8_t>(gf * 255.0f),
+               static_cast<std::uint8_t>(bf * 255.0f)};
+}
+
+Rgb ColorOfLabel(int label, bool kept)
+{
+    const float hue = std::fmod(static_cast<float>(label) * 0.6180339887f, 1.0f);
+    return kept ? FromHue(hue, 0.72f, 0.96f) : FromHue(hue, 0.45f, 0.55f);
+}
+
+class Canvas {
+public:
+    Canvas(int width, int height, Rgb fill)
+        : width_(width), height_(height), px_(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 3)
+    {
+        for (int i = 0; i < width * height; ++i) {
+            set(i % width, i / width, fill);
+        }
+    }
+
+    void set(int x, int y, Rgb color)
+    {
+        if (x < 0 || y < 0 || x >= width_ || y >= height_) {
+            return;
+        }
+        std::uint8_t* p = px_.data() + (static_cast<std::size_t>(y) * static_cast<std::size_t>(width_) + static_cast<std::size_t>(x)) * 3;
+        p[0] = color.r;
+        p[1] = color.g;
+        p[2] = color.b;
+    }
+
+    void rect(int x, int y, int w, int h, Rgb color)
+    {
+        if (w <= 0 || h <= 0) {
+            return;
+        }
+        for (int i = 0; i < w; ++i) {
+            set(x + i, y, color);
+            set(x + i, y + h - 1, color);
+        }
+        for (int i = 0; i < h; ++i) {
+            set(x, y + i, color);
+            set(x + w - 1, y + i, color);
+        }
+    }
+
+    void fillRect(int x, int y, int w, int h, Rgb color)
+    {
+        for (int yy = 0; yy < h; ++yy) {
+            for (int xx = 0; xx < w; ++xx) {
+                set(x + xx, y + yy, color);
+            }
+        }
+    }
+
+    void text(int x, int y, const std::string& s, int scale, Rgb color)
+    {
+        int cursor = x;
+        for (char ch : s) {
+            const std::uint8_t* rows = GlyphRows(ch);
+            if (rows) {
+                for (int row = 0; row < 7; ++row) {
+                    for (int col = 0; col < 5; ++col) {
+                        if ((rows[row] & (1 << (4 - col))) == 0) {
+                            continue;
+                        }
+                        fillRect(cursor + col * scale, y + row * scale, scale, scale, color);
+                    }
+                }
+            }
+            cursor += 6 * scale;
+        }
+    }
+
+    bool writePpm(const std::filesystem::path& path) const
+    {
+        std::ofstream out(path, std::ios::binary);
+        if (!out) {
+            return false;
+        }
+        out << "P6\n" << width_ << ' ' << height_ << "\n255\n";
+        out.write(reinterpret_cast<const char*>(px_.data()), static_cast<std::streamsize>(px_.size()));
+        return static_cast<bool>(out);
+    }
+
+private:
+    int width_ = 0;
+    int height_ = 0;
+    std::vector<std::uint8_t> px_;
+};
+
+// 把 LabelComponents 的标签图写成两张图：整场俯视，以及每块较大连通域的放大图。
+// 环境变量 SEAM_COMPONENTS 指向输出目录。不参与焊缝结果。
+void SaveComponentViews(const std::filesystem::path& dir,
+                        const HeightGrid& grid,
+                        const std::vector<int>& labels,
+                        const std::vector<Component>& components,
+                        const SceneSeamParams& params)
+{
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    if (ec) {
+        std::cerr << "连通域图像目录无法创建: " << dir << '\n';
+        return;
+    }
+
+    const float cellArea = grid.res * grid.res;
+    const Rgb background{16, 18, 22};
+    const Rgb noiseColor{120, 48, 48};
+    const Rgb white{240, 240, 240};
+    const Rgb gray{150, 150, 150};
+    constexpr float kNoiseArea = 2000.0f;
+
+    struct Mark {
+        const Component* comp = nullptr;
+        int pieceId = -1;
+        bool kept = false;
+        bool sizable = false;
+        float area = 0.0f;
+        float sizeX = 0.0f;
+        float sizeY = 0.0f;
+    };
+    std::vector<Mark> marks;
+    marks.reserve(components.size());
+    int nextPiece = 0;
+    int noiseCount = 0;
+    for (const Component& comp : components) {
+        Mark mark;
+        mark.comp = &comp;
+        mark.area = static_cast<float>(comp.count) * cellArea;
+        mark.sizeX = static_cast<float>(comp.maxC - comp.minC + 1) * grid.res;
+        mark.sizeY = static_cast<float>(comp.maxR - comp.minR + 1) * grid.res;
+        mark.kept = mark.area >= params.minWorkpieceArea && std::min(mark.sizeX, mark.sizeY) >= params.minWorkpieceSize;
+        mark.sizable = mark.kept || std::min(mark.sizeX, mark.sizeY) >= 80.0f;
+        if (mark.kept) {
+            mark.pieceId = nextPiece;
+            ++nextPiece;
+        } else if (mark.area < kNoiseArea) {
+            ++noiseCount;
+        }
+        marks.push_back(mark);
+    }
+
+    int factor = 1;
+    while (factor < 16
+           && (static_cast<long long>(grid.cols / factor) * (grid.rows / factor) > 5000LL * 1400LL
+               || grid.cols / factor > 4200)) {
+        ++factor;
+    }
+    const int viewCols = std::max(1, grid.cols / factor);
+    const int viewRows = std::max(1, grid.rows / factor);
+    Canvas overview(viewCols, viewRows, background);
+    for (int r = 0; r < grid.rows; ++r) {
+        for (int c = 0; c < grid.cols; ++c) {
+            const int label = labels[grid.index(c, r)];
+            if (label <= 0) {
+                continue;
+            }
+            const Mark& mark = marks[static_cast<std::size_t>(label - 1)];
+            const Rgb color = mark.area < kNoiseArea && !mark.kept ? noiseColor : ColorOfLabel(label, mark.kept);
+            const int x = c / factor;
+            const int y = (grid.rows - 1 - r) / factor;
+            overview.set(x, y, color);
+        }
+    }
+    for (const Mark& mark : marks) {
+        if (!mark.sizable) {
+            continue;
+        }
+        const int x = mark.comp->minC / factor;
+        const int y = (grid.rows - 1 - mark.comp->maxR) / factor;
+        const int w = std::max(1, (mark.comp->maxC - mark.comp->minC + 1) / factor);
+        const int h = std::max(1, (mark.comp->maxR - mark.comp->minR + 1) / factor);
+        overview.rect(x, y, w, h, mark.kept ? white : gray);
+        const std::string tag = mark.kept ? std::to_string(mark.pieceId) : "X";
+        overview.text(x + 2, std::max(0, y - 10), tag, 1, mark.kept ? white : gray);
+    }
+    const std::filesystem::path overviewPath = dir / "components-overview.ppm";
+    if (!overview.writePpm(overviewPath)) {
+        std::cerr << "连通域总览写入失败\n";
+    }
+
+    std::vector<const Mark*> tiles;
+    for (const Mark& mark : marks) {
+        if (mark.sizable) {
+            tiles.push_back(&mark);
+        }
+    }
+    constexpr int kTileW = 390;
+    constexpr int kTileH = 430;
+    constexpr int kCaption = 28;
+    constexpr int kSheetCols = 5;
+    const int sheetRows = std::max(1, static_cast<int>((tiles.size() + kSheetCols - 1) / kSheetCols));
+    Canvas sheet(kSheetCols * kTileW, sheetRows * kTileH, background);
+    for (std::size_t i = 0; i < tiles.size(); ++i) {
+        const Mark& mark = *tiles[i];
+        const int ox = static_cast<int>(i % kSheetCols) * kTileW;
+        const int oy = static_cast<int>(i / kSheetCols) * kTileH;
+        constexpr int kPad = 8;
+        const int c0 = std::max(0, mark.comp->minC - kPad);
+        const int c1 = std::min(grid.cols - 1, mark.comp->maxC + kPad);
+        const int r0 = std::max(0, mark.comp->minR - kPad);
+        const int r1 = std::min(grid.rows - 1, mark.comp->maxR + kPad);
+        const int cropW = c1 - c0 + 1;
+        const int cropH = r1 - r0 + 1;
+        const int availW = kTileW - 20;
+        const int availH = kTileH - kCaption - 16;
+        int step = 1;
+        int scale = 1;
+        if (cropW <= availW && cropH <= availH) {
+            scale = std::max(1, std::min(availW / cropW, availH / cropH));
+        } else {
+            step = std::max((cropW + availW - 1) / availW, (cropH + availH - 1) / availH);
+        }
+        const int drawW = ((cropW + step - 1) / step) * scale;
+        const int drawH = ((cropH + step - 1) / step) * scale;
+        const int x0 = ox + (kTileW - drawW) / 2;
+        const int y0 = oy + kCaption + std::max(0, (availH - drawH) / 2);
+        for (int r = r0; r <= r1; r += step) {
+            for (int c = c0; c <= c1; c += step) {
+                const int label = labels[grid.index(c, r)];
+                if (label <= 0) {
+                    continue;
+                }
+                const bool mine = label == mark.comp->label;
+                const Rgb color = mine ? ColorOfLabel(label, mark.kept) : Rgb{70, 74, 82};
+                const int x = x0 + ((c - c0) / step) * scale;
+                const int y = y0 + ((r1 - r) / step) * scale;
+                sheet.fillRect(x, y, scale, scale, color);
+            }
+        }
+        const int bx = x0 + ((mark.comp->minC - c0) / step) * scale;
+        const int by = y0 + ((r1 - mark.comp->maxR) / step) * scale;
+        const int bw = std::max(scale, ((mark.comp->maxC - mark.comp->minC) / step + 1) * scale);
+        const int bh = std::max(scale, ((mark.comp->maxR - mark.comp->minR) / step + 1) * scale);
+        sheet.rect(bx, by, bw, bh, mark.kept ? white : gray);
+        const std::string tag = mark.kept ? "K" + std::to_string(mark.pieceId) : "DROP";
+        sheet.text(ox + 8, oy + 6, tag, 2, mark.kept ? white : gray);
+    }
+    const std::filesystem::path sheetPath = dir / "components-tiles.ppm";
+    if (!tiles.empty() && !sheet.writePpm(sheetPath)) {
+        std::cerr << "连通域放大图写入失败\n";
+    }
+
+    std::ofstream report(dir / "components.txt");
+    report << "cells " << grid.cols << " x " << grid.rows << "  res " << grid.res << " mm  draw 1:" << factor << "\n";
+    report << "components " << components.size() << "  kept " << nextPiece << "  noise " << noiseCount << "\n";
+    report << "label piece kept count area sizeX sizeY\n";
+    for (const Mark& mark : marks) {
+        report << mark.comp->label << ' ' << mark.pieceId << ' ' << (mark.kept ? 1 : 0) << ' ' << mark.comp->count << ' '
+               << mark.area << ' ' << mark.sizeX << ' ' << mark.sizeY << '\n';
+    }
+    std::cout << "连通域 " << components.size() << " 个，保留 " << nextPiece << " 个，图像 " << dir << '\n';
+}
+
 SceneSeamResult ExtractImpl(const Cloud::ConstPtr& input, const SceneSeamParams& params)
 {
     SceneSeamResult result;
@@ -1210,6 +1539,9 @@ SceneSeamResult ExtractImpl(const Cloud::ConstPtr& input, const SceneSeamParams&
 
     std::vector<int> labels;
     const std::vector<Component> components = LabelComponents(objectMask, grid.cols, grid.rows, labels);
+    if (const char* componentDir = std::getenv("SEAM_COMPONENTS")) {
+        SaveComponentViews(componentDir, grid, labels, components, params);
+    }
 
     std::vector<int> labelToPiece(components.size() + 1, -1);
     const float cellArea = grid.res * grid.res;
