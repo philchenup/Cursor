@@ -327,9 +327,10 @@ float PlaneTiltDeg(const Eigen::Vector4f& plane)
     return std::acos(cosTilt) * 180.0f / kPi;
 }
 
-// 高度直方图中最低的一层显著高度。倾斜地面的高度会铺开成一段，
-// 其中最低的区段只含地面，不会混入底板；工件内部最低的一层则是底板上表面。
-bool HistogramBaseLevel(const std::vector<float>& values, float bin, float& level)
+// 地面取直方图峰值：整场格子里地板最多，峰值落在地板上。
+// 若取最低的显著层，倾斜或噪声会把初值压低，高的一侧地面会越过 groundThreshold。
+// 底板仍取最低显著层：高出地面的格子里，最矮的一层是底板上表面，立板更高。
+bool HistogramBaseLevel(const std::vector<float>& values, float bin, bool lowestSignificant, float& level)
 {
     if (values.empty()) {
         return false;
@@ -349,6 +350,11 @@ bool HistogramBaseLevel(const std::vector<float>& values, float bin, float& leve
         ++histogram[static_cast<std::size_t>((v - minV) / bin)];
     }
     const int peak = *std::max_element(histogram.begin(), histogram.end());
+    if (!lowestSignificant) {
+        const std::size_t peakBin = static_cast<std::size_t>(std::max_element(histogram.begin(), histogram.end()) - histogram.begin());
+        level = minV + (static_cast<float>(peakBin) + 0.5f) * bin;
+        return peak > 0;
+    }
     const int significant = std::max(1, static_cast<int>(0.3f * static_cast<float>(peak)));
     for (std::size_t i = 0; i < histogram.size(); ++i) {
         if (histogram[i] >= significant) {
@@ -359,11 +365,15 @@ bool HistogramBaseLevel(const std::vector<float>& values, float bin, float& leve
     return false;
 }
 
-// 用最低显著高度做初值，再迭代最小二乘拟合主平面。
+// 用直方图初值，再迭代最小二乘拟合主平面。
+// lowestSignificant 为真时从最低显著层起步，倾斜地面不会在第一步就把底板吸进来。
+// fallbackToPeak 为真且倾角超限时，水平退回用峰值而不是被压低的那一层。
 bool FitDominantPlane(const HeightGrid& grid,
                       const Mask* candidate,
                       float tolerance,
                       float maxTiltDeg,
+                      bool lowestSignificant,
+                      bool fallbackToPeak,
                       Eigen::Vector4f& plane)
 {
     std::vector<float> heights;
@@ -379,7 +389,7 @@ bool FitDominantPlane(const HeightGrid& grid,
     }
 
     float mode = 0.0f;
-    if (!HistogramBaseLevel(heights, std::max(tolerance * 0.5f, 0.5f), mode)) {
+    if (!HistogramBaseLevel(heights, std::max(tolerance * 0.5f, 0.5f), lowestSignificant, mode)) {
         return false;
     }
     plane = HorizontalPlane(mode);
@@ -404,7 +414,11 @@ bool FitDominantPlane(const HeightGrid& grid,
             break;
         }
         if (PlaneTiltDeg(fitted) > maxTiltDeg) {
-            plane = HorizontalPlane(mode);
+            float fallback = mode;
+            if (fallbackToPeak && lowestSignificant) {
+                HistogramBaseLevel(heights, std::max(tolerance * 0.5f, 0.5f), false, fallback);
+            }
+            plane = HorizontalPlane(fallback);
             break;
         }
         plane = fitted;
@@ -852,7 +866,7 @@ bool ProcessWorkpiece(const Cloud& scene,
             }
         }
     }
-    if (!FitDominantPlane(grid, &aboveGround, kBasePlaneTolerance, kMaxGroundTiltDeg, piece.basePlane)) {
+    if (!FitDominantPlane(grid, &aboveGround, kBasePlaneTolerance, kMaxGroundTiltDeg, true, false, piece.basePlane)) {
         return false;
     }
 
@@ -1174,7 +1188,7 @@ SceneSeamResult ExtractImpl(const Cloud::ConstPtr& input, const SceneSeamParams&
 
     if (std::isfinite(params.groundHeight)) {
         result.groundPlane = HorizontalPlane(params.zAxisDown ? -params.groundHeight : params.groundHeight);
-    } else if (!FitDominantPlane(grid, nullptr, kGroundFitTolerance, kMaxGroundTiltDeg, result.groundPlane)) {
+    } else if (!FitDominantPlane(grid, nullptr, kGroundFitTolerance, kMaxGroundTiltDeg, true, true, result.groundPlane)) {
         result.message = "地面估计失败";
         return result;
     }
@@ -1227,23 +1241,46 @@ SceneSeamResult ExtractImpl(const Cloud::ConstPtr& input, const SceneSeamParams&
             continue;
         }
         const int pieceId = labelToPiece[static_cast<std::size_t>(label)];
-        if (pieceId >= 0) {
-            pieceIndices[static_cast<std::size_t>(pieceId)].push_back(static_cast<int>(i));
+        if (pieceId < 0) {
+            continue;
         }
+        // 掩码按格子最高点判定。同一格里贴着地面的点不能跟着最高点进入工件。
+        const float above = cloud[i].z - PlaneZ(result.groundPlane, cloud[i].x, cloud[i].y);
+        if (above <= params.groundThreshold) {
+            continue;
+        }
+        pieceIndices[static_cast<std::size_t>(pieceId)].push_back(static_cast<int>(i));
     }
 
+    std::vector<Workpiece, Eigen::aligned_allocator<Workpiece>> kept;
+    kept.reserve(result.workpieces.size());
     std::size_t rejected = 0;
     for (Workpiece& piece : result.workpieces) {
         const std::vector<int>& indices = pieceIndices[static_cast<std::size_t>(piece.id)];
+        if (indices.empty()) {
+            continue;
+        }
+        Eigen::Vector2f minXY(std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+        Eigen::Vector2f maxXY = -minXY;
         piece.cloud->reserve(indices.size());
         for (int index : indices) {
-            piece.cloud->push_back(cloud[static_cast<std::size_t>(index)]);
+            const pcl::PointXYZ& point = cloud[static_cast<std::size_t>(index)];
+            piece.cloud->push_back(point);
+            const Eigen::Vector2f xy(point.x, point.y);
+            minXY = minXY.cwiseMin(xy);
+            maxXY = maxXY.cwiseMax(xy);
         }
         piece.cloud->width = static_cast<std::uint32_t>(piece.cloud->size());
         piece.cloud->height = 1;
         piece.cloud->is_dense = true;
+        // 外接框按留下的点重算。连通域格子框会把闭运算桥上的地面裙边算进去。
+        piece.minXY = minXY;
+        piece.maxXY = maxXY;
+        piece.center = 0.5f * (piece.minXY + piece.maxXY);
+        piece.id = static_cast<int>(kept.size());
 
         if (!ProcessWorkpiece(cloud, indices, result.groundPlane, params, piece)) {
+            kept.push_back(std::move(piece));
             continue;
         }
         for (const InitialSeam& seam : piece.seams) {
@@ -1253,7 +1290,9 @@ SceneSeamResult ExtractImpl(const Cloud::ConstPtr& input, const SceneSeamParams&
                 ++rejected;
             }
         }
+        kept.push_back(std::move(piece));
     }
+    result.workpieces = std::move(kept);
 
     result.success = true;
     result.message = "工件 " + std::to_string(result.workpieces.size()) + " 个，焊缝 " + std::to_string(result.seams.size())
