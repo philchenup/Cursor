@@ -1,6 +1,8 @@
 #include "SceneSeamExtractor.h"
 
 #include <pcl/filters/voxel_grid.h>
+#include <pcl/segmentation/sac_segmentation.h>
+#include <pcl/visualization/pcl_visualizer.h>
 
 #include <algorithm>
 #include <cmath>
@@ -292,37 +294,107 @@ Eigen::Vector4f HorizontalPlane(float z)
     return Eigen::Vector4f(0.0f, 0.0f, 1.0f, -z);
 }
 
-// 最小二乘拟合 z = a x + b y + c，返回法向朝上的归一化平面。
+// PCL 平面拟合，法向朝上。拟合和显示都在这个函数里完成。
 bool FitPlaneLeastSquares(const std::vector<Eigen::Vector3f>& points, Eigen::Vector4f& plane)
 {
     if (points.size() < 3) {
         return false;
     }
+
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+    cloud->reserve(points.size());
     Eigen::Vector3d mean = Eigen::Vector3d::Zero();
     for (const Eigen::Vector3f& p : points) {
+        cloud->push_back(pcl::PointXYZ(p.x(), p.y(), p.z()));
         mean += p.cast<double>();
     }
     mean /= static_cast<double>(points.size());
 
-    Eigen::Matrix2d ata = Eigen::Matrix2d::Zero();
-    Eigen::Vector2d atb = Eigen::Vector2d::Zero();
-    for (const Eigen::Vector3f& p : points) {
-        const Eigen::Vector3d q = p.cast<double>() - mean;
-        const Eigen::Vector2d xy(q.x(), q.y());
-        ata += xy * xy.transpose();
-        atb += xy * q.z();
+    // 随机种子固定。这些点已是候选内点，距离阈值取得很大，优化时用全部点做最小二乘。
+    pcl::SACSegmentation<pcl::PointXYZ> seg(false);
+    seg.setOptimizeCoefficients(true);
+    seg.setModelType(pcl::SACMODEL_PLANE);
+    seg.setMethodType(pcl::SAC_RANSAC);
+    seg.setDistanceThreshold(1.0e6);
+    seg.setMaxIterations(50);
+    seg.setInputCloud(cloud);
+
+    pcl::PointIndices inliers;
+    pcl::ModelCoefficients coeff;
+    seg.segment(inliers, coeff);
+    if (inliers.indices.size() < 3 || coeff.values.size() < 4) {
+        return false;
     }
-    if (std::fabs(ata.determinant()) < 1e-9) {
-        plane = HorizontalPlane(static_cast<float>(mean.z()));
+
+    Eigen::Vector3f normal(coeff.values[0], coeff.values[1], coeff.values[2]);
+    float d = coeff.values[3];
+    if (normal.z() < 0.0f) {
+        normal = -normal;
+        d = -d;
+    }
+    const float norm = normal.norm();
+    if (norm < 1e-9f) {
+        return false;
+    }
+    normal /= norm;
+    d /= norm;
+    plane << normal.x(), normal.y(), normal.z(), d;
+
+    // 只刷新点数最多的那次。窗口不关闭：PCL 的 Visualizer 析构会在这里段错误。
+    static std::size_t shownCount = 0;
+    static pcl::visualization::PCLVisualizer* viewer = nullptr;
+    if (points.size() <= shownCount) {
         return true;
     }
-    const Eigen::Vector2d ab = ata.ldlt().solve(atb);
-    Eigen::Vector3d normal(-ab.x(), -ab.y(), 1.0);
-    const double norm = normal.norm();
-    normal /= norm;
-    const double d = -normal.dot(mean);
-    plane << static_cast<float>(normal.x()), static_cast<float>(normal.y()), static_cast<float>(normal.z()),
-        static_cast<float>(d);
+    shownCount = points.size();
+    if (viewer == nullptr) {
+        viewer = new pcl::visualization::PCLVisualizer("fitted plane");
+        viewer->setBackgroundColor(0.07, 0.08, 0.10);
+    }
+    viewer->removeAllPointClouds();
+
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr samples(new pcl::PointCloud<pcl::PointXYZRGB>);
+    samples->reserve(cloud->size());
+    Eigen::Vector2f minXY(std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+    Eigen::Vector2f maxXY = -minXY;
+    for (const pcl::PointXYZ& p : cloud->points) {
+        pcl::PointXYZRGB q;
+        q.x = p.x;
+        q.y = p.y;
+        q.z = p.z;
+        q.r = 220;
+        q.g = 220;
+        q.b = 220;
+        samples->push_back(q);
+        minXY = minXY.cwiseMin(Eigen::Vector2f(p.x, p.y));
+        maxXY = maxXY.cwiseMax(Eigen::Vector2f(p.x, p.y));
+    }
+
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr sheet(new pcl::PointCloud<pcl::PointXYZRGB>);
+    const float step = std::max(20.0f, 0.01f * std::max(maxXY.x() - minXY.x(), maxXY.y() - minXY.y()));
+    for (float x = minXY.x(); x <= maxXY.x(); x += step) {
+        for (float y = minXY.y(); y <= maxXY.y(); y += step) {
+            pcl::PointXYZRGB q;
+            q.x = x;
+            q.y = y;
+            q.z = PlaneZ(plane, x, y);
+            q.r = 40;
+            q.g = 210;
+            q.b = 90;
+            sheet->push_back(q);
+        }
+    }
+    pcl::visualization::PointCloudColorHandlerRGBField<pcl::PointXYZRGB> sampleColor(samples);
+    pcl::visualization::PointCloudColorHandlerRGBField<pcl::PointXYZRGB> sheetColor(sheet);
+    viewer->addPointCloud(samples, sampleColor, "samples");
+    viewer->addPointCloud(sheet, sheetColor, "plane");
+    viewer->setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 2, "samples");
+    viewer->setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 5, "plane");
+    viewer->setCameraPosition(mean.x(), mean.y() - 2000.0, mean.z() + 9000.0, mean.x(), mean.y(), mean.z(), 0.0, 1.0, 0.0);
+    for (int i = 0; i < 4; ++i) {
+        viewer->spinOnce(30, true);
+    }
+    viewer->saveScreenshot("/tmp/fitted-plane.png");
     return true;
 }
 
