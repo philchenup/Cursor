@@ -1512,5 +1512,20 @@ void ShowScene(const SceneSeamResult& result)
     viewer.addText("scene: height colored cloud, green boxes = workpieces, red = flat fillet, orange = vertical fillet",
         16, 14, 16, 0.9, 0.9, 0.9, "overview-text");
 
+    // 俯视：先框住场景，再把相机放到焦点上方（Z 更小），视线指向地面。
+    viewer.resetCamera();
+    std::vector<pcl::visualization::Camera> cameras;
+    viewer.getCameras(cameras);
+    if (!cameras.empty()) {
+        const double dx = cameras[0].pos[0] - cameras[0].focal[0];
+        const double dy = cameras[0].pos[1] - cameras[0].focal[1];
+        const double dz = cameras[0].pos[2] - cameras[0].focal[2];
+        const double dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+        viewer.setCameraPosition(cameras[0].focal[0], cameras[0].focal[1], cameras[0].focal[2] - dist,
+            cameras[0].focal[0], cameras[0].focal[1], cameras[0].focal[2],
+            0.0, 1.0, 0.0);
+    }
+    viewer.resetCameraClippingRange();
+
     viewer.spin();
 }
