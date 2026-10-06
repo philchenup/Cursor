@@ -1,4 +1,4 @@
-#include "SceneSeamExtractor.h"
+ï»¿#include "SceneSeamExtractor.h"
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/segmentation/sac_segmentation.h>
 #include <algorithm>
@@ -29,7 +29,7 @@ float SceneSeamExtractor::Percentile(std::vector<float> values, float fraction)
 }
 
 // ---------------------------------------------------------------------------
-// ¸ß¶ÈÍ¼
+// é«˜åº¦å›¾
 // ---------------------------------------------------------------------------
 
 
@@ -86,7 +86,7 @@ bool SceneSeamExtractor::BuildHeightGrid(const Cloud& cloud, const std::vector<i
 }
 
 // ---------------------------------------------------------------------------
-// ¶şÖµÍ¼ĞÎÌ¬Ñ§ÓëÁ¬Í¨Óò
+// äºŒå€¼å›¾å½¢æ€å­¦ä¸è¿é€šåŸŸ
 // ---------------------------------------------------------------------------
 
 
@@ -218,7 +218,7 @@ Eigen::Vector4f SceneSeamExtractor::HorizontalPlane(float z)
     return Eigen::Vector4f(0.0f, 0.0f, 1.0f, -z);
 }
 
-// PCL Æ½ÃæÄâºÏ£¬·¨Ïò³¯ÉÏ¡£²»´´½¨¿ÉÊÓ»¯´°¿Ú£¬±ÜÃâ°Ñ VTK Á´½ø Qt ³ÌĞòºóÕÒ²»µ½Èë¿Ú¡£
+// PCL å¹³é¢æ‹Ÿåˆï¼Œæ³•å‘æœä¸Šã€‚ä¸åˆ›å»ºå¯è§†åŒ–çª—å£ï¼Œé¿å…æŠŠ VTK é“¾è¿› Qt ç¨‹åºåæ‰¾ä¸åˆ°å…¥å£ã€‚
 bool SceneSeamExtractor::FitPlaneLeastSquares(const std::vector<Eigen::Vector3f>& points, Eigen::Vector4f& plane)
 {
     if (points.size() < 3) {
@@ -231,7 +231,7 @@ bool SceneSeamExtractor::FitPlaneLeastSquares(const std::vector<Eigen::Vector3f>
         cloud->push_back(pcl::PointXYZ(p.x(), p.y(), p.z()));
     }
 
-    // Ëæ»úÖÖ×Ó¹Ì¶¨¡£ÕâĞ©µãÒÑÊÇºòÑ¡ÄÚµã£¬¾àÀëãĞÖµÈ¡µÃºÜ´ó£¬ÓÅ»¯Ê±ÓÃÈ«²¿µã×ö×îĞ¡¶ş³Ë¡£
+    // éšæœºç§å­å›ºå®šã€‚è¿™äº›ç‚¹å·²æ˜¯å€™é€‰å†…ç‚¹ï¼Œè·ç¦»é˜ˆå€¼å–å¾—å¾ˆå¤§ï¼Œä¼˜åŒ–æ—¶ç”¨å…¨éƒ¨ç‚¹åšæœ€å°äºŒä¹˜ã€‚
     pcl::SACSegmentation<pcl::PointXYZ> seg(false);
     seg.setOptimizeCoefficients(true);
     seg.setModelType(pcl::SACMODEL_PLANE);
@@ -269,9 +269,9 @@ float SceneSeamExtractor::PlaneTiltDeg(const Eigen::Vector4f& plane)
     return std::acos(cosTilt) * 180.0f / kPi;
 }
 
-// µØÃæÈ¡Ö±·½Í¼·åÖµ£ºÕû³¡¸ñ×ÓÀïµØ°å×î¶à£¬·åÖµÂäÔÚµØ°åÉÏ¡£
-// ÈôÈ¡×îµÍµÄÏÔÖø²ã£¬ÇãĞ±»òÔëÉù»á°Ñ³õÖµÑ¹µÍ£¬¸ßµÄÒ»²àµØÃæ»áÔ½¹ı groundThreshold¡£
-// µ×°åÈÔÈ¡×îµÍÏÔÖø²ã£º¸ß³öµØÃæµÄ¸ñ×ÓÀï£¬×î°«µÄÒ»²ãÊÇµ×°åÉÏ±íÃæ£¬Á¢°å¸ü¸ß¡£
+// åœ°é¢å–ç›´æ–¹å›¾å³°å€¼ï¼šæ•´åœºæ ¼å­é‡Œåœ°æ¿æœ€å¤šï¼Œå³°å€¼è½åœ¨åœ°æ¿ä¸Šã€‚
+// è‹¥å–æœ€ä½çš„æ˜¾è‘—å±‚ï¼Œå€¾æ–œæˆ–å™ªå£°ä¼šæŠŠåˆå€¼å‹ä½ï¼Œé«˜çš„ä¸€ä¾§åœ°é¢ä¼šè¶Šè¿‡ groundThresholdã€‚
+// åº•æ¿ä»å–æœ€ä½æ˜¾è‘—å±‚ï¼šé«˜å‡ºåœ°é¢çš„æ ¼å­é‡Œï¼Œæœ€çŸ®çš„ä¸€å±‚æ˜¯åº•æ¿ä¸Šè¡¨é¢ï¼Œç«‹æ¿æ›´é«˜ã€‚
 bool SceneSeamExtractor::HistogramBaseLevel(const std::vector<float>& values, float bin, bool lowestSignificant, float& level)
 {
     if (values.empty()) {
@@ -307,9 +307,9 @@ bool SceneSeamExtractor::HistogramBaseLevel(const std::vector<float>& values, fl
     return false;
 }
 
-// ÓÃÖ±·½Í¼³õÖµ£¬ÔÙµü´ú×îĞ¡¶ş³ËÄâºÏÖ÷Æ½Ãæ¡£
-// lowestSignificant ÎªÕæÊ±´Ó×îµÍÏÔÖø²ãÆğ²½£¬ÇãĞ±µØÃæ²»»áÔÚµÚÒ»²½¾Í°Ñµ×°åÎü½øÀ´¡£
-// fallbackToPeak ÎªÕæÇÒÇã½Ç³¬ÏŞÊ±£¬Ë®Æ½ÍË»ØÓÃ·åÖµ¶ø²»ÊÇ±»Ñ¹µÍµÄÄÇÒ»²ã¡£
+// ç”¨ç›´æ–¹å›¾åˆå€¼ï¼Œå†è¿­ä»£æœ€å°äºŒä¹˜æ‹Ÿåˆä¸»å¹³é¢ã€‚
+// lowestSignificant ä¸ºçœŸæ—¶ä»æœ€ä½æ˜¾è‘—å±‚èµ·æ­¥ï¼Œå€¾æ–œåœ°é¢ä¸ä¼šåœ¨ç¬¬ä¸€æ­¥å°±æŠŠåº•æ¿å¸è¿›æ¥ã€‚
+// fallbackToPeak ä¸ºçœŸä¸”å€¾è§’è¶…é™æ—¶ï¼Œæ°´å¹³é€€å›ç”¨å³°å€¼è€Œä¸æ˜¯è¢«å‹ä½çš„é‚£ä¸€å±‚ã€‚
 bool SceneSeamExtractor::FitDominantPlane(const HeightGrid& grid,
     const Mask* candidate,
     float tolerance,
@@ -446,7 +446,7 @@ std::vector<Eigen::Vector2f> SceneSeamExtractor::SimplifyChain(const std::vector
     return simplified;
 }
 
-// ±Õ»·£ºÈ¡¾àÖÊĞÄ×îÔ¶µãºÍ¾à¸Ãµã×îÔ¶µã°Ñ»·²ğ³ÉÁ½¶ÎÔÙÄâºÏ£¬±ÜÃâÊ×Î²ÏÒ³¤ÎªÁã¡£
+// é—­ç¯ï¼šå–è·è´¨å¿ƒæœ€è¿œç‚¹å’Œè·è¯¥ç‚¹æœ€è¿œç‚¹æŠŠç¯æ‹†æˆä¸¤æ®µå†æ‹Ÿåˆï¼Œé¿å…é¦–å°¾å¼¦é•¿ä¸ºé›¶ã€‚
 std::vector<Eigen::Vector2f> SceneSeamExtractor::SimplifyLoop(std::vector<Eigen::Vector2f> pts, float epsilon)
 {
     if (pts.size() >= 2 && (pts.front() - pts.back()).norm() < 1e-4f) {
@@ -490,8 +490,8 @@ std::vector<Eigen::Vector2f> SceneSeamExtractor::SimplifyLoop(std::vector<Eigen:
     loop.insert(loop.end(), first.begin(), first.end() - 1);
     loop.insert(loop.end(), second.begin(), second.end() - 1);
 
-    // ÑØÂÖÀªÏòÇ°¡¢Ïòºó¸÷×ßÒ»¶Î£¬¿´ÕûÌå·½Ïò»¹ÊÇ²»ÊÇÍ¬Ò»Ìõ±ß¡£
-    // ×ÔÓÉ¶Ë»áÔÚÒ»¸ö°åºñÖ®ÄÚµôÍ·£¬Õâ¸öµã±ØĞëÁôÏÂ£¬·ñÔòÁ½²àº¸·ìÊÕµ½¼â½Ç¡£
+    // æ²¿è½®å»“å‘å‰ã€å‘åå„èµ°ä¸€æ®µï¼Œçœ‹æ•´ä½“æ–¹å‘è¿˜æ˜¯ä¸æ˜¯åŒä¸€æ¡è¾¹ã€‚
+    // è‡ªç”±ç«¯ä¼šåœ¨ä¸€ä¸ªæ¿åšä¹‹å†…æ‰å¤´ï¼Œè¿™ä¸ªç‚¹å¿…é¡»ç•™ä¸‹ï¼Œå¦åˆ™ä¸¤ä¾§ç„Šç¼æ”¶åˆ°å°–è§’ã€‚
     auto turnsAround = [](const std::vector<Eigen::Vector2f>& poly, std::size_t index) {
         const std::size_t n = poly.size();
         auto walk = [&](int sign) {
@@ -546,9 +546,9 @@ std::vector<Eigen::Vector2f> SceneSeamExtractor::SimplifyLoop(std::vector<Eigen:
         }
     }
 
-    // Á½¿é°åµÄÖ±½Ç»á±»Õ¤¸ñÄ¥³ÉÒ»ÌõÊ®¼¸ºÁÃ×µÄ¶Ì±ß£¬Á¢º¸·ìÒò´Ë¶Ô²»ÉÏ¹Õ½Ç¡£
-    // ¶Ì±ßÁ½¶Ë¶¼ÊÇ³¤±ß¡¢×ª½Ç½Ó½ü 90¡ã Ê±£¬ÊÕµ½Á½Ìõ³¤±ßµÄ½»µã¡£
-    // ×ÔÓÉ¶ËÊÇÁ½²à³¤±ßµôÍ·£¬×ª½Ç½Ó½ü 180¡ã£¬ÖĞ¼ä¸ô×Å°åºñ£¬²»ÄÜÊÕµ½Ò»¸öµã¡£
+    // ä¸¤å—æ¿çš„ç›´è§’ä¼šè¢«æ …æ ¼ç£¨æˆä¸€æ¡åå‡ æ¯«ç±³çš„çŸ­è¾¹ï¼Œç«‹ç„Šç¼å› æ­¤å¯¹ä¸ä¸Šæ‹è§’ã€‚
+    // çŸ­è¾¹ä¸¤ç«¯éƒ½æ˜¯é•¿è¾¹ã€è½¬è§’æ¥è¿‘ 90Â° æ—¶ï¼Œæ”¶åˆ°ä¸¤æ¡é•¿è¾¹çš„äº¤ç‚¹ã€‚
+    // è‡ªç”±ç«¯æ˜¯ä¸¤ä¾§é•¿è¾¹æ‰å¤´ï¼Œè½¬è§’æ¥è¿‘ 180Â°ï¼Œä¸­é—´éš”ç€æ¿åšï¼Œä¸èƒ½æ”¶åˆ°ä¸€ä¸ªç‚¹ã€‚
     constexpr float kMinArm = 30.0f;
     constexpr float kMaxChamfer = 40.0f;
     bool snapped = true;
@@ -637,7 +637,7 @@ std::vector<std::vector<Eigen::Vector2f>> SceneSeamExtractor::TraceContours(cons
             if (!MaskAt(mask, cols, rows, c, r)) {
                 continue;
             }
-            // µ×±ßÏòÓÒ¡¢ÓÒ±ßÏòÉÏ¡¢¶¥±ßÏò×ó¡¢×ó±ßÏòÏÂ£¬²ÄÁÏ±£³ÖÔÚ×ó²à
+            // åº•è¾¹å‘å³ã€å³è¾¹å‘ä¸Šã€é¡¶è¾¹å‘å·¦ã€å·¦è¾¹å‘ä¸‹ï¼Œææ–™ä¿æŒåœ¨å·¦ä¾§
             if (!MaskAt(mask, cols, rows, c, r - 1)) {
                 addEdge(c, r, 0);
                 edges.emplace_back(c, r, 0);
@@ -716,7 +716,7 @@ std::vector<std::vector<Eigen::Vector2f>> SceneSeamExtractor::TraceContours(cons
     return loops;
 }
 
-// ÑØÂÖÀª±ß¡¢³¯²ÄÁÏÄÚ²à²ÉÑù¶¥Ãæ¸ß¶È¡£anchor Îª¶Ëµã£¬toward Ö¸Ïò±ßµÄÄÚ²¿¡£
+// æ²¿è½®å»“è¾¹ã€æœææ–™å†…ä¾§é‡‡æ ·é¡¶é¢é«˜åº¦ã€‚anchor ä¸ºç«¯ç‚¹ï¼Œtoward æŒ‡å‘è¾¹çš„å†…éƒ¨ã€‚
 float SceneSeamExtractor::SampleEdgeHeight(const HeightGrid& grid,
     const Mask& crest,
     const std::vector<float>& above,
@@ -820,8 +820,8 @@ bool SceneSeamExtractor::ProcessWorkpiece(const Cloud& scene,
             if (h < params.ribMinHeight) {
                 continue;
             }
-            // ·ÉµãÑØÊÓÏß´Ó¶¥±ßĞ±×ÅÂäµ½°åÉÏ£¬ÁÚÓòÀïÖ»¸ß³öÒ»½Ø¡£
-            // ÁíÒ»¿é¸ü¸ßµÄÁ¢°åÊÇÌ¨½×£¬¸ß²î¸ü´ó£¬°«°å×Ô¼ºµÄ¶¥ÃæÒª±£Áô£¬·ñÔò½ÓÍ·´¦ÂÖÀª¶Ï¿ª¡£
+            // é£ç‚¹æ²¿è§†çº¿ä»é¡¶è¾¹æ–œç€è½åˆ°æ¿ä¸Šï¼Œé‚»åŸŸé‡Œåªé«˜å‡ºä¸€æˆªã€‚
+            // å¦ä¸€å—æ›´é«˜çš„ç«‹æ¿æ˜¯å°é˜¶ï¼Œé«˜å·®æ›´å¤§ï¼ŒçŸ®æ¿è‡ªå·±çš„é¡¶é¢è¦ä¿ç•™ï¼Œå¦åˆ™æ¥å¤´å¤„è½®å»“æ–­å¼€ã€‚
             bool faceSlope = false;
             for (int dr = -topRadius; dr <= topRadius && !faceSlope; ++dr) {
                 for (int dc = -topRadius; dc <= topRadius; ++dc) {
@@ -897,7 +897,7 @@ bool SceneSeamExtractor::ProcessWorkpiece(const Cloud& scene,
                 continue;
             }
             const Eigen::Vector2f dir = delta / length;
-            const Eigen::Vector2f inward(-dir.y(), dir.x()); // ²ÄÁÏÔÚ×ó²à
+            const Eigen::Vector2f inward(-dir.y(), dir.x()); // ææ–™åœ¨å·¦ä¾§
             const float h0 = SampleEdgeHeight(grid, supported, above, a, dir, inward);
             const float h1 = SampleEdgeHeight(grid, supported, above, b, -dir, inward);
             EdgeRecord edge;
@@ -923,7 +923,7 @@ bool SceneSeamExtractor::ProcessWorkpiece(const Cloud& scene,
             const float cross = inDir.x() * outDir.y() - inDir.y() * outDir.x();
             const float dot = inDir.dot(outDir);
             const float turnDeg = std::atan2(cross, dot) * 180.0f / kPi;
-            // ²ÄÁÏÔÚ×ó²àÊ±£¬°¼¹Õ½ÇÊÇÓÒ×ª
+            // ææ–™åœ¨å·¦ä¾§æ—¶ï¼Œå‡¹æ‹è§’æ˜¯å³è½¬
             if (turnDeg > -kMinCornerTurnDeg) {
                 continue;
             }
@@ -944,7 +944,7 @@ bool SceneSeamExtractor::ProcessWorkpiece(const Cloud& scene,
         }
     }
 
-    // Ô²½ÇÉÏ°¤µÃºÜ½üµÄÁ½¸ö°¼µã²¢³ÉÒ»¸ö£¬¾àÀëĞ¡ÓÚ×î±¡°åºñ£¬²»»á°Ñ T ĞÎÁ½²àµÄÁ¢º¸·ì²¢µô
+    // åœ†è§’ä¸ŠæŒ¨å¾—å¾ˆè¿‘çš„ä¸¤ä¸ªå‡¹ç‚¹å¹¶æˆä¸€ä¸ªï¼Œè·ç¦»å°äºæœ€è–„æ¿åšï¼Œä¸ä¼šæŠŠ T å½¢ä¸¤ä¾§çš„ç«‹ç„Šç¼å¹¶æ‰
     std::vector<char> used(verticals.size(), 0);
     std::vector<VerticalCandidate> merged;
     constexpr float kVerticalMerge = 3.0f;
@@ -1030,7 +1030,7 @@ bool SceneSeamExtractor::ProcessWorkpiece(const Cloud& scene,
 }
 
 // ---------------------------------------------------------------------------
-// Õû³¡Á÷³Ì
+// æ•´åœºæµç¨‹
 // ---------------------------------------------------------------------------
 
 SceneSeamExtractor::CloudPtr SceneSeamExtractor::Preprocess(const Cloud::ConstPtr& cloud, const SceneSeamParams& params)
@@ -1065,7 +1065,7 @@ SceneSeamExtractor::CloudPtr SceneSeamExtractor::Preprocess(const Cloud::ConstPt
 }
 
 // ---------------------------------------------------------------------------
-// Z Öá·­×ª£ºÏà»ú×ø±êÏµ£¨Z Ö¸ÏòµØÃæ£©Óë¼ÆËãÓÃµÄ Z ÏòÉÏ×ø±êÏµ»¥»»
+// Z è½´ç¿»è½¬ï¼šç›¸æœºåæ ‡ç³»ï¼ˆZ æŒ‡å‘åœ°é¢ï¼‰ä¸è®¡ç®—ç”¨çš„ Z å‘ä¸Šåæ ‡ç³»äº’æ¢
 // ---------------------------------------------------------------------------
 
 void SceneSeamExtractor::NegateZ(Cloud& cloud)
@@ -1075,7 +1075,7 @@ void SceneSeamExtractor::NegateZ(Cloud& cloud)
     }
 }
 
-// ax + by + cz + d = 0 ÔÚ z' = -z ÏÂ±äÎª ax + by - cz' + d = 0
+// ax + by + cz + d = 0 åœ¨ z' = -z ä¸‹å˜ä¸º ax + by - cz' + d = 0
 Eigen::Vector4f SceneSeamExtractor::NegateZ(const Eigen::Vector4f& plane)
 {
     return Eigen::Vector4f(plane[0], plane[1], -plane[2], plane[3]);
@@ -1210,7 +1210,7 @@ SceneSeamResult SceneSeamExtractor::ExtractImpl(const Cloud::ConstPtr& input, co
         if (pieceId < 0) {
             continue;
         }
-        // ÑÚÂë°´¸ñ×Ó×î¸ßµãÅĞ¶¨¡£Í¬Ò»¸ñÀïÌù×ÅµØÃæµÄµã²»ÄÜ¸ú×Å×î¸ßµã½øÈë¹¤¼ş¡£
+        // æ©ç æŒ‰æ ¼å­æœ€é«˜ç‚¹åˆ¤å®šã€‚åŒä¸€æ ¼é‡Œè´´ç€åœ°é¢çš„ç‚¹ä¸èƒ½è·Ÿç€æœ€é«˜ç‚¹è¿›å…¥å·¥ä»¶ã€‚
         const float above = cloud[i].z - SceneSeamExtractor::PlaneZ(result.groundPlane, cloud[i].x, cloud[i].y);
         if (above <= params.groundThreshold) {
             continue;
@@ -1239,7 +1239,7 @@ SceneSeamResult SceneSeamExtractor::ExtractImpl(const Cloud::ConstPtr& input, co
         piece.cloud->width = static_cast<std::uint32_t>(piece.cloud->size());
         piece.cloud->height = 1;
         piece.cloud->is_dense = true;
-        // Íâ½Ó¿ò°´ÁôÏÂµÄµãÖØËã¡£Á¬Í¨Óò¸ñ×Ó¿ò»á°Ñ±ÕÔËËãÇÅÉÏµÄµØÃæÈ¹±ßËã½øÈ¥¡£
+        // å¤–æ¥æ¡†æŒ‰ç•™ä¸‹çš„ç‚¹é‡ç®—ã€‚è¿é€šåŸŸæ ¼å­æ¡†ä¼šæŠŠé—­è¿ç®—æ¡¥ä¸Šçš„åœ°é¢è£™è¾¹ç®—è¿›å»ã€‚
         piece.minXY = minXY;
         piece.maxXY = maxXY;
         piece.center = 0.5f * (piece.minXY + piece.maxXY);
@@ -1262,8 +1262,8 @@ SceneSeamResult SceneSeamExtractor::ExtractImpl(const Cloud::ConstPtr& input, co
     result.workpieces = std::move(kept);
 
     result.success = true;
-    result.message = "¹¤¼ş " + std::to_string(result.workpieces.size()) + " ¸ö£¬º¸·ì " + std::to_string(result.seams.size())
-        + " Ìõ£¬µÍÖÃĞÅ¶È " + std::to_string(rejected) + " Ìõ";
+    result.message = "å·¥ä»¶ " + std::to_string(result.workpieces.size()) + " ä¸ªï¼Œç„Šç¼ " + std::to_string(result.seams.size())
+        + " æ¡ï¼Œä½ç½®ä¿¡åº¦ " + std::to_string(rejected) + " æ¡";
     return result;
 }
 
@@ -1337,12 +1337,12 @@ SceneSeamResult SceneSeamExtractor::ExtractSceneSeams(const pcl::PointCloud<pcl:
     }
     catch (const std::exception& error) {
         SceneSeamResult failed;
-        failed.message = std::string("Òì³£: ") + error.what();
+        failed.message = std::string("å¼‚å¸¸: ") + error.what();
         return failed;
     }
 }
 
-// ¸ß¶ÈÀà±êÁ¿£¨baseHeight¡¢ribHeight£©²»Ëæ×ø±êÏµ·­×ª¸Ä±ä
+// é«˜åº¦ç±»æ ‡é‡ï¼ˆbaseHeightã€ribHeightï¼‰ä¸éšåæ ‡ç³»ç¿»è½¬æ”¹å˜
 void SceneSeamExtractor::FlipResultZ(SceneSeamResult& result)
 {
     if (result.cloud) {
