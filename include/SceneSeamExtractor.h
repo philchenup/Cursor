@@ -129,4 +129,7 @@ float PlaneZ(const Eigen::Vector4f& plane, float x, float y);
 SceneSeamResult ExtractSceneSeams(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& cloud,
     const SceneSeamParams& params = SceneSeamParams());
 
+/// 显示整场点云、工件外框和焊缝。Z 指向地面，外框从地面向相机延伸（Z 减小）。
+void ShowScene(const SceneSeamResult& result);
+
 #endif // SCENE_SEAM_EXTRACTOR_H

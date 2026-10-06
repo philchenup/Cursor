@@ -1419,3 +1419,98 @@ SceneSeamResult ExtractSceneSeams(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr
     }
 }
 
+
+namespace {
+
+    // 高出地面的高度 = 地面 Z - 点 Z。靠近相机的立板顶面更大、颜色更暖。
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr ColorByHeight(const pcl::PointCloud<pcl::PointXYZ>& cloud,
+        const Eigen::Vector4f& groundPlane)
+    {
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr colored(new pcl::PointCloud<pcl::PointXYZRGB>);
+        colored->reserve(cloud.size());
+        std::vector<float> heights;
+        heights.reserve(cloud.size());
+        float hMin = std::numeric_limits<float>::max();
+        float hMax = std::numeric_limits<float>::lowest();
+        for (const pcl::PointXYZ& p : cloud.points) {
+            if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) {
+                heights.push_back(std::numeric_limits<float>::quiet_NaN());
+                continue;
+            }
+            const float h = PlaneZ(groundPlane, p.x, p.y) - p.z;
+            heights.push_back(h);
+            hMin = std::min(hMin, h);
+            hMax = std::max(hMax, h);
+        }
+        const float span = std::max(1.0f, hMax - hMin);
+        for (std::size_t i = 0; i < cloud.size(); ++i) {
+            if (!std::isfinite(heights[i])) {
+                continue;
+            }
+            const pcl::PointXYZ& src = cloud.points[i];
+            const float u = (heights[i] - hMin) / span;
+            pcl::PointXYZRGB point;
+            point.x = src.x;
+            point.y = src.y;
+            point.z = src.z;
+            point.r = static_cast<std::uint8_t>(40.0f + 215.0f * u);
+            point.g = static_cast<std::uint8_t>(80.0f + 120.0f * (1.0f - std::fabs(u - 0.5f) * 2.0f));
+            point.b = static_cast<std::uint8_t>(180.0f - 140.0f * u);
+            colored->push_back(point);
+        }
+        colored->width = static_cast<std::uint32_t>(colored->size());
+        colored->height = 1;
+        colored->is_dense = true;
+        return colored;
+    }
+
+    void AddSeamShapes(pcl::visualization::PCLVisualizer& viewer,
+        const std::vector<InitialSeam, Eigen::aligned_allocator<InitialSeam>>& seams,
+        const std::string& prefix,
+        double lineWidth)
+    {
+        for (std::size_t i = 0; i < seams.size(); ++i) {
+            const InitialSeam& seam = seams[i];
+            const pcl::PointXYZ start(seam.start.x(), seam.start.y(), seam.start.z());
+            const pcl::PointXYZ end(seam.end.x(), seam.end.y(), seam.end.z());
+            const std::string id = prefix + std::to_string(i);
+            const bool vertical = seam.type == SeamType::VerticalFillet;
+            viewer.addLine(start, end, vertical ? 1.0 : 0.95, vertical ? 0.45 : 0.15, vertical ? 0.05 : 0.12, id);
+            viewer.setShapeRenderingProperties(pcl::visualization::PCL_VISUALIZER_LINE_WIDTH, lineWidth, id);
+        }
+    }
+
+} // namespace
+
+void ShowScene(const SceneSeamResult& result)
+{
+    pcl::visualization::PCLVisualizer viewer("Scene seams");
+    viewer.setSize(1600, 900);
+    viewer.setBackgroundColor(0.07, 0.08, 0.10);
+
+    if (result.cloud && !result.cloud->empty()) {
+        const pcl::PointCloud<pcl::PointXYZRGB>::Ptr colored = ColorByHeight(*result.cloud, result.groundPlane);
+        pcl::visualization::PointCloudColorHandlerRGBField<pcl::PointXYZRGB> rgb(colored);
+        viewer.addPointCloud(colored, rgb, "scene");
+        viewer.setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 1, "scene");
+    }
+
+    for (const Workpiece& piece : result.workpieces) {
+        const float z0 = PlaneZ(result.groundPlane, piece.center.x(), piece.center.y());
+        // 地面在 z0。工件在相机一侧，Z 更小，外框和编号都朝相机延伸。
+        const float zTop = z0 - 220.0f;
+        const std::string id = "box" + std::to_string(piece.id);
+        viewer.addCube(piece.minXY.x(), piece.maxXY.x(), piece.minXY.y(), piece.maxXY.y(), zTop, z0,
+            0.3, 0.8, 0.4, id);
+        viewer.setShapeRenderingProperties(pcl::visualization::PCL_VISUALIZER_REPRESENTATION,
+            pcl::visualization::PCL_VISUALIZER_REPRESENTATION_WIREFRAME, id);
+        viewer.addText3D(std::to_string(piece.id), pcl::PointXYZ(piece.minXY.x(), piece.maxXY.y() + 40.0f, zTop), 120.0,
+            0.3, 0.8, 0.4, "label" + std::to_string(piece.id));
+    }
+    AddSeamShapes(viewer, result.seams, "seam", 2.0);
+
+    viewer.addText("scene: height colored cloud, green boxes = workpieces, red = flat fillet, orange = vertical fillet",
+        16, 14, 16, 0.9, 0.9, 0.9, "overview-text");
+
+    viewer.spin();
+}
