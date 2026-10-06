@@ -1,7 +1,7 @@
 #include "SceneSeamExtractor.h"
 #include <pcl/visualization/pcl_visualizer.h>
-#include <pcl/visualization/point_cloud_color_handlers.h>
 #include <vtkCamera.h>
+#include <pcl/visualization/point_cloud_color_handlers.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/sample_consensus/method_types.h>
 #include <pcl/sample_consensus/model_types.h>
@@ -28,23 +28,23 @@ namespace {
     constexpr float kNaN = std::numeric_limits<float>::quiet_NaN();
     constexpr float kPi = 3.14159265358979323846f;
 
-    // 与具体组立件无关的内部常数。换工件时不应靠这些值调焊缝�?
+    // 与具体组立件无关的内部常数。换工件时不应靠这些值调焊缝。
     constexpr float kGroundFitTolerance = 4.0f;
     constexpr float kMaxGroundTiltDeg = 10.0f;
-    constexpr float kWorkpieceCloseRadius = 15.0f; ///< 底板掩码�?运算，补阴影缺口
+    constexpr float kWorkpieceCloseRadius = 15.0f; ///< 底板掩码闭运算，补阴影缺口
     constexpr float kBasePlaneTolerance = 4.0f;
-    constexpr float kTopNeighborhood = 4.0f;       ///< 判断飞点的邻域半�?
-    constexpr float kTopTolerance = 4.0f;          ///< 同一顶面允�?�的高差
-    constexpr float kPlateStep = 24.0f;            ///< 超过该高�?视为另一块板的台阶，不能把矮板削�?
+    constexpr float kTopNeighborhood = 4.0f;       ///< 判断飞点的邻域半径
+    constexpr float kTopTolerance = 4.0f;          ///< 同一顶面允许的高差
+    constexpr float kPlateStep = 24.0f;            ///< 超过该高差视为另一块板的台阶，不能把矮板削掉
     constexpr float kTopSupportRadius = 4.0f;      ///< 孤立高点过滤半径
-    constexpr float kTopCloseRadius = 4.0f;        ///< 补顶面栅格缺口，把贴在一起的立板连成一�?
-    // 折线拟合的偏�?不能超过一�?栅格。立板轮廓只有一�?板厚那么宽，半�?�大�? 3�?5 mm�?
-    // 偏差更大时，从自由�??栅格点拉到接头的弦会把两侧平行边收成一�?尖�?��?
+    constexpr float kTopCloseRadius = 4.0f;        ///< 补顶面栅格缺口，把贴在一起的立板连成一块
+    // 折线拟合的偏差不能超过一个栅格。立板轮廓只有一个板厚那么宽，半宽大约 3–5 mm；
+    // 偏差更大时，从自由端栅格点拉到接头的弦会把两侧平行边收成一个尖角。
     constexpr float kRasterEpsilon = 2.0f;
-    // 同一条直边上、偏离不超过这个值的�?折可以并掉。板�?掉头不在此列�?
+    // 同一条直边上、偏离不超过这个值的弯折可以并掉。板端掉头不在此列。
     constexpr float kSameDirectionJog = 28.0f;
     constexpr float kCornerLookahead = 24.0f;
-    constexpr float kMinCornerTurnDeg = 30.0f;     ///< 行走方向右转超过该�?�度才是凹拐�?
+    constexpr float kMinCornerTurnDeg = 30.0f;     ///< 行走方向右转超过该角度才是凹拐角
     constexpr float kMinConfidence = 0.3f;
 
     float Percentile(std::vector<float> values, float fraction)
@@ -59,7 +59,7 @@ namespace {
     }
 
     // ---------------------------------------------------------------------------
-    // 高度�?
+    // 高度图
     // ---------------------------------------------------------------------------
 
     struct HeightGrid {
@@ -67,7 +67,7 @@ namespace {
         int rows = 0;
         float res = 1.0f;
         Eigen::Vector2f origin = Eigen::Vector2f::Zero();
-        std::vector<float> z; ///< 每格最靠近相机的点（Z 最小），无数据�? NaN
+        std::vector<float> z; ///< 每格最靠近相机的点（Z 最小），无数据为 NaN
 
         std::size_t index(int c, int r) const
         {
@@ -150,7 +150,7 @@ namespace {
     }
 
     // ---------------------------------------------------------------------------
-    // 二值图形态�?�与连通域
+    // 二值图形态学与连通域
     // ---------------------------------------------------------------------------
 
     using Mask = std::vector<std::uint8_t>;
@@ -290,13 +290,13 @@ namespace {
     // 平面拟合
     // ---------------------------------------------------------------------------
 
-    // 法向指向相机。相机坐标系�? Z 指向地面，水平面 z = z0 写成 -z + z0 = 0�?
+    // 法向指向相机。相机坐标系里 Z 指向地面，水平面 z = z0 写成 -z + z0 = 0。
     Eigen::Vector4f HorizontalPlane(float z)
     {
         return Eigen::Vector4f(0.0f, 0.0f, -1.0f, z);
     }
 
-    // PCL 平面拟合，法向指向相机（Z 减小方向）。拟合和显示都在这个函数里完成�?
+    // PCL 平面拟合，法向指向相机（Z 减小方向）。拟合和显示都在这个函数里完成。
     bool FitPlaneLeastSquares(const std::vector<Eigen::Vector3f>& points, Eigen::Vector4f& plane)
     {
         if (points.size() < 3) {
@@ -312,7 +312,7 @@ namespace {
         }
         mean /= static_cast<double>(points.size());
 
-        // 随机种子固定。这些点已是候选内点，距�?�阈值取得很大，优化时用全部点做最小二乘�?
+        // 随机种子固定。这些点已是候选内点，距离阈值取得很大，优化时用全部点做最小二乘。
         pcl::SACSegmentation<pcl::PointXYZ> seg(false);
         seg.setOptimizeCoefficients(true);
         seg.setModelType(pcl::SACMODEL_PLANE);
@@ -351,9 +351,9 @@ namespace {
         return std::acos(cosTilt) * 180.0f / kPi;
     }
 
-    // 高度直方图中最靠近地面的一层显著高度。相机坐标系里这一�? Z 最大�?
-    // 倾斜地面的高度会铺开成一段，其中 Z 最大的区�?�只�?地面，不会混入底板；
-    // 工件内部 Z 最大的一层则�?底板上表�?�?
+    // 高度直方图中最靠近地面的一层显著高度。相机坐标系里这一层 Z 最大。
+    // 倾斜地面的高度会铺开成一段，其中 Z 最大的区段只含地面，不会混入底板；
+    // 工件内部 Z 最大的一层则是底板上表面。
     bool HistogramBaseLevel(const std::vector<float>& values, float bin, float& level)
     {
         if (values.empty()) {
@@ -384,7 +384,7 @@ namespace {
         return false;
     }
 
-    // �? Z 最大的显著高度做初值，再迭代最小二乘拟合主平面�?
+    // 用 Z 最大的显著高度做初值，再迭代最小二乘拟合主平面。
     bool FitDominantPlane(const HeightGrid& grid,
         const Mask* candidate,
         float tolerance,
@@ -438,18 +438,18 @@ namespace {
         return true;
     }
 
-    // above �?沿相机光轴朝相机方向的高度。顶面比平面更靠近相机，Z 更小�?
+    // above 是沿相机光轴朝相机方向的高度。顶面比平面更靠近相机，Z 更小。
     Eigen::Vector3f Lift(const Eigen::Vector4f& plane, const Eigen::Vector2f& xy, float above = 0.0f)
     {
         return Eigen::Vector3f(xy.x(), xy.y(), PlaneZ(plane, xy.x(), xy.y()) - above);
     }
 
     // ---------------------------------------------------------------------------
-    // 顶面�?�?
+    // 顶面轮廓
     // ---------------------------------------------------------------------------
 
-    // 材料在�?�进方向左侧。�?�轮廓逆时针，孔洞顺时针绕空洞、材料仍在左侧�?
-    // 方向�?0 +x�?1 +y�?2 -x�?3 -y�?
+    // 材料在行进方向左侧。外轮廓逆时针，孔洞顺时针绕空洞、材料仍在左侧。
+    // 方向：0 +x，1 +y，2 -x，3 -y。
     constexpr int kDirX[4] = { 1, 0, -1, 0 };
     constexpr int kDirY[4] = { 0, 1, 0, -1 };
 
@@ -525,7 +525,7 @@ namespace {
         return simplified;
     }
 
-    // �?�?：取距质心最远点和距该点最远点把环拆成两�?�再拟合，避免�?�尾弦长为零�?
+    // 闭环：取距质心最远点和距该点最远点把环拆成两段再拟合，避免首尾弦长为零。
     std::vector<Eigen::Vector2f> SimplifyLoop(std::vector<Eigen::Vector2f> pts, float epsilon)
     {
         if (pts.size() >= 2 && (pts.front() - pts.back()).norm() < 1e-4f) {
@@ -569,8 +569,8 @@ namespace {
         loop.insert(loop.end(), first.begin(), first.end() - 1);
         loop.insert(loop.end(), second.begin(), second.end() - 1);
 
-        // 沿轮廓向前、向后各走一段，看整体方向还�?不是同一条边�?
-        // �?由�??会在一�?板厚之内掉头，这�?点必须留下，否则两侧焊缝收到尖�?��?
+        // 沿轮廓向前、向后各走一段，看整体方向还是不是同一条边。
+        // 自由端会在一个板厚之内掉头，这个点必须留下，否则两侧焊缝收到尖角。
         auto turnsAround = [](const std::vector<Eigen::Vector2f>& poly, std::size_t index) {
             const std::size_t n = poly.size();
             auto walk = [&](int sign) {
@@ -625,9 +625,9 @@ namespace {
             }
         }
 
-        // 两块板的直�?�会�?栅格磨成一条十几�??米的�?边，立焊缝因此�?�不上拐角�?
-        // �?边两�?都是长边、转角接�? 90° 时，收到两条长边的交点�?
-        // �?由�??�?两侧长边掉头，转角接�? 180°，中间隔着板厚，不能收到一�?点�?
+        // 两块板的直角会被栅格磨成一条十几毫米的短边，立焊缝因此对不上拐角。
+        // 短边两端都是长边、转角接近 90° 时，收到两条长边的交点。
+        // 自由端是两侧长边掉头，转角接近 180°，中间隔着板厚，不能收到一个点。
         constexpr float kMinArm = 30.0f;
         constexpr float kMaxChamfer = 40.0f;
         bool snapped = true;
@@ -716,7 +716,7 @@ namespace {
                 if (!MaskAt(mask, cols, rows, c, r)) {
                     continue;
                 }
-                // 底边向右、右边向上、顶边向左、左边向下，材料保持在左�?
+                // 底边向右、右边向上、顶边向左、左边向下，材料保持在左侧
                 if (!MaskAt(mask, cols, rows, c, r - 1)) {
                     addEdge(c, r, 0);
                     edges.emplace_back(c, r, 0);
@@ -813,10 +813,10 @@ namespace {
             for (int c = 0; c < grid.cols; ++c) {
                 const float z = grid.z[grid.index(c, r)];
                 if (!std::isfinite(z)) {
-                    continue; // 这个格子没有�?
+                    continue; // 这个格子没有点
                 }
                 const Eigen::Vector2f xy = grid.center(c, r);
-                const float u = (zMax - z) / span; // 0 地面（Z 最大）�?1 立板顶边（Z 最小）
+                const float u = (zMax - z) / span; // 0 地面（Z 最大），1 立板顶边（Z 最小）
                 pcl::PointXYZRGB p;
                 p.x = xy.x();
                 p.y = xy.y();
@@ -835,12 +835,12 @@ namespace {
         pcl::visualization::PointCloudColorHandlerRGBField<pcl::PointXYZRGB> color(cloud);
         viewer.addPointCloud(cloud, color, "grid");
         viewer.setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 2, "grid");
-        std::cout << "高度�? " << grid.cols << " x " << grid.rows << "，格�? " << grid.res
+        std::cout << "高度图 " << grid.cols << " x " << grid.rows << "，格子 " << grid.res
             << " mm，有数据 " << cloud->size() << "，z " << zMin << " ~ " << zMax << '\n';
         viewer.spin();
     }
 
-    // 沿轮廓边、朝材料内侧采样顶面高度。anchor 为�??点，toward 指向边的内部�?
+    // 沿轮廓边、朝材料内侧采样顶面高度。anchor 为端点，toward 指向边的内部。
     float SampleEdgeHeight(const HeightGrid& grid,
         const Mask& crest,
         const std::vector<float>& above,
@@ -942,8 +942,8 @@ namespace {
                 if (h < params.ribMinHeight) {
                     continue;
                 }
-                // 飞点沿�?�线从顶边斜着落到板上，邻域里�?高出一�?�?
-                // 另一块更高的立板�?台阶，高�?更大，矮板自己的顶面要保留，否则接头处轮廓断开�?
+                // 飞点沿视线从顶边斜着落到板上，邻域里只高出一截。
+                // 另一块更高的立板是台阶，高差更大，矮板自己的顶面要保留，否则接头处轮廓断开。
                 bool faceSlope = false;
                 for (int dr = -topRadius; dr <= topRadius && !faceSlope; ++dr) {
                     for (int dc = -topRadius; dc <= topRadius; ++dc) {
@@ -1019,7 +1019,7 @@ namespace {
                     continue;
                 }
                 const Eigen::Vector2f dir = delta / length;
-                const Eigen::Vector2f inward(-dir.y(), dir.x()); // 材料在左�?
+                const Eigen::Vector2f inward(-dir.y(), dir.x()); // 材料在左侧
                 const float h0 = SampleEdgeHeight(grid, supported, above, a, dir, inward);
                 const float h1 = SampleEdgeHeight(grid, supported, above, b, -dir, inward);
                 EdgeRecord edge;
@@ -1045,7 +1045,7 @@ namespace {
                 const float cross = inDir.x() * outDir.y() - inDir.y() * outDir.x();
                 const float dot = inDir.dot(outDir);
                 const float turnDeg = std::atan2(cross, dot) * 180.0f / kPi;
-                // 材料在左侧时，凹拐�?�是右转
+                // 材料在左侧时，凹拐角是右转
                 if (turnDeg > -kMinCornerTurnDeg) {
                     continue;
                 }
@@ -1066,7 +1066,7 @@ namespace {
             }
         }
 
-        // 圆�?�上挨得很近的两�?凹点并成一�?，距离小于最薄板厚，不会�? T �?两侧的立焊缝并掉
+        // 圆角上挨得很近的两个凹点并成一个，距离小于最薄板厚，不会把 T 形两侧的立焊缝并掉
         std::vector<char> used(verticals.size(), 0);
         std::vector<VerticalCandidate> merged;
         constexpr float kVerticalMerge = 3.0f;
@@ -1217,7 +1217,7 @@ namespace {
             for (int c = 0; c < grid.cols; ++c) {
                 const std::size_t id = grid.index(c, r);
                 if (!std::isfinite(grid.z[id]) && !objectMask[id]) {
-                    continue; // 没有点、也不是补出来的物体�?
+                    continue; // 没有点、也不是补出来的物体格
                 }
                 const Eigen::Vector2f xy = grid.center(c, r);
                 pcl::PointXYZRGB p;
@@ -1227,13 +1227,13 @@ namespace {
                 if (objectMask[id]) {
                     p.r = 40;
                     p.g = 200;
-                    p.b = 90; // 绿色：物�?
+                    p.b = 90; // 绿色：物体
                     ++objectCells;
                 }
                 else {
                     p.r = 50;
                     p.g = 70;
-                    p.b = 100; // 灰蓝：地�?
+                    p.b = 100; // 灰蓝：地面
                 }
                 cloud->push_back(p);
             }
@@ -1246,7 +1246,7 @@ namespace {
         pcl::visualization::PointCloudColorHandlerRGBField<pcl::PointXYZRGB> color(cloud);
         viewer.addPointCloud(cloud, color, "mask");
         viewer.setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 2, "mask");
-        std::cout << "物体�? " << objectCells << " / " << objectMask.size()
+        std::cout << "物体格 " << objectCells << " / " << objectMask.size()
             << "，闭运算半径 " << /* closeCells */ 0 << " 格\n";
         viewer.spin();
     }
@@ -1259,14 +1259,14 @@ namespace {
             return result;
         }
         if (params.sceneResolution <= 0.0f || params.workpieceResolution <= 0.0f) {
-            result.message = "栅格分辨率必须为�?";
+            result.message = "栅格分辨率必须为正";
             return result;
         }
 
         result.cloud = Preprocess(input, params);
         const Cloud& cloud = *result.cloud;
         if (cloud.size() < 100) {
-            result.message = "有效点过�?";
+            result.message = "有效点过少";
             return result;
         }
 
@@ -1280,7 +1280,7 @@ namespace {
             result.groundPlane = HorizontalPlane(params.groundHeight);
         }
         else if (!FitDominantPlane(grid, nullptr, kGroundFitTolerance, kMaxGroundTiltDeg, result.groundPlane)) {
-            result.message = "地面估�?�失�?";
+            result.message = "地面估计失败";
             return result;
         }
 
@@ -1362,15 +1362,15 @@ namespace {
         }
 
         result.success = true;
-        result.message = "工件 " + std::to_string(result.workpieces.size()) + " �?，焊�? " + std::to_string(result.seams.size())
-            + " 条，低置信度 " + std::to_string(rejected) + " �?";
+        result.message = "工件 " + std::to_string(result.workpieces.size()) + " 个，焊缝 " + std::to_string(result.seams.size())
+            + " 条，低置信度 " + std::to_string(rejected) + " 条";
         return result;
     }
 
 } // namespace
 
 // ---------------------------------------------------------------------------
-// �?共接�?
+// 公共接口
 // ---------------------------------------------------------------------------
 
 Eigen::Vector2f RibSegment::direction() const
@@ -1423,7 +1423,7 @@ SceneSeamResult ExtractSceneSeams(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr
 
 namespace {
 
-    // 高出地面的高�? = 地面 Z - �? Z。靠近相机的立板顶面更大、�?�色更暖�?
+    // 高出地面的高度 = 地面 Z - 点 Z。靠近相机的立板顶面更大、颜色更暖。
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr ColorByHeight(const pcl::PointCloud<pcl::PointXYZ>& cloud,
         const Eigen::Vector4f& groundPlane)
     {
@@ -1498,7 +1498,7 @@ void ShowScene(const SceneSeamResult& result)
 
     for (const Workpiece& piece : result.workpieces) {
         const float z0 = PlaneZ(result.groundPlane, piece.center.x(), piece.center.y());
-        // 地面�? z0。工件在相机一侧，Z 更小，�?��?�和编号都朝相机延伸�?
+        // 地面在 z0。工件在相机一侧，Z 更小，外框和编号都朝相机延伸。
         const float zTop = z0 - 220.0f;
         const std::string id = "box" + std::to_string(piece.id);
         viewer.addCube(piece.minXY.x(), piece.maxXY.x(), piece.minXY.y(), piece.maxXY.y(), zTop, z0,
@@ -1513,7 +1513,7 @@ void ShowScene(const SceneSeamResult& result)
     viewer.addText("scene: height colored cloud, green boxes = workpieces, red = flat fillet, orange = vertical fillet",
         16, 14, 16, 0.9, 0.9, 0.9, "overview-text");
 
-    // �?视：相机在焦点上方（Z 更小），视线指向地面�?
+    // 俯视：相机在焦点上方（Z 更小），视线指向地面。
     viewer.resetCamera();
     vtkCamera* camera = viewer.getRenderWindow()->GetRenderers()->GetFirstRenderer()->GetActiveCamera();
     double focal[3];
