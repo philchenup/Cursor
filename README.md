@@ -13,3 +13,27 @@ AIS_Shape* scaled = ScaleAISShapeBy1000(ais);
 // 推荐用 Handle 接管返回值，避免泄漏
 Handle(AIS_Shape) scaledHandle = ScaleAISShapeBy1000(ais);
 ```
+
+## WeldListWidget
+
+焊缝工艺表：追加焊缝、按内缩刷新起终点、清空列表，以及在选中行时把起点和终点读成 `Eigen::Vector3d`。单击表格空白处取消选中。
+
+```cpp
+#include "WeldListWidget.h"
+
+QTableWidget* table = setupWeldListWidget(dock, {
+    { Eigen::Vector3d(0, 0, 0), Eigen::Vector3d(100, 0, 0) },
+});
+
+connect(weldListSignals(table), &WeldListSignals::weldSelected, this,
+    [](const Eigen::Vector3d& start, const Eigen::Vector3d& end) {
+        // 选中行，start / end 已是 Eigen::Vector3d
+    });
+
+connect(weldListSignals(table), &WeldListSignals::blankClicked, this,
+    [](bool selected) {
+        // 点击表格空白处，selected 为 false
+    });
+
+clearWeldList(table);
+```
