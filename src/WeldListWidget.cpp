@@ -11,6 +11,7 @@
 #include <QItemSelectionModel>
 #include <QLineEdit>
 #include <QList>
+#include <QMetaType>
 #include <QMouseEvent>
 #include <QObject>
 #include <QPushButton>
@@ -183,94 +184,9 @@ namespace {
 
     void fitColumnWidths(QTableWidget* table);
 
-    class WeldListNotifier : public QObject
-    {
-    public:
-        explicit WeldListNotifier(QTableWidget* table)
-            : QObject(table)
-            , table_(table)
-        {
-            setObjectName(QLatin1String(kNotifierObjectName));
-        }
-
-        WeldSelectionCallback callback;
-
-        void setCallback(WeldSelectionCallback next)
-        {
-            callback = std::move(next);
-            hasLast_ = false;
-            notify();
-        }
-
-        void notify()
-        {
-            if (!callback || !table_ || notifying_) {
-                return;
-            }
-
-            int row = -1;
-            Eigen::Vector3d start = Eigen::Vector3d::Zero();
-            Eigen::Vector3d end = Eigen::Vector3d::Zero();
-            if (const QItemSelectionModel* selection = table_->selectionModel()) {
-                if (selection->hasSelection()) {
-                    const QModelIndexList rows = selection->selectedRows();
-                    if (!rows.isEmpty()) {
-                        const int selected = rows.first().row();
-                        if (weldRowEndpoints(table_, selected, start, end)) {
-                            row = selected;
-                        } else {
-                            start.setZero();
-                            end.setZero();
-                        }
-                    }
-                }
-            }
-
-            if (hasLast_ && row == lastRow_
-                && start.isApprox(lastStart_) && end.isApprox(lastEnd_)) {
-                return;
-            }
-            hasLast_ = true;
-            lastRow_ = row;
-            lastStart_ = start;
-            lastEnd_ = end;
-
-            struct NotifyGuard {
-                bool& flag;
-                explicit NotifyGuard(bool& value)
-                    : flag(value)
-                {
-                    flag = true;
-                }
-                ~NotifyGuard()
-                {
-                    flag = false;
-                }
-            } guard(notifying_);
-            callback(row, start, end);
-        }
-
-    private:
-        QTableWidget* table_ = nullptr;
-        bool notifying_ = false;
-        bool hasLast_ = false;
-        int lastRow_ = -1;
-        Eigen::Vector3d lastStart_ = Eigen::Vector3d::Zero();
-        Eigen::Vector3d lastEnd_ = Eigen::Vector3d::Zero();
-    };
-
-    WeldListNotifier* notifierOf(QTableWidget* table)
-    {
-        if (!table) {
-            return nullptr;
-        }
-        return static_cast<WeldListNotifier*>(
-            table->findChild<QObject*>(QLatin1String(kNotifierObjectName), Qt::FindDirectChildrenOnly));
-    }
-
     void notifySelection(QTableWidget* table)
     {
-        if (WeldListNotifier* notifier = notifierOf(table)) {
+        if (WeldListSignals* notifier = weldListSignals(table)) {
             notifier->notify();
         }
     }
@@ -448,8 +364,8 @@ namespace {
             if (!index.isValid()) {
                 if (watched == table->viewport()) {
                     table->setFocus(Qt::MouseFocusReason);
-                    if (QItemSelectionModel* selection = table->selectionModel()) {
-                        selection->clear();
+                    if (WeldListSignals* notifier = weldListSignals(table)) {
+                        notifier->notifyBlankClick();
                     }
                     return true;
                 }
@@ -553,10 +469,7 @@ namespace {
         table->installEventFilter(filter);
         table->viewport()->installEventFilter(filter);
 
-        auto* notifier = new WeldListNotifier(table);
-        QObject::connect(table, &QTableWidget::itemSelectionChanged, notifier, [notifier]() {
-            notifier->notify();
-        });
+        new WeldListSignals(table);
 
         auto* bar = new QWidget(panel);
         auto* barLayout = new QHBoxLayout(bar);
@@ -776,7 +689,99 @@ bool selectedWeldEndpoints(const QTableWidget* table,
 
 void setWeldSelectionCallback(QTableWidget* table, WeldSelectionCallback callback)
 {
-    if (WeldListNotifier* notifier = notifierOf(table)) {
+    if (WeldListSignals* notifier = weldListSignals(table)) {
         notifier->setCallback(std::move(callback));
     }
+}
+
+WeldListSignals::WeldListSignals(QTableWidget* table)
+    : QObject(table)
+    , table_(table)
+{
+    setObjectName(QLatin1String(kNotifierObjectName));
+    qRegisterMetaType<Eigen::Vector3d>("Eigen::Vector3d");
+    if (!table_) {
+        return;
+    }
+    connect(table_, &QTableWidget::itemSelectionChanged, this, [this]() { notify(); });
+}
+
+void WeldListSignals::setCallback(WeldSelectionCallback next)
+{
+    callback_ = std::move(next);
+    hasLast_ = false;
+    notify();
+}
+
+void WeldListSignals::notify()
+{
+    if (!table_ || notifying_) {
+        return;
+    }
+
+    int row = -1;
+    Eigen::Vector3d start = Eigen::Vector3d::Zero();
+    Eigen::Vector3d end = Eigen::Vector3d::Zero();
+    if (const QItemSelectionModel* selection = table_->selectionModel()) {
+        if (selection->hasSelection()) {
+            const QModelIndexList rows = selection->selectedRows();
+            if (!rows.isEmpty()) {
+                const int selected = rows.first().row();
+                if (weldRowEndpoints(table_, selected, start, end)) {
+                    row = selected;
+                } else {
+                    start.setZero();
+                    end.setZero();
+                }
+            }
+        }
+    }
+
+    if (hasLast_ && row == lastRow_
+        && start.isApprox(lastStart_) && end.isApprox(lastEnd_)) {
+        return;
+    }
+    hasLast_ = true;
+    lastRow_ = row;
+    lastStart_ = start;
+    lastEnd_ = end;
+
+    struct NotifyGuard {
+        bool& flag;
+        explicit NotifyGuard(bool& value)
+            : flag(value)
+        {
+            flag = true;
+        }
+        ~NotifyGuard()
+        {
+            flag = false;
+        }
+    } guard(notifying_);
+
+    if (callback_) {
+        callback_(row, start, end);
+    }
+    if (row >= 0) {
+        emit weldSelected(start, end);
+    }
+}
+
+void WeldListSignals::notifyBlankClick()
+{
+    if (table_) {
+        if (QItemSelectionModel* selection = table_->selectionModel()) {
+            selection->clear();
+        }
+    }
+    emit blankClicked(false);
+}
+
+WeldListSignals* weldListSignals(QTableWidget* table)
+{
+    if (!table) {
+        return nullptr;
+    }
+    return table->findChild<WeldListSignals*>(
+        QLatin1String(kNotifierObjectName), Qt::FindDirectChildrenOnly);
 }

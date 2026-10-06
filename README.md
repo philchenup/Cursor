@@ -25,19 +25,15 @@ QTableWidget* table = setupWeldListWidget(dock, {
     { Eigen::Vector3d(0, 0, 0), Eigen::Vector3d(100, 0, 0) },
 });
 
-setWeldSelectionCallback(table,
-    [](int row, const Eigen::Vector3d& start, const Eigen::Vector3d& end) {
-        if (row < 0) {
-            return; // 已取消选中
-        }
-        // start、end 与“起点”“终点”列一致，已计入内缩
+connect(weldListSignals(table), &WeldListSignals::weldSelected, this,
+    [](const Eigen::Vector3d& start, const Eigen::Vector3d& end) {
+        // 选中行，start / end 已是 Eigen::Vector3d
     });
 
-Eigen::Vector3d start;
-Eigen::Vector3d end;
-if (selectedWeldEndpoints(table, start, end)) {
-    // 当前选中行
-}
+connect(weldListSignals(table), &WeldListSignals::blankClicked, this,
+    [](bool selected) {
+        // 点击表格空白处，selected 为 false
+    });
 
-clearWeldList(table); // 或点击表上方的“清空”
+clearWeldList(table);
 ```

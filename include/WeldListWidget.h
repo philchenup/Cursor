@@ -4,10 +4,13 @@
 #include <Eigen/Dense>
 
 #include <QDockWidget>
+#include <QObject>
 #include <QTableWidget>
 #include <functional>
 #include <utility>
 #include <vector>
+
+Q_DECLARE_METATYPE(Eigen::Vector3d)
 
 /**
  * @brief 选中焊缝行时的回调。
@@ -22,6 +25,36 @@ using WeldSelectionCallback = std::function<void(
     const Eigen::Vector3d& end)>;
 
 /**
+ * @brief 焊缝表的选中信号。
+ *
+ * weldSelected：选中某行时发出，参数为该行当前起点、终点（已计入内缩）。
+ * blankClicked：单击表格空白处取消选中时发出，selected 为 false。
+ */
+class WeldListSignals : public QObject
+{
+    Q_OBJECT
+public:
+    explicit WeldListSignals(QTableWidget* table);
+
+    void setCallback(WeldSelectionCallback callback);
+    void notify();
+    void notifyBlankClick();
+
+signals:
+    void weldSelected(const Eigen::Vector3d& start, const Eigen::Vector3d& end);
+    void blankClicked(bool selected);
+
+private:
+    QTableWidget* table_ = nullptr;
+    WeldSelectionCallback callback_;
+    bool notifying_ = false;
+    bool hasLast_ = false;
+    int lastRow_ = -1;
+    Eigen::Vector3d lastStart_ = Eigen::Vector3d::Zero();
+    Eigen::Vector3d lastEnd_ = Eigen::Vector3d::Zero();
+};
+
+/**
  * @brief 在名为 weldListWidget 的 QDockWidget 中插入焊缝工艺表。
  *
  * 首次调用会创建 QTableWidget 并放入该 Dock；之后再调用且传入 seams
@@ -33,9 +66,9 @@ using WeldSelectionCallback = std::function<void(
  * 幅度/弦长仅在存在“摆动焊”行时显示；多层四列仅在存在“多层多道”行时显示。
  *
  * 内缩：沿焊缝方向从原起点、原终点各收回给定长度（mm），并刷新起终点显示。
- * 单击一行（含单元格里的编辑控件）会选中该行，可通过
- * selectedWeldEndpoints() 或 setWeldSelectionCallback() 读到起点和终点。
- * 单击表格空白处取消选中。
+ * 单击一行（含单元格里的编辑控件）会选中该行，并发出
+ * WeldListSignals::weldSelected(start, end)。
+ * 单击表格空白处取消选中，并发出 WeldListSignals::blankClicked(false)。
  *
  * @param weldListWidget 已有的 Dock（objectName 建议为 weldListWidget）
  * @param seams          可选，每项为 (起点, 终点) Eigen::Vector3d，单位与界面一致
@@ -74,5 +107,11 @@ bool selectedWeldEndpoints(const QTableWidget* table,
  * 注册后会立刻用当前选中状态回调一次。table 为空时不做任何事。
  */
 void setWeldSelectionCallback(QTableWidget* table, WeldSelectionCallback callback);
+
+/**
+ * @brief 取表格上的信号对象，用于 connect 起点/终点和空白点击。
+ * table 不是焊缝表时返回 nullptr。
+ */
+WeldListSignals* weldListSignals(QTableWidget* table);
 
 #endif // WELD_LIST_WIDGET_H
