@@ -1,6 +1,11 @@
 #ifndef SCENE_SEAM_EXTRACTOR_H
 #define SCENE_SEAM_EXTRACTOR_H
 
+// Qt 在 Windows 上会把 main 宏替换成 qMain。PCL 头文件会间接包含 windows.h，
+// 若在此过程中改掉该宏，链接器就找不到 Qt 的程序入口。先卸掉宏，包含完再恢复。
+#pragma push_macro("main")
+#undef main
+
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 
@@ -9,6 +14,18 @@
 #include <limits>
 #include <string>
 #include <vector>
+
+#pragma pop_macro("main")
+
+#if defined(_WIN32)
+#  if defined(SCENE_SEAM_EXTRACTOR_IMPORTS)
+#    define SCENE_SEAM_API __declspec(dllimport)
+#  else
+#    define SCENE_SEAM_API __declspec(dllexport)
+#  endif
+#else
+#  define SCENE_SEAM_API
+#endif
 
 struct SceneSeamParams {
     // 坐标系
@@ -97,20 +114,11 @@ struct SceneSeamResult {
 };
 
 /**
- * @brief 焊缝提取的对外接口。
+ * @brief 焊缝提取实现。算法都在类内，Qt 工程直接链接本 cpp 时调用这里。
  *
- * 算法实现都在类内部。Qt 程序只调用下面三个输出函数，本文件不提供 main。
- * 把 SceneSeamExtractor.cpp 加入现有 Qt 可执行工程后，在槽函数里使用：
- *
- *   SceneSeamExtractor extractor(params);
- *   SceneSeamResult result = extractor.ExtractSceneSeams(cloud);
- *   SceneSeamExtractor::FlipResultZ(result);
- *   float z = SceneSeamExtractor::PlaneZ(result.groundPlane, x, y);
- *
- * PlaneZ、FlipResultZ 不依赖对象里保存的参数，也可以写成 extractor.PlaneZ(...)、
- * extractor.FlipResultZ(result)。
+ * 本文件不提供 main。启动项目必须仍是已有的 Qt exe。
  */
-class SceneSeamExtractor {
+class SCENE_SEAM_API SceneSeamExtractor {
 public:
     SceneSeamExtractor();
     explicit SceneSeamExtractor(SceneSeamParams params);
@@ -147,5 +155,25 @@ public:
 private:
     SceneSeamParams params_;
 };
+
+// 导出表里的程序入口。名字不做 C++ 修饰，按 PlaneZ、ExtractSceneSeams、FlipResultZ 查找。
+// 直接编进 Qt exe 时也调用这三个函数。编译本 cpp 时不要定义 SCENE_SEAM_EXTRACTOR_IMPORTS。
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4190)
+#endif
+extern "C" {
+
+SCENE_SEAM_API float PlaneZ(const Eigen::Vector4f& plane, float x, float y);
+
+SCENE_SEAM_API SceneSeamResult ExtractSceneSeams(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& cloud,
+    const SceneSeamParams& params = SceneSeamParams());
+
+SCENE_SEAM_API void FlipResultZ(SceneSeamResult& result);
+
+}
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 #endif // SCENE_SEAM_EXTRACTOR_H

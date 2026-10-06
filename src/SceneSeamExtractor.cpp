@@ -1,8 +1,12 @@
+#pragma push_macro("main")
+#undef main
+
 #include "SceneSeamExtractor.h"
 
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/segmentation/sac_segmentation.h>
-#include <pcl/visualization/pcl_visualizer.h>
+
+#pragma pop_macro("main")
 
 #include <algorithm>
 #include <cmath>
@@ -294,7 +298,7 @@ namespace {
         return Eigen::Vector4f(0.0f, 0.0f, 1.0f, -z);
     }
 
-    // PCL 平面拟合，法向朝上。拟合和显示都在这个函数里完成。
+    // PCL 平面拟合，法向朝上。不创建可视化窗口，避免把 VTK 链进 Qt 程序后找不到入口。
     bool FitPlaneLeastSquares(const std::vector<Eigen::Vector3f>& points, Eigen::Vector4f& plane)
     {
         if (points.size() < 3) {
@@ -303,12 +307,9 @@ namespace {
 
         pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
         cloud->reserve(points.size());
-        Eigen::Vector3d mean = Eigen::Vector3d::Zero();
         for (const Eigen::Vector3f& p : points) {
             cloud->push_back(pcl::PointXYZ(p.x(), p.y(), p.z()));
-            mean += p.cast<double>();
         }
-        mean /= static_cast<double>(points.size());
 
         // 随机种子固定。这些点已是候选内点，距离阈值取得很大，优化时用全部点做最小二乘。
         pcl::SACSegmentation<pcl::PointXYZ> seg(false);
@@ -339,62 +340,6 @@ namespace {
         normal /= norm;
         d /= norm;
         plane << normal.x(), normal.y(), normal.z(), d;
-
-        // 只刷新点数最多的那次。窗口不关闭：PCL 的 Visualizer 析构会在这里段错误。
-        static std::size_t shownCount = 0;
-        static pcl::visualization::PCLVisualizer* viewer = nullptr;
-        if (points.size() <= shownCount) {
-            return true;
-        }
-        shownCount = points.size();
-        if (viewer == nullptr) {
-            viewer = new pcl::visualization::PCLVisualizer("fitted plane");
-            viewer->setBackgroundColor(0.07, 0.08, 0.10);
-        }
-        viewer->removeAllPointClouds();
-
-        pcl::PointCloud<pcl::PointXYZRGB>::Ptr samples(new pcl::PointCloud<pcl::PointXYZRGB>);
-        samples->reserve(cloud->size());
-        Eigen::Vector2f minXY(std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
-        Eigen::Vector2f maxXY = -minXY;
-        for (const pcl::PointXYZ& p : cloud->points) {
-            pcl::PointXYZRGB q;
-            q.x = p.x;
-            q.y = p.y;
-            q.z = p.z;
-            q.r = 220;
-            q.g = 220;
-            q.b = 220;
-            samples->push_back(q);
-            minXY = minXY.cwiseMin(Eigen::Vector2f(p.x, p.y));
-            maxXY = maxXY.cwiseMax(Eigen::Vector2f(p.x, p.y));
-        }
-
-        pcl::PointCloud<pcl::PointXYZRGB>::Ptr sheet(new pcl::PointCloud<pcl::PointXYZRGB>);
-        const float step = std::max(20.0f, 0.01f * std::max(maxXY.x() - minXY.x(), maxXY.y() - minXY.y()));
-        for (float x = minXY.x(); x <= maxXY.x(); x += step) {
-            for (float y = minXY.y(); y <= maxXY.y(); y += step) {
-                pcl::PointXYZRGB q;
-                q.x = x;
-                q.y = y;
-                q.z = SceneSeamExtractor::PlaneZ(plane, x, y);
-                q.r = 40;
-                q.g = 210;
-                q.b = 90;
-                sheet->push_back(q);
-            }
-        }
-        pcl::visualization::PointCloudColorHandlerRGBField<pcl::PointXYZRGB> sampleColor(samples);
-        pcl::visualization::PointCloudColorHandlerRGBField<pcl::PointXYZRGB> sheetColor(sheet);
-        viewer->addPointCloud(samples, sampleColor, "samples");
-        viewer->addPointCloud(sheet, sheetColor, "plane");
-        viewer->setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 2, "samples");
-        viewer->setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 5, "plane");
-        viewer->setCameraPosition(mean.x(), mean.y() - 2000.0, mean.z() + 9000.0, mean.x(), mean.y(), mean.z(), 0.0, 1.0, 0.0);
-        for (int i = 0; i < 4; ++i) {
-            viewer->spinOnce(30, true);
-        }
-        viewer->saveScreenshot("/tmp/fitted-plane.png");
         return true;
     }
 
@@ -1777,7 +1722,7 @@ SceneSeamResult SceneSeamExtractor::ExtractSceneSeams(const pcl::PointCloud<pcl:
     try {
         SceneSeamResult result = ExtractImpl(cloud, params);
         if (params.zAxisDown) {
-            FlipResultZ(result);
+            SceneSeamExtractor::FlipResultZ(result);
         }
         return result;
     }
@@ -1808,3 +1753,31 @@ void SceneSeamExtractor::FlipResultZ(SceneSeamResult& result)
         NegateZ(seam);
     }
 }
+
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4190)
+#endif
+extern "C" SCENE_SEAM_API float PlaneZ(const Eigen::Vector4f& plane, float x, float y)
+{
+    return SceneSeamExtractor::PlaneZ(plane, x, y);
+}
+
+extern "C" SCENE_SEAM_API SceneSeamResult ExtractSceneSeams(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& cloud,
+    const SceneSeamParams& params)
+{
+    return SceneSeamExtractor::ExtractSceneSeams(cloud, params);
+}
+
+extern "C" SCENE_SEAM_API void FlipResultZ(SceneSeamResult& result)
+{
+    SceneSeamExtractor::FlipResultZ(result);
+}
+#ifdef _MSC_VER
+#pragma warning(pop)
+#if defined(_M_IX86)
+#pragma comment(linker, "/EXPORT:PlaneZ=_PlaneZ")
+#pragma comment(linker, "/EXPORT:ExtractSceneSeams=_ExtractSceneSeams")
+#pragma comment(linker, "/EXPORT:FlipResultZ=_FlipResultZ")
+#endif
+#endif
