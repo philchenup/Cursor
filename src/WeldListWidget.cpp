@@ -29,8 +29,8 @@ namespace {
     constexpr int kRoleCurrentVec = Qt::UserRole;
 
     enum WeldCol {
-        ColInclude = 0,
-        ColIndex,
+        ColIndex = 0,
+        ColInclude,
         ColStart,
         ColEnd,
         ColSpeed,
@@ -445,8 +445,8 @@ namespace {
         table->setObjectName(QLatin1String(kTableObjectName));
         table->setColumnCount(ColCount);
         table->setHorizontalHeaderLabels({
-            QStringLiteral("选中"),
             QStringLiteral("序号"),
+            QStringLiteral("选中"),
             QStringLiteral("起点"),
             QStringLiteral("终点"),
             QStringLiteral("焊接速度"),
