@@ -11,6 +11,13 @@
  * 建表后连接一次：
  *   connect(weldListSignals(table), &WeldListSignals::weldSelected,
  *           this, &MainWindow::onWeldSelected);
+ *   connect(weldListSignals(table), &WeldListSignals::runCheck,
+ *           this, &MainWindow::onRunCheck);
+ *   connect(weldListSignals(table), &WeldListSignals::runAll,
+ *           this, &MainWindow::onRunAll);
+ *
+ * void MainWindow::onRunCheck();
+ * void MainWindow::onRunAll(const WeldRowDataList& welds);
  */
 void onWeldSelected(const WeldRowData& weld)
 {

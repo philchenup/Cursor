@@ -9,16 +9,20 @@
 #include <QFont>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QIcon>
 #include <QItemSelectionModel>
 #include <QLineEdit>
 #include <QList>
 #include <QMetaType>
 #include <QMouseEvent>
 #include <QObject>
+#include <QPushButton>
 #include <QSignalBlocker>
+#include <QSize>
 #include <QString>
 #include <QStringList>
 #include <QTableWidgetItem>
+#include <QVBoxLayout>
 #include <QVariant>
 #include <QWidget>
 
@@ -53,6 +57,11 @@ namespace {
     const char* kNotifierObjectName = "weldListNotifier";
     const char* kFilterObjectName = "weldTableEventFilter";
     const char* kIncludeCheckObjectName = "weldIncludeCheck";
+    const char* kToggleAllButtonObjectName = "weldListToggleAllButton";
+    const char* kRunCheckedButtonObjectName = "weldListRunCheckedButton";
+    const char* kRunAllButtonObjectName = "weldListRunAllButton";
+    const char* kCheckIconPath = ":/check.svg";
+    const char* kUncheckIconPath = ":/uncheck.svg";
     const char* kClearingProperty = "_clearing";
     const char* kExtensionHostProperty = "_extensionHost";
 
@@ -470,9 +479,59 @@ namespace {
         fitColumnWidths(table);
     }
 
+    QPushButton* listButton(const QTableWidget* table, const char* objectName)
+    {
+        QWidget* panel = table ? table->parentWidget() : nullptr;
+        if (!panel) {
+            return nullptr;
+        }
+        return panel->findChild<QPushButton*>(QLatin1String(objectName));
+    }
+
+    bool allRowsIncluded(const QTableWidget* table)
+    {
+        if (!table || table->rowCount() <= 0) {
+            return false;
+        }
+        for (int row = 0; row < table->rowCount(); ++row) {
+            if (!weldRowIncluded(table, row)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void syncListButtons(QTableWidget* table)
+    {
+        if (!table) {
+            return;
+        }
+        const bool hasRows = table->rowCount() > 0;
+        const bool allIncluded = allRowsIncluded(table);
+        if (QPushButton* toggle = listButton(table, kToggleAllButtonObjectName)) {
+            toggle->setEnabled(hasRows);
+            toggle->setIcon(QIcon(QString::fromLatin1(allIncluded ? kUncheckIconPath : kCheckIconPath)));
+            toggle->setToolTip(allIncluded ? QStringLiteral("取消全选") : QStringLiteral("全选"));
+        }
+        if (QPushButton* runChecked = listButton(table, kRunCheckedButtonObjectName)) {
+            const bool hasHighlight = table->selectionModel()
+                && table->selectionModel()->hasSelection();
+            runChecked->setEnabled(hasHighlight);
+        }
+        if (QPushButton* runAll = listButton(table, kRunAllButtonObjectName)) {
+            runAll->setEnabled(hasRows && !includedWeldRows(table).empty());
+        }
+    }
+
     QTableWidget* createWeldTable(QDockWidget* dock)
     {
-        auto* table = new QTableWidget(dock);
+        auto* panel = new QWidget(dock);
+        panel->setObjectName(QStringLiteral("weldListPanel"));
+        auto* layout = new QVBoxLayout(panel);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(0);
+
+        auto* table = new QTableWidget(panel);
         table->setObjectName(QLatin1String(kTableObjectName));
         table->setColumnCount(ColCount);
         table->setHorizontalHeaderLabels({
@@ -518,7 +577,71 @@ namespace {
         table->viewport()->installEventFilter(filter);
 
         new WeldListSignals(table);
-        dock->setWidget(table);
+
+        auto* bar = new QWidget(panel);
+        auto* barLayout = new QHBoxLayout(bar);
+        barLayout->setContentsMargins(4, 2, 4, 2);
+        barLayout->setSpacing(6);
+
+        auto* toggleButton = new QPushButton(bar);
+        toggleButton->setObjectName(QLatin1String(kToggleAllButtonObjectName));
+        toggleButton->setIcon(QIcon(QString::fromLatin1(kCheckIconPath)));
+        toggleButton->setIconSize(QSize(18, 18));
+        toggleButton->setFixedSize(28, 28);
+        toggleButton->setFlat(true);
+        toggleButton->setToolTip(QStringLiteral("全选"));
+        toggleButton->setEnabled(false);
+
+        auto* runCheckedButton = new QPushButton(QStringLiteral("运行选中"), bar);
+        runCheckedButton->setObjectName(QLatin1String(kRunCheckedButtonObjectName));
+        runCheckedButton->setFont(table->font());
+        runCheckedButton->setToolTip(QStringLiteral("运行当前高亮焊缝"));
+        runCheckedButton->setEnabled(false);
+
+        auto* runAllButton = new QPushButton(QStringLiteral("全部运行"), bar);
+        runAllButton->setObjectName(QLatin1String(kRunAllButtonObjectName));
+        runAllButton->setFont(table->font());
+        runAllButton->setToolTip(QStringLiteral("发送全部勾选焊缝"));
+        runAllButton->setEnabled(false);
+
+        barLayout->addWidget(toggleButton);
+        barLayout->addWidget(runCheckedButton);
+        barLayout->addWidget(runAllButton);
+        barLayout->addStretch(1);
+
+        layout->addWidget(bar);
+        layout->addWidget(table, 1);
+        dock->setWidget(panel);
+
+        QObject::connect(toggleButton,
+            static_cast<void (QPushButton::*)(bool)>(&QPushButton::clicked),
+            table,
+            [table](bool) {
+                const bool selectAll = !allRowsIncluded(table);
+                for (int row = 0; row < table->rowCount(); ++row) {
+                    if (QCheckBox* box = includeBoxAt(table, row)) {
+                        QSignalBlocker blocker(box);
+                        box->setChecked(selectAll);
+                    }
+                }
+                syncListButtons(table);
+            });
+        QObject::connect(runCheckedButton,
+            static_cast<void (QPushButton::*)(bool)>(&QPushButton::clicked),
+            table,
+            [table](bool) {
+                if (WeldListSignals* notifier = weldListSignals(table)) {
+                    notifier->emitRunCheck();
+                }
+            });
+        QObject::connect(runAllButton,
+            static_cast<void (QPushButton::*)(bool)>(&QPushButton::clicked),
+            table,
+            [table](bool) {
+                if (WeldListSignals* notifier = weldListSignals(table)) {
+                    notifier->emitRunAll();
+                }
+            });
         return table;
     }
 
@@ -590,6 +713,11 @@ namespace {
             if (QCheckBox* includeBox = includeBoxAt(table, row)) {
                 includeBox->setFont(table->font());
                 watchEditor(table, includeBox);
+                QObject::connect(includeBox, &QCheckBox::toggled, table, [table](bool) {
+                    if (!table->property(kClearingProperty).toBool()) {
+                        syncListButtons(table);
+                    }
+                });
             }
         }
         const QWidgetList hosts = { weaveTypeHost, ampHost, chordHost,
@@ -628,6 +756,7 @@ namespace {
         }
 
         updateDynamicColumns(table);
+        syncListButtons(table);
     }
 
 }  // namespace
@@ -684,6 +813,7 @@ void clearWeldList(QTableWidget* table)
     updateDynamicColumns(table);
     table->setProperty(kClearingProperty, false);
     notifySelection(table);
+    syncListButtons(table);
 }
 
 bool weldRowEndpoints(const QTableWidget* table,
@@ -841,6 +971,7 @@ WeldListSignals::WeldListSignals(QTableWidget* table)
     setObjectName(QLatin1String(kNotifierObjectName));
     qRegisterMetaType<Eigen::Vector3d>("Eigen::Vector3d");
     qRegisterMetaType<WeldRowData>("WeldRowData");
+    qRegisterMetaType<WeldRowDataList>("WeldRowDataList");
     if (!table_) {
         return;
     }
@@ -854,11 +985,33 @@ void WeldListSignals::setCallback(WeldSelectionCallback next)
     notify();
 }
 
+void WeldListSignals::emitRunCheck()
+{
+    emit runCheck();
+}
+
+void WeldListSignals::emitRunAll()
+{
+    WeldRowDataList welds;
+    if (table_) {
+        const std::vector<int> rows = includedWeldRows(table_);
+        welds.reserve(rows.size());
+        for (int row : rows) {
+            WeldRowData data;
+            if (weldRowData(table_, row, data)) {
+                welds.push_back(std::move(data));
+            }
+        }
+    }
+    emit runAll(welds);
+}
+
 void WeldListSignals::notify()
 {
     if (!table_ || notifying_) {
         return;
     }
+    syncListButtons(table_);
 
     WeldRowData weld;
     if (const QItemSelectionModel* selection = table_->selectionModel()) {

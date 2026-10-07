@@ -93,6 +93,9 @@ struct WeldRowData {
 
 Q_DECLARE_METATYPE(WeldRowData)
 
+using WeldRowDataList = std::vector<WeldRowData>;
+Q_DECLARE_METATYPE(WeldRowDataList)
+
 /**
  * @brief 高亮焊缝行时的回调。
  *
@@ -112,13 +115,10 @@ using WeldSelectionCallback = std::function<void(const WeldRowData& weld)>;
  * @code
  * connect(weldListSignals(table), &WeldListSignals::weldSelected,
  *         this, &MainWindow::onWeldSelected);
- *
- * void MainWindow::onWeldSelected(const WeldRowData& weld)
- * {
- *     if (!weld.valid) {
- *         return;
- *     }
- * }
+ * connect(weldListSignals(table), &WeldListSignals::runCheck,
+ *         this, &MainWindow::onRunCheck);
+ * connect(weldListSignals(table), &WeldListSignals::runAll,
+ *         this, &MainWindow::onRunAll);
  * @endcode
  */
 class WeldListSignals : public QObject
@@ -130,10 +130,14 @@ public:
     void setCallback(WeldSelectionCallback callback);
     void notify();
     void notifyBlankClick();
+    void emitRunCheck();
+    void emitRunAll();
 
 signals:
     void weldSelected(const WeldRowData& weld);
     void blankClicked();
+    void runCheck();
+    void runAll(const WeldRowDataList& welds);
 
 private:
     QTableWidget* table_ = nullptr;
@@ -159,6 +163,9 @@ private:
  *
  * 第二列是选中勾选框，默认勾选。全流程焊接只应处理勾选行，
  * 用 weldRowIncluded / includedWeldRows 过滤不需要的焊缝。勾选与行高亮相互独立。
+ * 表格左上方有一个全选按钮，在全选和取消全选之间切换，图标为资源库中的
+ * check.svg / uncheck.svg。旁边是“运行选中”和“全部运行”：
+ * 运行选中发出 runCheck()；全部运行把所有勾选行打包为 WeldRowDataList 后发出 runAll。
  *
  * 单击一行（含单元格里的编辑控件）会高亮该行，并发出
  * WeldListSignals::weldSelected(weld)，weld 为该行全部类型和数值。
