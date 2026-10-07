@@ -1,0 +1,1070 @@
+#include "WeldListWidget.h"
+
+#include <QAbstractItemView>
+#include <QAbstractSpinBox>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QEvent>
+#include <QFont>
+#include <QHBoxLayout>
+#include <QHeaderView>
+#include <QIcon>
+#include <QItemSelectionModel>
+#include <QLineEdit>
+#include <QList>
+#include <QMetaType>
+#include <QMouseEvent>
+#include <QObject>
+#include <QPushButton>
+#include <QSignalBlocker>
+#include <QSize>
+#include <QString>
+#include <QStringList>
+#include <QTableWidgetItem>
+#include <QVBoxLayout>
+#include <QVariant>
+#include <QWidget>
+
+namespace {
+
+    constexpr int kRoleCurrentVec = Qt::UserRole;
+
+    enum WeldCol {
+        ColIndex = 0,
+        ColInclude,
+        ColStart,
+        ColEnd,
+        ColSpeed,
+        ColWeaveMode,
+        ColWeaveType,
+        ColAmplitude,
+        ColChord,
+        ColWeldPosition,
+        ColTravelAngle,
+        ColWeldContinuity,
+        ColSegmentLength,
+        ColClearDistance,
+        ColMultiMode,
+        ColThickness,
+        ColGrooveAngle,
+        ColFitUpGap,
+        ColPenetration,
+        ColCount
+    };
+
+    const char* kTableObjectName = "weldListTable";
+    const char* kNotifierObjectName = "weldListNotifier";
+    const char* kFilterObjectName = "weldTableEventFilter";
+    const char* kIncludeCheckObjectName = "weldIncludeCheck";
+    const char* kToggleAllButtonObjectName = "weldListToggleAllButton";
+    const char* kRunCheckedButtonObjectName = "weldListRunCheckedButton";
+    const char* kRunAllButtonObjectName = "weldListRunAllButton";
+    const char* kCheckIconPath = ":/check.svg";
+    const char* kUncheckIconPath = ":/uncheck.svg";
+    const char* kClearingProperty = "_clearing";
+    const char* kExtensionHostProperty = "_extensionHost";
+
+    QString vecText(const Eigen::Vector3d& v)
+    {
+        return QStringLiteral("(%1, %2, %3)")
+            .arg(v.x(), 0, 'f', 3)
+            .arg(v.y(), 0, 'f', 3)
+            .arg(v.z(), 0, 'f', 3);
+    }
+
+    QVariant vecToVar(const Eigen::Vector3d& v)
+    {
+        return QVariant::fromValue(QList<QVariant>() << v.x() << v.y() << v.z());
+    }
+
+    bool variantToVec(const QVariant& var, Eigen::Vector3d& out)
+    {
+        const QList<QVariant> list = var.toList();
+        if (list.size() != 3) {
+            return false;
+        }
+        out = Eigen::Vector3d(list[0].toDouble(), list[1].toDouble(), list[2].toDouble());
+        return true;
+    }
+
+    bool parseVecText(const QString& text, Eigen::Vector3d& out)
+    {
+        QString body = text.trimmed();
+        if (body.startsWith(QLatin1Char('(')) && body.endsWith(QLatin1Char(')'))) {
+            body = body.mid(1, body.size() - 2);
+        }
+        const QStringList parts = body.split(QLatin1Char(','));
+        if (parts.size() != 3) {
+            return false;
+        }
+        bool okX = false;
+        bool okY = false;
+        bool okZ = false;
+        const double x = parts[0].trimmed().toDouble(&okX);
+        const double y = parts[1].trimmed().toDouble(&okY);
+        const double z = parts[2].trimmed().toDouble(&okZ);
+        if (!okX || !okY || !okZ) {
+            return false;
+        }
+        out = Eigen::Vector3d(x, y, z);
+        return true;
+    }
+
+    QPoint mousePosition(const QMouseEvent* mouse)
+    {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        return mouse->position().toPoint();
+#else
+        return mouse->pos();
+#endif
+    }
+
+    QDoubleSpinBox* makeSpin(QWidget* parent,
+        double minVal,
+        double maxVal,
+        int decimals,
+        const QString& suffix,
+        double value)
+    {
+        auto* spin = new QDoubleSpinBox(parent);
+        spin->setRange(minVal, maxVal);
+        spin->setDecimals(decimals);
+        spin->setSingleStep(decimals >= 2 ? 0.1 : 1.0);
+        spin->setSuffix(suffix);
+        spin->setValue(value);
+        spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+        spin->setAlignment(Qt::AlignCenter);
+        spin->setFrame(false);
+        spin->setMinimumHeight(22);
+        return spin;
+    }
+
+    QComboBox* makeCombo(QWidget* parent, const QStringList& items)
+    {
+        auto* combo = new QComboBox(parent);
+        combo->addItems(items);
+        combo->setFrame(false);
+        combo->setMinimumHeight(22);
+        return combo;
+    }
+
+    QTableWidgetItem* makeReadOnlyItem(const QString& text)
+    {
+        auto* item = new QTableWidgetItem(text);
+        item->setTextAlignment(Qt::AlignCenter);
+        item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+        return item;
+    }
+
+    QWidget* makeIncludeCheck(QWidget* parent)
+    {
+        auto* host = new QWidget(parent);
+        auto* layout = new QHBoxLayout(host);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(0);
+        layout->setAlignment(Qt::AlignCenter);
+        auto* box = new QCheckBox(host);
+        box->setObjectName(QLatin1String(kIncludeCheckObjectName));
+        box->setChecked(true);
+        box->setToolTip(QStringLiteral("勾选后纳入全流程焊接，取消勾选可过滤该焊缝"));
+        box->setFocusPolicy(Qt::NoFocus);
+        layout->addWidget(box);
+        host->setMinimumHeight(22);
+        return host;
+    }
+
+    // 扩展参数放在宿主里。表格刷新单元格控件时会重新 show 宿主，
+    // 因此不能直接隐藏单元格控件，只隐藏里面的编辑器，格子才一直是空的。
+    QWidget* makeExtensionHost(QWidget* parent, QWidget* editor)
+    {
+        auto* host = new QWidget(parent);
+        host->setProperty(kExtensionHostProperty, true);
+        auto* layout = new QHBoxLayout(host);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(0);
+        layout->addWidget(editor);
+        editor->setVisible(false);
+        host->setMinimumHeight(22);
+        return host;
+    }
+
+    QCheckBox* includeBoxAt(const QTableWidget* table, int row)
+    {
+        QWidget* host = table->cellWidget(row, ColInclude);
+        if (!host) {
+            return nullptr;
+        }
+        return host->findChild<QCheckBox*>(QLatin1String(kIncludeCheckObjectName));
+    }
+
+    QComboBox* comboAt(const QTableWidget* table, int row, int col)
+    {
+        QWidget* widget = table->cellWidget(row, col);
+        if (!widget) {
+            return nullptr;
+        }
+        if (auto* combo = qobject_cast<QComboBox*>(widget)) {
+            return combo;
+        }
+        return widget->findChild<QComboBox*>(QString(), Qt::FindDirectChildrenOnly);
+    }
+
+    QDoubleSpinBox* spinAt(const QTableWidget* table, int row, int col)
+    {
+        QWidget* widget = table->cellWidget(row, col);
+        if (!widget) {
+            return nullptr;
+        }
+        if (auto* spin = qobject_cast<QDoubleSpinBox*>(widget)) {
+            return spin;
+        }
+        return widget->findChild<QDoubleSpinBox*>(QString(), Qt::FindDirectChildrenOnly);
+    }
+
+    double spinValue(const QTableWidget* table, int row, int col)
+    {
+        if (const QDoubleSpinBox* spin = spinAt(table, row, col)) {
+            return spin->value();
+        }
+        return 0.0;
+    }
+
+    int comboIndex(const QTableWidget* table, int row, int col, int fallback)
+    {
+        const QComboBox* combo = comboAt(table, row, col);
+        if (!combo || combo->currentIndex() < 0) {
+            return fallback;
+        }
+        return combo->currentIndex();
+    }
+
+    void fitColumnWidths(QTableWidget* table);
+
+    void notifySelection(QTableWidget* table)
+    {
+        if (WeldListSignals* notifier = weldListSignals(table)) {
+            notifier->notify();
+        }
+    }
+
+    void setExtensionEditorVisible(QTableWidget* table, int row, int col, bool visible)
+    {
+        QWidget* host = table->cellWidget(row, col);
+        if (!host || !host->property(kExtensionHostProperty).toBool()) {
+            return;
+        }
+        const QList<QWidget*> editors = host->findChildren<QWidget*>(
+            QString(), Qt::FindDirectChildrenOnly);
+        for (QWidget* editor : editors) {
+            editor->setVisible(visible);
+        }
+    }
+
+    void updateRowEditors(QTableWidget* table, int row)
+    {
+        QComboBox* weaveCombo = comboAt(table, row, ColWeaveMode);
+        QComboBox* positionCombo = comboAt(table, row, ColWeldPosition);
+        QComboBox* continuityCombo = comboAt(table, row, ColWeldContinuity);
+        QComboBox* multiCombo = comboAt(table, row, ColMultiMode);
+        const bool weaving = weaveCombo && weaveCombo->currentIndex() == 1;
+        const bool vertical = positionCombo && positionCombo->currentIndex() == 1;
+        const bool intermittent = continuityCombo && continuityCombo->currentIndex() == 1;
+        const bool multilayer = multiCombo && multiCombo->currentIndex() == 1;
+
+        const int weaveCols[] = { ColWeaveType, ColAmplitude, ColChord };
+        for (int col : weaveCols) {
+            setExtensionEditorVisible(table, row, col, weaving);
+        }
+        setExtensionEditorVisible(table, row, ColTravelAngle, vertical);
+        const int intermittentCols[] = { ColSegmentLength, ColClearDistance };
+        for (int col : intermittentCols) {
+            setExtensionEditorVisible(table, row, col, intermittent);
+        }
+        const int multiCols[] = { ColThickness, ColGrooveAngle, ColFitUpGap, ColPenetration };
+        for (int col : multiCols) {
+            setExtensionEditorVisible(table, row, col, multilayer);
+        }
+    }
+
+    void updateDynamicColumns(QTableWidget* table)
+    {
+        bool anyWeave = false;
+        bool anyVertical = false;
+        bool anyIntermittent = false;
+        bool anyMulti = false;
+        for (int row = 0; row < table->rowCount(); ++row) {
+            if (QComboBox* weave = comboAt(table, row, ColWeaveMode)) {
+                anyWeave = anyWeave || (weave->currentIndex() == 1);
+            }
+            if (QComboBox* position = comboAt(table, row, ColWeldPosition)) {
+                anyVertical = anyVertical || (position->currentIndex() == 1);
+            }
+            if (QComboBox* continuity = comboAt(table, row, ColWeldContinuity)) {
+                anyIntermittent = anyIntermittent || (continuity->currentIndex() == 1);
+            }
+            if (QComboBox* multi = comboAt(table, row, ColMultiMode)) {
+                anyMulti = anyMulti || (multi->currentIndex() == 1);
+            }
+            updateRowEditors(table, row);
+        }
+        table->setColumnHidden(ColWeaveType, !anyWeave);
+        table->setColumnHidden(ColAmplitude, !anyWeave);
+        table->setColumnHidden(ColChord, !anyWeave);
+        table->setColumnHidden(ColTravelAngle, !anyVertical);
+        table->setColumnHidden(ColSegmentLength, !anyIntermittent);
+        table->setColumnHidden(ColClearDistance, !anyIntermittent);
+        table->setColumnHidden(ColThickness, !anyMulti);
+        table->setColumnHidden(ColGrooveAngle, !anyMulti);
+        table->setColumnHidden(ColFitUpGap, !anyMulti);
+        table->setColumnHidden(ColPenetration, !anyMulti);
+        fitColumnWidths(table);
+    }
+
+    void fitColumnWidths(QTableWidget* table)
+    {
+        if (!table || table->property("_fittingColumns").toBool()) {
+            return;
+        }
+        table->setProperty("_fittingColumns", true);
+
+        QHeaderView* header = table->horizontalHeader();
+        header->setStretchLastSection(false);
+        for (int col = 0; col < table->columnCount(); ++col) {
+            if (!table->isColumnHidden(col)) {
+                header->setSectionResizeMode(col, QHeaderView::ResizeToContents);
+            }
+        }
+        table->resizeColumnsToContents();
+
+        int total = 0;
+        for (int col = 0; col < table->columnCount(); ++col) {
+            if (table->isColumnHidden(col)) {
+                continue;
+            }
+            header->setSectionResizeMode(col, QHeaderView::Interactive);
+            total += header->sectionSize(col);
+        }
+
+        const int viewW = table->viewport()->width();
+        if (viewW > 0 && total > 0 && total < viewW) {
+            int used = 0;
+            int lastVisible = -1;
+            for (int col = 0; col < table->columnCount(); ++col) {
+                if (table->isColumnHidden(col)) {
+                    continue;
+                }
+                lastVisible = col;
+                const int w = qMax(header->minimumSectionSize(),
+                    qRound(header->sectionSize(col) * (static_cast<double>(viewW) / total)));
+                header->resizeSection(col, w);
+                used += w;
+            }
+            if (lastVisible >= 0 && used != viewW) {
+                header->resizeSection(lastVisible,
+                    qMax(header->minimumSectionSize(),
+                        header->sectionSize(lastVisible) + (viewW - used)));
+            }
+        }
+
+        table->setProperty("_fittingColumns", false);
+    }
+
+    class WeldTableEventFilter : public QObject
+    {
+    public:
+        using QObject::QObject;
+
+        bool eventFilter(QObject* watched, QEvent* event) override
+        {
+            QTableWidget* table = nullptr;
+            for (QObject* obj = watched; obj; obj = obj->parent()) {
+                table = qobject_cast<QTableWidget*>(obj);
+                if (table) {
+                    break;
+                }
+            }
+            if (!table) {
+                return false;
+            }
+
+            if (event->type() == QEvent::Resize && watched == table) {
+                fitColumnWidths(table);
+                return false;
+            }
+
+            if (event->type() != QEvent::MouseButtonPress) {
+                return false;
+            }
+            auto* mouse = static_cast<QMouseEvent*>(event);
+            if (mouse->button() != Qt::LeftButton) {
+                return false;
+            }
+
+            const QPoint localPos = mousePosition(mouse);
+            QPoint viewportPos = localPos;
+            if (watched != table->viewport()) {
+                auto* widget = qobject_cast<QWidget*>(watched);
+                if (!widget) {
+                    return false;
+                }
+                viewportPos = table->viewport()->mapFromGlobal(widget->mapToGlobal(localPos));
+            }
+
+            const QModelIndex index = table->indexAt(viewportPos);
+            if (!index.isValid()) {
+                if (watched == table->viewport()) {
+                    table->setFocus(Qt::MouseFocusReason);
+                    if (WeldListSignals* notifier = weldListSignals(table)) {
+                        notifier->notifyBlankClick();
+                    }
+                    return true;
+                }
+                return false;
+            }
+
+            // 单元格里的数值框、下拉框会吃掉鼠标事件，这里补上整行高亮。
+            if (watched != table->viewport()
+                && table->selectionModel()
+                && !table->selectionModel()->isRowSelected(index.row(), QModelIndex())) {
+                table->selectRow(index.row());
+            }
+            return false;
+        }
+    };
+
+    void watchEditor(QTableWidget* table, QWidget* editor)
+    {
+        QObject* filterObject = table->findChild<QObject*>(
+            QLatin1String(kFilterObjectName), Qt::FindDirectChildrenOnly);
+        if (!filterObject || !editor) {
+            return;
+        }
+        editor->installEventFilter(filterObject);
+        if (auto* spin = qobject_cast<QAbstractSpinBox*>(editor)) {
+            if (auto* edit = spin->findChild<QLineEdit*>()) {
+                edit->installEventFilter(filterObject);
+            }
+        }
+    }
+
+    void applyTableStyle(QTableWidget* table)
+    {
+        QFont font;
+        font.setFamily(QStringLiteral("微软雅黑"));
+        font.setPointSize(9);
+        font.setStyleHint(QFont::SansSerif);
+        table->setFont(font);
+        table->horizontalHeader()->setFont(font);
+        table->verticalHeader()->setFont(font);
+
+        table->verticalHeader()->setVisible(false);
+        table->setSelectionBehavior(QAbstractItemView::SelectRows);
+        table->setSelectionMode(QAbstractItemView::SingleSelection);
+        table->setAlternatingRowColors(true);
+        table->setShowGrid(true);
+        table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        table->setFocusPolicy(Qt::StrongFocus);
+        table->setWordWrap(false);
+        table->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+        table->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+
+        QHeaderView* header = table->horizontalHeader();
+        header->setHighlightSections(false);
+        header->setDefaultAlignment(Qt::AlignCenter);
+        header->setMinimumSectionSize(56);
+        header->setStretchLastSection(false);
+        header->setSectionResizeMode(QHeaderView::Interactive);
+        table->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+        fitColumnWidths(table);
+    }
+
+    QPushButton* listButton(const QTableWidget* table, const char* objectName)
+    {
+        QWidget* panel = table ? table->parentWidget() : nullptr;
+        if (!panel) {
+            return nullptr;
+        }
+        return panel->findChild<QPushButton*>(QLatin1String(objectName));
+    }
+
+    bool allRowsIncluded(const QTableWidget* table)
+    {
+        if (!table || table->rowCount() <= 0) {
+            return false;
+        }
+        for (int row = 0; row < table->rowCount(); ++row) {
+            if (!weldRowIncluded(table, row)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void syncListButtons(QTableWidget* table)
+    {
+        if (!table) {
+            return;
+        }
+        const bool hasRows = table->rowCount() > 0;
+        const bool allIncluded = allRowsIncluded(table);
+        if (QPushButton* toggle = listButton(table, kToggleAllButtonObjectName)) {
+            toggle->setEnabled(hasRows);
+            toggle->setIcon(QIcon(QString::fromLatin1(allIncluded ? kUncheckIconPath : kCheckIconPath)));
+            toggle->setToolTip(allIncluded ? QStringLiteral("取消全选") : QStringLiteral("全选"));
+        }
+        if (QPushButton* runChecked = listButton(table, kRunCheckedButtonObjectName)) {
+            const bool hasHighlight = table->selectionModel()
+                && table->selectionModel()->hasSelection();
+            runChecked->setEnabled(hasHighlight);
+        }
+        if (QPushButton* runAll = listButton(table, kRunAllButtonObjectName)) {
+            runAll->setEnabled(hasRows && !includedWeldRows(table).empty());
+        }
+    }
+
+    QTableWidget* createWeldTable(QDockWidget* dock)
+    {
+        auto* panel = new QWidget(dock);
+        panel->setObjectName(QStringLiteral("weldListPanel"));
+        auto* layout = new QVBoxLayout(panel);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(0);
+
+        auto* table = new QTableWidget(panel);
+        table->setObjectName(QLatin1String(kTableObjectName));
+        table->setColumnCount(ColCount);
+        table->setHorizontalHeaderLabels({
+            QStringLiteral("序号"),
+            QStringLiteral("选中"),
+            QStringLiteral("起点"),
+            QStringLiteral("终点"),
+            QStringLiteral("焊接速度"),
+            QStringLiteral("摆动方式"),
+            QStringLiteral("摆动类型"),
+            QStringLiteral("幅度"),
+            QStringLiteral("弦长"),
+            QStringLiteral("焊接位置"),
+            QStringLiteral("行走角"),
+            QStringLiteral("连续/间断"),
+            QStringLiteral("焊段长度"),
+            QStringLiteral("净距"),
+            QStringLiteral("多层多道"),
+            QStringLiteral("板厚"),
+            QStringLiteral("坡口角度"),
+            QStringLiteral("装配间隙"),
+            QStringLiteral("熔深"),
+            });
+        if (QTableWidgetItem* includeHeader = table->horizontalHeaderItem(ColInclude)) {
+            includeHeader->setToolTip(
+                QStringLiteral("勾选后纳入全流程焊接，取消勾选可过滤该焊缝"));
+        }
+        applyTableStyle(table);
+        table->setColumnHidden(ColWeaveType, true);
+        table->setColumnHidden(ColAmplitude, true);
+        table->setColumnHidden(ColChord, true);
+        table->setColumnHidden(ColTravelAngle, true);
+        table->setColumnHidden(ColSegmentLength, true);
+        table->setColumnHidden(ColClearDistance, true);
+        table->setColumnHidden(ColThickness, true);
+        table->setColumnHidden(ColGrooveAngle, true);
+        table->setColumnHidden(ColFitUpGap, true);
+        table->setColumnHidden(ColPenetration, true);
+
+        auto* filter = new WeldTableEventFilter(table);
+        filter->setObjectName(QLatin1String(kFilterObjectName));
+        table->installEventFilter(filter);
+        table->viewport()->installEventFilter(filter);
+
+        new WeldListSignals(table);
+
+        auto* bar = new QWidget(panel);
+        auto* barLayout = new QHBoxLayout(bar);
+        barLayout->setContentsMargins(4, 2, 4, 2);
+        barLayout->setSpacing(6);
+
+        auto* toggleButton = new QPushButton(bar);
+        toggleButton->setObjectName(QLatin1String(kToggleAllButtonObjectName));
+        toggleButton->setIcon(QIcon(QString::fromLatin1(kCheckIconPath)));
+        toggleButton->setIconSize(QSize(18, 18));
+        toggleButton->setFixedSize(28, 28);
+        toggleButton->setFlat(true);
+        toggleButton->setToolTip(QStringLiteral("全选"));
+        toggleButton->setEnabled(false);
+
+        auto* runCheckedButton = new QPushButton(QStringLiteral("运行选中"), bar);
+        runCheckedButton->setObjectName(QLatin1String(kRunCheckedButtonObjectName));
+        runCheckedButton->setFont(table->font());
+        runCheckedButton->setToolTip(QStringLiteral("运行当前高亮焊缝"));
+        runCheckedButton->setEnabled(false);
+
+        auto* runAllButton = new QPushButton(QStringLiteral("全部运行"), bar);
+        runAllButton->setObjectName(QLatin1String(kRunAllButtonObjectName));
+        runAllButton->setFont(table->font());
+        runAllButton->setToolTip(QStringLiteral("发送全部勾选焊缝"));
+        runAllButton->setEnabled(false);
+
+        barLayout->addWidget(toggleButton);
+        barLayout->addWidget(runCheckedButton);
+        barLayout->addWidget(runAllButton);
+        barLayout->addStretch(1);
+
+        layout->addWidget(bar);
+        layout->addWidget(table, 1);
+        dock->setWidget(panel);
+
+        QObject::connect(toggleButton,
+            static_cast<void (QPushButton::*)(bool)>(&QPushButton::clicked),
+            table,
+            [table](bool) {
+                const bool selectAll = !allRowsIncluded(table);
+                for (int row = 0; row < table->rowCount(); ++row) {
+                    if (QCheckBox* box = includeBoxAt(table, row)) {
+                        QSignalBlocker blocker(box);
+                        box->setChecked(selectAll);
+                    }
+                }
+                syncListButtons(table);
+            });
+        QObject::connect(runCheckedButton,
+            static_cast<void (QPushButton::*)(bool)>(&QPushButton::clicked),
+            table,
+            [table](bool) {
+                if (WeldListSignals* notifier = weldListSignals(table)) {
+                    notifier->emitRunCheck();
+                }
+            });
+        QObject::connect(runAllButton,
+            static_cast<void (QPushButton::*)(bool)>(&QPushButton::clicked),
+            table,
+            [table](bool) {
+                if (WeldListSignals* notifier = weldListSignals(table)) {
+                    notifier->emitRunAll();
+                }
+            });
+        return table;
+    }
+
+    void addWeldRow(QTableWidget* table,
+        const Eigen::Vector3d& start,
+        const Eigen::Vector3d& end,
+        bool vertical)
+    {
+        const int row = table->rowCount();
+        table->insertRow(row);
+
+        table->setCellWidget(row, ColInclude, makeIncludeCheck(table));
+        table->setItem(row, ColIndex, makeReadOnlyItem(QString::number(row)));
+
+        auto* startItem = makeReadOnlyItem(vecText(start));
+        startItem->setData(kRoleCurrentVec, vecToVar(start));
+        table->setItem(row, ColStart, startItem);
+
+        auto* endItem = makeReadOnlyItem(vecText(end));
+        endItem->setData(kRoleCurrentVec, vecToVar(end));
+        table->setItem(row, ColEnd, endItem);
+
+        QDoubleSpinBox* speedSpin = makeSpin(table, 0.0, 1.0e5, 1, QStringLiteral(" mm/s"), 10.0);
+        QDoubleSpinBox* ampSpin = makeSpin(table, 0.0, 1.0e4, 2, QStringLiteral(" mm"), 5.0);
+        QDoubleSpinBox* chordSpin = makeSpin(table, 0.0, 1.0e5, 2, QStringLiteral(" mm"), 20.0);
+        QDoubleSpinBox* travelSpin = makeSpin(table, -45.0, 45.0, 1, QStringLiteral(" °"), 0.0);
+        QDoubleSpinBox* segmentSpin = makeSpin(table, 0.0, 1.0e5, 1, QStringLiteral(" mm"), 100.0);
+        QDoubleSpinBox* clearSpin = makeSpin(table, 0.0, 1.0e5, 1, QStringLiteral(" mm"), 100.0);
+        QDoubleSpinBox* thickSpin = makeSpin(table, 0.0, 1.0e4, 2, QStringLiteral(" mm"), 0.0);
+        QDoubleSpinBox* grooveSpin = makeSpin(table, 0.0, 90.0, 1, QStringLiteral(" °"), 0.0);
+        QDoubleSpinBox* gapSpin = makeSpin(table, 0.0, 1.0e3, 2, QStringLiteral(" mm"), 0.0);
+        QDoubleSpinBox* penSpin = makeSpin(table, 0.0, 1.0e4, 2, QStringLiteral(" mm"), 0.0);
+
+        QComboBox* weaveCombo = makeCombo(
+            table, { QStringLiteral("直线焊"), QStringLiteral("摆动焊") });
+        QComboBox* weaveTypeCombo = makeCombo(
+            table, { QStringLiteral("正弦"), QStringLiteral("三角") });
+        QComboBox* positionCombo = makeCombo(
+            table, { QStringLiteral("平焊"), QStringLiteral("立焊"), QStringLiteral("横焊") });
+        if (vertical) {
+            positionCombo->setCurrentIndex(static_cast<int>(WeldPosition::Vertical));
+        }
+        QComboBox* continuityCombo = makeCombo(
+            table, { QStringLiteral("连续焊"), QStringLiteral("间断焊") });
+        QComboBox* multiCombo = makeCombo(
+            table, { QStringLiteral("单层单道"), QStringLiteral("多层多道") });
+
+        QWidget* weaveTypeHost = makeExtensionHost(table, weaveTypeCombo);
+        QWidget* ampHost = makeExtensionHost(table, ampSpin);
+        QWidget* chordHost = makeExtensionHost(table, chordSpin);
+        QWidget* travelHost = makeExtensionHost(table, travelSpin);
+        QWidget* segmentHost = makeExtensionHost(table, segmentSpin);
+        QWidget* clearHost = makeExtensionHost(table, clearSpin);
+        QWidget* thickHost = makeExtensionHost(table, thickSpin);
+        QWidget* grooveHost = makeExtensionHost(table, grooveSpin);
+        QWidget* gapHost = makeExtensionHost(table, gapSpin);
+        QWidget* penHost = makeExtensionHost(table, penSpin);
+
+        const QWidgetList editors = { speedSpin, weaveCombo, weaveTypeCombo,
+                                     ampSpin, chordSpin, positionCombo, travelSpin,
+                                     continuityCombo, segmentSpin, clearSpin,
+                                     multiCombo, thickSpin, grooveSpin, gapSpin, penSpin };
+        for (QWidget* editor : editors) {
+            editor->setFont(table->font());
+            watchEditor(table, editor);
+        }
+        if (QWidget* includeHost = table->cellWidget(row, ColInclude)) {
+            watchEditor(table, includeHost);
+            if (QCheckBox* includeBox = includeBoxAt(table, row)) {
+                includeBox->setFont(table->font());
+                watchEditor(table, includeBox);
+                QObject::connect(includeBox, &QCheckBox::toggled, table, [table](bool) {
+                    if (!table->property(kClearingProperty).toBool()) {
+                        syncListButtons(table);
+                    }
+                });
+            }
+        }
+        const QWidgetList hosts = { weaveTypeHost, ampHost, chordHost,
+                                    travelHost, segmentHost, clearHost,
+                                    thickHost, grooveHost, gapHost, penHost };
+        for (QWidget* host : hosts) {
+            watchEditor(table, host);
+        }
+
+        table->setCellWidget(row, ColSpeed, speedSpin);
+        table->setCellWidget(row, ColWeaveMode, weaveCombo);
+        table->setCellWidget(row, ColWeaveType, weaveTypeHost);
+        table->setCellWidget(row, ColAmplitude, ampHost);
+        table->setCellWidget(row, ColChord, chordHost);
+        table->setCellWidget(row, ColWeldPosition, positionCombo);
+        table->setCellWidget(row, ColTravelAngle, travelHost);
+        table->setCellWidget(row, ColWeldContinuity, continuityCombo);
+        table->setCellWidget(row, ColSegmentLength, segmentHost);
+        table->setCellWidget(row, ColClearDistance, clearHost);
+        table->setCellWidget(row, ColMultiMode, multiCombo);
+        table->setCellWidget(row, ColThickness, thickHost);
+        table->setCellWidget(row, ColGrooveAngle, grooveHost);
+        table->setCellWidget(row, ColFitUpGap, gapHost);
+        table->setCellWidget(row, ColPenetration, penHost);
+
+        QComboBox* refreshCombos[] = { weaveCombo, positionCombo, continuityCombo, multiCombo };
+        for (const QComboBox* combo : refreshCombos) {
+            QObject::connect(combo,
+                static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
+                table,
+                [table](int) {
+                    if (!table->property(kClearingProperty).toBool()) {
+                        updateDynamicColumns(table);
+                    }
+                });
+        }
+
+        updateDynamicColumns(table);
+        syncListButtons(table);
+    }
+
+}  // namespace
+
+QTableWidget* setupWeldListWidget(
+    QDockWidget* weldListWidget,
+    const std::vector<WeldListSeam>& seams)
+{
+    if (!weldListWidget) {
+        return nullptr;
+    }
+
+    QTableWidget* table = weldListWidget->findChild<QTableWidget*>(QLatin1String(kTableObjectName));
+    if (!table) {
+        table = createWeldTable(weldListWidget);
+    }
+
+    for (const WeldListSeam& seam : seams) {
+        addWeldRow(table, seam.start, seam.end, seam.vertical);
+    }
+    return table;
+}
+
+void clearWeldList(QTableWidget* table)
+{
+    if (!table || table->property(kClearingProperty).toBool()) {
+        return;
+    }
+    table->setProperty(kClearingProperty, true);
+
+    if (QItemSelectionModel* selection = table->selectionModel()) {
+        selection->clear();
+    }
+
+    {
+        QSignalBlocker blocker(table);
+        const int rows = table->rowCount();
+        const int cols = table->columnCount();
+        for (int row = 0; row < rows; ++row) {
+            for (int col = 0; col < cols; ++col) {
+                if (QWidget* widget = table->cellWidget(row, col)) {
+                    widget->blockSignals(true);
+                    const QList<QWidget*> children = widget->findChildren<QWidget*>();
+                    for (QWidget* child : children) {
+                        child->blockSignals(true);
+                    }
+                    table->removeCellWidget(row, col);
+                }
+            }
+        }
+        table->setRowCount(0);
+    }
+
+    updateDynamicColumns(table);
+    table->setProperty(kClearingProperty, false);
+    notifySelection(table);
+    syncListButtons(table);
+}
+
+bool weldRowEndpoints(const QTableWidget* table,
+    int row,
+    Eigen::Vector3d& start,
+    Eigen::Vector3d& end)
+{
+    start.setZero();
+    end.setZero();
+    if (!table || row < 0 || row >= table->rowCount()) {
+        return false;
+    }
+
+    const QTableWidgetItem* startItem = table->item(row, ColStart);
+    const QTableWidgetItem* endItem = table->item(row, ColEnd);
+    if (!startItem || !endItem) {
+        return false;
+    }
+
+    Eigen::Vector3d currentStart;
+    Eigen::Vector3d currentEnd;
+    if (variantToVec(startItem->data(kRoleCurrentVec), currentStart)
+        && variantToVec(endItem->data(kRoleCurrentVec), currentEnd)) {
+        start = currentStart;
+        end = currentEnd;
+        return true;
+    }
+
+    if (parseVecText(startItem->text(), currentStart) && parseVecText(endItem->text(), currentEnd)) {
+        start = currentStart;
+        end = currentEnd;
+        return true;
+    }
+    return false;
+}
+
+bool weldRowData(const QTableWidget* table, int row, WeldRowData& out)
+{
+    out = WeldRowData();
+    if (!weldRowEndpoints(table, row, out.start, out.end)) {
+        return false;
+    }
+
+    out.valid = true;
+    out.row = row;
+    out.included = weldRowIncluded(table, row);
+    out.speed = spinValue(table, row, ColSpeed);
+    out.weaveMode = static_cast<WeldWeaveMode>(
+        comboIndex(table, row, ColWeaveMode, static_cast<int>(WeldWeaveMode::Straight)));
+    out.weaveType = static_cast<WeldWeaveType>(
+        comboIndex(table, row, ColWeaveType, static_cast<int>(WeldWeaveType::Sine)));
+    out.amplitude = spinValue(table, row, ColAmplitude);
+    out.chord = spinValue(table, row, ColChord);
+    out.position = static_cast<WeldPosition>(
+        comboIndex(table, row, ColWeldPosition, static_cast<int>(WeldPosition::Flat)));
+    out.travelAngle = spinValue(table, row, ColTravelAngle);
+    out.continuity = static_cast<WeldContinuity>(
+        comboIndex(table, row, ColWeldContinuity, static_cast<int>(WeldContinuity::Continuous)));
+    out.segmentLength = spinValue(table, row, ColSegmentLength);
+    out.clearDistance = spinValue(table, row, ColClearDistance);
+    out.layerMode = static_cast<WeldLayerMode>(
+        comboIndex(table, row, ColMultiMode, static_cast<int>(WeldLayerMode::Single)));
+    out.thickness = spinValue(table, row, ColThickness);
+    out.grooveAngle = spinValue(table, row, ColGrooveAngle);
+    out.fitUpGap = spinValue(table, row, ColFitUpGap);
+    out.penetration = spinValue(table, row, ColPenetration);
+    return true;
+}
+
+bool sameWeldRow(const WeldRowData& a, const WeldRowData& b)
+{
+    return a.valid == b.valid
+        && a.row == b.row
+        && a.included == b.included
+        && a.start.isApprox(b.start)
+        && a.end.isApprox(b.end)
+        && a.speed == b.speed
+        && a.weaveMode == b.weaveMode
+        && a.weaveType == b.weaveType
+        && a.amplitude == b.amplitude
+        && a.chord == b.chord
+        && a.position == b.position
+        && a.travelAngle == b.travelAngle
+        && a.continuity == b.continuity
+        && a.segmentLength == b.segmentLength
+        && a.clearDistance == b.clearDistance
+        && a.layerMode == b.layerMode
+        && a.thickness == b.thickness
+        && a.grooveAngle == b.grooveAngle
+        && a.fitUpGap == b.fitUpGap
+        && a.penetration == b.penetration;
+}
+
+bool selectedWeldEndpoints(const QTableWidget* table,
+    Eigen::Vector3d& start,
+    Eigen::Vector3d& end)
+{
+    start.setZero();
+    end.setZero();
+    if (!table || !table->selectionModel() || !table->selectionModel()->hasSelection()) {
+        return false;
+    }
+    const QModelIndexList rows = table->selectionModel()->selectedRows();
+    if (rows.isEmpty()) {
+        return false;
+    }
+    return weldRowEndpoints(table, rows.first().row(), start, end);
+}
+
+bool weldRowIncluded(const QTableWidget* table, int row)
+{
+    if (!table || row < 0 || row >= table->rowCount()) {
+        return false;
+    }
+    const QCheckBox* box = includeBoxAt(table, row);
+    return box && box->isChecked();
+}
+
+void setWeldRowIncluded(QTableWidget* table, int row, bool included)
+{
+    if (!table || row < 0 || row >= table->rowCount()) {
+        return;
+    }
+    if (QCheckBox* box = includeBoxAt(table, row)) {
+        box->setChecked(included);
+    }
+}
+
+std::vector<int> includedWeldRows(const QTableWidget* table)
+{
+    std::vector<int> rows;
+    if (!table) {
+        return rows;
+    }
+    rows.reserve(static_cast<size_t>(table->rowCount()));
+    for (int row = 0; row < table->rowCount(); ++row) {
+        if (weldRowIncluded(table, row)) {
+            rows.push_back(row);
+        }
+    }
+    return rows;
+}
+
+void setWeldSelectionCallback(QTableWidget* table, WeldSelectionCallback callback)
+{
+    if (WeldListSignals* notifier = weldListSignals(table)) {
+        notifier->setCallback(std::move(callback));
+    }
+}
+
+WeldListSignals::WeldListSignals(QTableWidget* table)
+    : QObject(table)
+    , table_(table)
+{
+    setObjectName(QLatin1String(kNotifierObjectName));
+    qRegisterMetaType<Eigen::Vector3d>("Eigen::Vector3d");
+    qRegisterMetaType<WeldRowData>("WeldRowData");
+    qRegisterMetaType<WeldRowDataList>("WeldRowDataList");
+    if (!table_) {
+        return;
+    }
+    connect(table_, &QTableWidget::itemSelectionChanged, this, [this]() { notify(); });
+}
+
+void WeldListSignals::setCallback(WeldSelectionCallback next)
+{
+    callback_ = std::move(next);
+    hasLast_ = false;
+    notify();
+}
+
+void WeldListSignals::emitRunCheck()
+{
+    emit runCheck();
+}
+
+void WeldListSignals::emitRunAll()
+{
+    WeldRowDataList welds;
+    if (table_) {
+        const std::vector<int> rows = includedWeldRows(table_);
+        welds.reserve(rows.size());
+        for (int row : rows) {
+            WeldRowData data;
+            if (weldRowData(table_, row, data)) {
+                welds.push_back(std::move(data));
+            }
+        }
+    }
+    emit runAll(welds);
+}
+
+void WeldListSignals::notify()
+{
+    if (!table_ || notifying_) {
+        return;
+    }
+    syncListButtons(table_);
+
+    WeldRowData weld;
+    if (const QItemSelectionModel* selection = table_->selectionModel()) {
+        if (selection->hasSelection()) {
+            const QModelIndexList rows = selection->selectedRows();
+            if (!rows.isEmpty()) {
+                weldRowData(table_, rows.first().row(), weld);
+            }
+        }
+    }
+
+    if (hasLast_ && sameWeldRow(weld, last_)) {
+        return;
+    }
+    hasLast_ = true;
+    last_ = weld;
+
+    struct NotifyGuard {
+        bool& flag;
+        explicit NotifyGuard(bool& value)
+            : flag(value)
+        {
+            flag = true;
+        }
+        ~NotifyGuard()
+        {
+            flag = false;
+        }
+    } guard(notifying_);
+
+    if (callback_) {
+        callback_(weld);
+    }
+    if (weld.valid) {
+        emit weldSelected(weld);
+    }
+}
+
+void WeldListSignals::notifyBlankClick()
+{
+    if (table_) {
+        if (QItemSelectionModel* selection = table_->selectionModel()) {
+            selection->clear();
+        }
+    }
+    emit blankClicked();
+}
+
+WeldListSignals* weldListSignals(QTableWidget* table)
+{
+    if (!table) {
+        return nullptr;
+    }
+    return table->findChild<WeldListSignals*>(
+        QLatin1String(kNotifierObjectName), Qt::FindDirectChildrenOnly);
+}
