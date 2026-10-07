@@ -15,12 +15,10 @@
 #include <QMetaType>
 #include <QMouseEvent>
 #include <QObject>
-#include <QPushButton>
 #include <QSignalBlocker>
 #include <QString>
 #include <QStringList>
 #include <QTableWidgetItem>
-#include <QVBoxLayout>
 #include <QVariant>
 #include <QWidget>
 
@@ -49,7 +47,6 @@ namespace {
     const char* kTableObjectName = "weldListTable";
     const char* kNotifierObjectName = "weldListNotifier";
     const char* kFilterObjectName = "weldTableEventFilter";
-    const char* kClearButtonObjectName = "weldListClearButton";
     const char* kIncludeCheckObjectName = "weldIncludeCheck";
     const char* kClearingProperty = "_clearing";
     const char* kExtensionHostProperty = "_extensionHost";
@@ -205,20 +202,6 @@ namespace {
     {
         if (WeldListSignals* notifier = weldListSignals(table)) {
             notifier->notify();
-        }
-    }
-
-    void syncClearButton(QTableWidget* table)
-    {
-        if (!table) {
-            return;
-        }
-        QWidget* panel = table->parentWidget();
-        if (!panel) {
-            return;
-        }
-        if (auto* button = panel->findChild<QPushButton*>(QLatin1String(kClearButtonObjectName))) {
-            button->setEnabled(table->rowCount() > 0);
         }
     }
 
@@ -435,13 +418,7 @@ namespace {
 
     QTableWidget* createWeldTable(QDockWidget* dock)
     {
-        auto* panel = new QWidget(dock);
-        panel->setObjectName(QStringLiteral("weldListPanel"));
-        auto* layout = new QVBoxLayout(panel);
-        layout->setContentsMargins(0, 0, 0, 0);
-        layout->setSpacing(0);
-
-        auto* table = new QTableWidget(panel);
+        auto* table = new QTableWidget(dock);
         table->setObjectName(QLatin1String(kTableObjectName));
         table->setColumnCount(ColCount);
         table->setHorizontalHeaderLabels({
@@ -479,26 +456,7 @@ namespace {
         table->viewport()->installEventFilter(filter);
 
         new WeldListSignals(table);
-
-        auto* bar = new QWidget(panel);
-        auto* barLayout = new QHBoxLayout(bar);
-        barLayout->setContentsMargins(4, 2, 4, 2);
-        barLayout->addStretch(1);
-        auto* clearButton = new QPushButton(QStringLiteral("清空"), bar);
-        clearButton->setObjectName(QLatin1String(kClearButtonObjectName));
-        clearButton->setFont(table->font());
-        clearButton->setToolTip(QStringLiteral("清空焊缝列表"));
-        clearButton->setEnabled(false);
-        barLayout->addWidget(clearButton);
-
-        layout->addWidget(bar);
-        layout->addWidget(table, 1);
-        dock->setWidget(panel);
-
-        QObject::connect(clearButton,
-            static_cast<void (QPushButton::*)(bool)>(&QPushButton::clicked),
-            table,
-            [table](bool) { clearWeldList(table); });
+        dock->setWidget(table);
         return table;
     }
 
@@ -590,7 +548,6 @@ namespace {
             });
 
         updateDynamicColumns(table);
-        syncClearButton(table);
     }
 
 }  // namespace
@@ -645,7 +602,6 @@ void clearWeldList(QTableWidget* table)
     }
 
     updateDynamicColumns(table);
-    syncClearButton(table);
     table->setProperty(kClearingProperty, false);
     notifySelection(table);
 }
