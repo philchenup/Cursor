@@ -201,6 +201,35 @@ namespace {
         return widget->findChild<QComboBox*>(QString(), Qt::FindDirectChildrenOnly);
     }
 
+    QDoubleSpinBox* spinAt(const QTableWidget* table, int row, int col)
+    {
+        QWidget* widget = table->cellWidget(row, col);
+        if (!widget) {
+            return nullptr;
+        }
+        if (auto* spin = qobject_cast<QDoubleSpinBox*>(widget)) {
+            return spin;
+        }
+        return widget->findChild<QDoubleSpinBox*>(QString(), Qt::FindDirectChildrenOnly);
+    }
+
+    double spinValue(const QTableWidget* table, int row, int col)
+    {
+        if (const QDoubleSpinBox* spin = spinAt(table, row, col)) {
+            return spin->value();
+        }
+        return 0.0;
+    }
+
+    int comboIndex(const QTableWidget* table, int row, int col, int fallback)
+    {
+        const QComboBox* combo = comboAt(table, row, col);
+        if (!combo || combo->currentIndex() < 0) {
+            return fallback;
+        }
+        return combo->currentIndex();
+    }
+
     void fitColumnWidths(QTableWidget* table);
 
     void notifySelection(QTableWidget* table)
@@ -493,7 +522,10 @@ namespace {
         return table;
     }
 
-    void addWeldRow(QTableWidget* table, const Eigen::Vector3d& start, const Eigen::Vector3d& end)
+    void addWeldRow(QTableWidget* table,
+        const Eigen::Vector3d& start,
+        const Eigen::Vector3d& end,
+        bool vertical)
     {
         const int row = table->rowCount();
         table->insertRow(row);
@@ -526,6 +558,9 @@ namespace {
             table, { QStringLiteral("正弦"), QStringLiteral("三角") });
         QComboBox* positionCombo = makeCombo(
             table, { QStringLiteral("平焊"), QStringLiteral("立焊"), QStringLiteral("横焊") });
+        if (vertical) {
+            positionCombo->setCurrentIndex(static_cast<int>(WeldPosition::Vertical));
+        }
         QComboBox* continuityCombo = makeCombo(
             table, { QStringLiteral("连续焊"), QStringLiteral("间断焊") });
         QComboBox* multiCombo = makeCombo(
@@ -599,7 +634,7 @@ namespace {
 
 QTableWidget* setupWeldListWidget(
     QDockWidget* weldListWidget,
-    const std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>>& seams)
+    const std::vector<WeldListSeam>& seams)
 {
     if (!weldListWidget) {
         return nullptr;
@@ -610,8 +645,8 @@ QTableWidget* setupWeldListWidget(
         table = createWeldTable(weldListWidget);
     }
 
-    for (const auto& seam : seams) {
-        addWeldRow(table, seam.first, seam.second);
+    for (const WeldListSeam& seam : seams) {
+        addWeldRow(table, seam.start, seam.end, seam.vertical);
     }
     return table;
 }
@@ -685,6 +720,63 @@ bool weldRowEndpoints(const QTableWidget* table,
     return false;
 }
 
+bool weldRowData(const QTableWidget* table, int row, WeldRowData& out)
+{
+    out = WeldRowData();
+    if (!weldRowEndpoints(table, row, out.start, out.end)) {
+        return false;
+    }
+
+    out.valid = true;
+    out.row = row;
+    out.included = weldRowIncluded(table, row);
+    out.speed = spinValue(table, row, ColSpeed);
+    out.weaveMode = static_cast<WeldWeaveMode>(
+        comboIndex(table, row, ColWeaveMode, static_cast<int>(WeldWeaveMode::Straight)));
+    out.weaveType = static_cast<WeldWeaveType>(
+        comboIndex(table, row, ColWeaveType, static_cast<int>(WeldWeaveType::Sine)));
+    out.amplitude = spinValue(table, row, ColAmplitude);
+    out.chord = spinValue(table, row, ColChord);
+    out.position = static_cast<WeldPosition>(
+        comboIndex(table, row, ColWeldPosition, static_cast<int>(WeldPosition::Flat)));
+    out.travelAngle = spinValue(table, row, ColTravelAngle);
+    out.continuity = static_cast<WeldContinuity>(
+        comboIndex(table, row, ColWeldContinuity, static_cast<int>(WeldContinuity::Continuous)));
+    out.segmentLength = spinValue(table, row, ColSegmentLength);
+    out.clearDistance = spinValue(table, row, ColClearDistance);
+    out.layerMode = static_cast<WeldLayerMode>(
+        comboIndex(table, row, ColMultiMode, static_cast<int>(WeldLayerMode::Single)));
+    out.thickness = spinValue(table, row, ColThickness);
+    out.grooveAngle = spinValue(table, row, ColGrooveAngle);
+    out.fitUpGap = spinValue(table, row, ColFitUpGap);
+    out.penetration = spinValue(table, row, ColPenetration);
+    return true;
+}
+
+bool sameWeldRow(const WeldRowData& a, const WeldRowData& b)
+{
+    return a.valid == b.valid
+        && a.row == b.row
+        && a.included == b.included
+        && a.start.isApprox(b.start)
+        && a.end.isApprox(b.end)
+        && a.speed == b.speed
+        && a.weaveMode == b.weaveMode
+        && a.weaveType == b.weaveType
+        && a.amplitude == b.amplitude
+        && a.chord == b.chord
+        && a.position == b.position
+        && a.travelAngle == b.travelAngle
+        && a.continuity == b.continuity
+        && a.segmentLength == b.segmentLength
+        && a.clearDistance == b.clearDistance
+        && a.layerMode == b.layerMode
+        && a.thickness == b.thickness
+        && a.grooveAngle == b.grooveAngle
+        && a.fitUpGap == b.fitUpGap
+        && a.penetration == b.penetration;
+}
+
 bool selectedWeldEndpoints(const QTableWidget* table,
     Eigen::Vector3d& start,
     Eigen::Vector3d& end)
@@ -748,6 +840,7 @@ WeldListSignals::WeldListSignals(QTableWidget* table)
 {
     setObjectName(QLatin1String(kNotifierObjectName));
     qRegisterMetaType<Eigen::Vector3d>("Eigen::Vector3d");
+    qRegisterMetaType<WeldRowData>("WeldRowData");
     if (!table_) {
         return;
     }
@@ -767,33 +860,21 @@ void WeldListSignals::notify()
         return;
     }
 
-    int row = -1;
-    Eigen::Vector3d start = Eigen::Vector3d::Zero();
-    Eigen::Vector3d end = Eigen::Vector3d::Zero();
+    WeldRowData weld;
     if (const QItemSelectionModel* selection = table_->selectionModel()) {
         if (selection->hasSelection()) {
             const QModelIndexList rows = selection->selectedRows();
             if (!rows.isEmpty()) {
-                const int selected = rows.first().row();
-                if (weldRowEndpoints(table_, selected, start, end)) {
-                    row = selected;
-                }
-                else {
-                    start.setZero();
-                    end.setZero();
-                }
+                weldRowData(table_, rows.first().row(), weld);
             }
         }
     }
 
-    if (hasLast_ && row == lastRow_
-        && start.isApprox(lastStart_) && end.isApprox(lastEnd_)) {
+    if (hasLast_ && sameWeldRow(weld, last_)) {
         return;
     }
     hasLast_ = true;
-    lastRow_ = row;
-    lastStart_ = start;
-    lastEnd_ = end;
+    last_ = weld;
 
     struct NotifyGuard {
         bool& flag;
@@ -809,10 +890,10 @@ void WeldListSignals::notify()
     } guard(notifying_);
 
     if (callback_) {
-        callback_(row, start, end);
+        callback_(weld);
     }
-    if (row >= 0) {
-        emit weldSelected(start, end);
+    if (weld.valid) {
+        emit weldSelected(weld);
     }
 }
 

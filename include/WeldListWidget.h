@@ -13,23 +13,113 @@
 Q_DECLARE_METATYPE(Eigen::Vector3d)
 
 /**
+ * @brief 追加到焊缝表的一条焊缝。
+ *
+ * vertical 为 true 时，新行的焊接位置设为立焊，并显示行走角。
+ * 为 false 时保持平焊。
+ */
+struct WeldListSeam {
+    Eigen::Vector3d start = Eigen::Vector3d::Zero();
+    Eigen::Vector3d end = Eigen::Vector3d::Zero();
+    bool vertical = false;
+
+    WeldListSeam() = default;
+    WeldListSeam(const Eigen::Vector3d& startIn,
+        const Eigen::Vector3d& endIn,
+        bool verticalIn = false)
+        : start(startIn)
+        , end(endIn)
+        , vertical(verticalIn)
+    {
+    }
+};
+
+enum class WeldWeaveMode {
+    Straight = 0,
+    Weave = 1
+};
+
+enum class WeldWeaveType {
+    Sine = 0,
+    Triangle = 1
+};
+
+enum class WeldPosition {
+    Flat = 0,
+    Vertical = 1,
+    Horizontal = 2
+};
+
+enum class WeldContinuity {
+    Continuous = 0,
+    Intermittent = 1
+};
+
+enum class WeldLayerMode {
+    Single = 0,
+    Multi = 1
+};
+
+/**
+ * @brief 高亮行的全部工艺类型和数值。
+ *
+ * valid 为 false、row 为 -1 时表示没有高亮行。
+ * 扩展参数在对应工艺未启用时仍保留单元格里的数值，由类型字段决定是否使用：
+ * 直线焊不使用摆动参数，平焊和横焊不使用行走角，
+ * 连续焊不使用焊段长度和净距，单层单道不使用多层参数。
+ */
+struct WeldRowData {
+    bool valid = false;
+    int row = -1;
+    bool included = false;
+    Eigen::Vector3d start = Eigen::Vector3d::Zero();
+    Eigen::Vector3d end = Eigen::Vector3d::Zero();
+    double speed = 0.0;
+    WeldWeaveMode weaveMode = WeldWeaveMode::Straight;
+    WeldWeaveType weaveType = WeldWeaveType::Sine;
+    double amplitude = 0.0;
+    double chord = 0.0;
+    WeldPosition position = WeldPosition::Flat;
+    double travelAngle = 0.0;
+    WeldContinuity continuity = WeldContinuity::Continuous;
+    double segmentLength = 0.0;
+    double clearDistance = 0.0;
+    WeldLayerMode layerMode = WeldLayerMode::Single;
+    double thickness = 0.0;
+    double grooveAngle = 0.0;
+    double fitUpGap = 0.0;
+    double penetration = 0.0;
+};
+
+Q_DECLARE_METATYPE(WeldRowData)
+
+/**
  * @brief 高亮焊缝行时的回调。
  *
  * 这里的选中是表格行高亮，与第二列“选中”勾选无关。
- * row >= 0：该行起点、终点已转换为 Eigen::Vector3d（与表格“起点”“终点”
- * 列一致，精度高于单元格里保留 3 位小数的文本）。
- * row < 0：没有高亮行（点击表格空白处取消高亮，或列表被清空）。此时 start、end 为零向量。
+ * weld.valid 为 true：该行全部类型和数值已填入结构体。
+ * weld.valid 为 false：没有高亮行（点击表格空白处取消高亮，或列表被清空）。
  */
-using WeldSelectionCallback = std::function<void(
-    int row,
-    const Eigen::Vector3d& start,
-    const Eigen::Vector3d& end)>;
+using WeldSelectionCallback = std::function<void(const WeldRowData& weld)>;
 
 /**
  * @brief 焊缝表的高亮信号。
  *
- * weldSelected：高亮某行时发出，参数为该行起点、终点。
+ * weldSelected：高亮某行时发出，参数为该行全部类型和数值。
  * blankClicked：单击表格空白处取消高亮时发出。
+ *
+ * 主窗口接收示例：
+ * @code
+ * connect(weldListSignals(table), &WeldListSignals::weldSelected,
+ *         this, &MainWindow::onWeldSelected);
+ *
+ * void MainWindow::onWeldSelected(const WeldRowData& weld)
+ * {
+ *     if (!weld.valid) {
+ *         return;
+ *     }
+ * }
+ * @endcode
  */
 class WeldListSignals : public QObject
 {
@@ -42,7 +132,7 @@ public:
     void notifyBlankClick();
 
 signals:
-    void weldSelected(const Eigen::Vector3d& start, const Eigen::Vector3d& end);
+    void weldSelected(const WeldRowData& weld);
     void blankClicked();
 
 private:
@@ -50,9 +140,7 @@ private:
     WeldSelectionCallback callback_;
     bool notifying_ = false;
     bool hasLast_ = false;
-    int lastRow_ = -1;
-    Eigen::Vector3d lastStart_ = Eigen::Vector3d::Zero();
-    Eigen::Vector3d lastEnd_ = Eigen::Vector3d::Zero();
+    WeldRowData last_;
 };
 
 /**
@@ -73,16 +161,23 @@ private:
  * 用 weldRowIncluded / includedWeldRows 过滤不需要的焊缝。勾选与行高亮相互独立。
  *
  * 单击一行（含单元格里的编辑控件）会高亮该行，并发出
- * WeldListSignals::weldSelected(start, end)。
+ * WeldListSignals::weldSelected(weld)，weld 为该行全部类型和数值。
  * 单击表格空白处取消高亮，并发出 WeldListSignals::blankClicked()。
  *
+ * 追加行时用 vertical 标记是否立焊：
+ * @code
+ * setupWeldListWidget(ui->weldListWidget, {
+ *     { seam.first.cast<double>(), seam.second.cast<double>(), vertical }
+ * });
+ * @endcode
+ *
  * @param weldListWidget 已有的 Dock（objectName 建议为 weldListWidget）
- * @param seams          可选，每项为 (起点, 终点) Eigen::Vector3d，单位与界面一致
+ * @param seams          可选，每项含起点、终点，以及是否立焊
  * @return Dock 内的工艺表；weldListWidget 为空时返回 nullptr
  */
 QTableWidget* setupWeldListWidget(
     QDockWidget* weldListWidget,
-    const std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>>& seams = {});
+    const std::vector<WeldListSeam>& seams = {});
 
 /**
  * @brief 清空焊缝表的全部数据行，并取消高亮。
@@ -107,6 +202,12 @@ bool weldRowEndpoints(const QTableWidget* table,
 bool selectedWeldEndpoints(const QTableWidget* table,
     Eigen::Vector3d& start,
     Eigen::Vector3d& end);
+
+/**
+ * @brief 读取某一行的全部类型和数值。
+ * 行号无效或 table 为空时返回 false，out.valid 为 false。
+ */
+bool weldRowData(const QTableWidget* table, int row, WeldRowData& out);
 
 /**
  * @brief 该行第二列是否勾选，即是否纳入全流程焊接。
