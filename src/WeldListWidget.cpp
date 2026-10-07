@@ -187,18 +187,6 @@ namespace {
         return host->findChild<QCheckBox*>(QLatin1String(kIncludeCheckObjectName));
     }
 
-    QDoubleSpinBox* spinAt(const QTableWidget* table, int row, int col)
-    {
-        QWidget* widget = table->cellWidget(row, col);
-        if (!widget) {
-            return nullptr;
-        }
-        if (auto* spin = qobject_cast<QDoubleSpinBox*>(widget)) {
-            return spin;
-        }
-        return widget->findChild<QDoubleSpinBox*>(QString(), Qt::FindDirectChildrenOnly);
-    }
-
     QComboBox* comboAt(const QTableWidget* table, int row, int col)
     {
         QWidget* widget = table->cellWidget(row, col);
