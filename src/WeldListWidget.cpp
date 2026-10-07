@@ -36,6 +36,11 @@ namespace {
         ColWeaveType,
         ColAmplitude,
         ColChord,
+        ColWeldPosition,
+        ColTravelAngle,
+        ColWeldContinuity,
+        ColSegmentLength,
+        ColClearDistance,
         ColMultiMode,
         ColThickness,
         ColGrooveAngle,
@@ -221,13 +226,22 @@ namespace {
     void updateRowEditors(QTableWidget* table, int row)
     {
         QComboBox* weaveCombo = comboAt(table, row, ColWeaveMode);
+        QComboBox* positionCombo = comboAt(table, row, ColWeldPosition);
+        QComboBox* continuityCombo = comboAt(table, row, ColWeldContinuity);
         QComboBox* multiCombo = comboAt(table, row, ColMultiMode);
         const bool weaving = weaveCombo && weaveCombo->currentIndex() == 1;
+        const bool vertical = positionCombo && positionCombo->currentIndex() == 1;
+        const bool intermittent = continuityCombo && continuityCombo->currentIndex() == 1;
         const bool multilayer = multiCombo && multiCombo->currentIndex() == 1;
 
         const int weaveCols[] = { ColWeaveType, ColAmplitude, ColChord };
         for (int col : weaveCols) {
             setExtensionEditorVisible(table, row, col, weaving);
+        }
+        setExtensionEditorVisible(table, row, ColTravelAngle, vertical);
+        const int intermittentCols[] = { ColSegmentLength, ColClearDistance };
+        for (int col : intermittentCols) {
+            setExtensionEditorVisible(table, row, col, intermittent);
         }
         const int multiCols[] = { ColThickness, ColGrooveAngle, ColFitUpGap, ColPenetration };
         for (int col : multiCols) {
@@ -238,10 +252,18 @@ namespace {
     void updateDynamicColumns(QTableWidget* table)
     {
         bool anyWeave = false;
+        bool anyVertical = false;
+        bool anyIntermittent = false;
         bool anyMulti = false;
         for (int row = 0; row < table->rowCount(); ++row) {
             if (QComboBox* weave = comboAt(table, row, ColWeaveMode)) {
                 anyWeave = anyWeave || (weave->currentIndex() == 1);
+            }
+            if (QComboBox* position = comboAt(table, row, ColWeldPosition)) {
+                anyVertical = anyVertical || (position->currentIndex() == 1);
+            }
+            if (QComboBox* continuity = comboAt(table, row, ColWeldContinuity)) {
+                anyIntermittent = anyIntermittent || (continuity->currentIndex() == 1);
             }
             if (QComboBox* multi = comboAt(table, row, ColMultiMode)) {
                 anyMulti = anyMulti || (multi->currentIndex() == 1);
@@ -251,6 +273,9 @@ namespace {
         table->setColumnHidden(ColWeaveType, !anyWeave);
         table->setColumnHidden(ColAmplitude, !anyWeave);
         table->setColumnHidden(ColChord, !anyWeave);
+        table->setColumnHidden(ColTravelAngle, !anyVertical);
+        table->setColumnHidden(ColSegmentLength, !anyIntermittent);
+        table->setColumnHidden(ColClearDistance, !anyIntermittent);
         table->setColumnHidden(ColThickness, !anyMulti);
         table->setColumnHidden(ColGrooveAngle, !anyMulti);
         table->setColumnHidden(ColFitUpGap, !anyMulti);
@@ -431,6 +456,11 @@ namespace {
             QStringLiteral("摆动类型"),
             QStringLiteral("幅度"),
             QStringLiteral("弦长"),
+            QStringLiteral("焊接位置"),
+            QStringLiteral("行走角"),
+            QStringLiteral("连续/间断"),
+            QStringLiteral("焊段长度"),
+            QStringLiteral("净距"),
             QStringLiteral("多层多道"),
             QStringLiteral("板厚"),
             QStringLiteral("坡口角度"),
@@ -445,6 +475,9 @@ namespace {
         table->setColumnHidden(ColWeaveType, true);
         table->setColumnHidden(ColAmplitude, true);
         table->setColumnHidden(ColChord, true);
+        table->setColumnHidden(ColTravelAngle, true);
+        table->setColumnHidden(ColSegmentLength, true);
+        table->setColumnHidden(ColClearDistance, true);
         table->setColumnHidden(ColThickness, true);
         table->setColumnHidden(ColGrooveAngle, true);
         table->setColumnHidden(ColFitUpGap, true);
@@ -479,6 +512,9 @@ namespace {
         QDoubleSpinBox* speedSpin = makeSpin(table, 0.0, 1.0e5, 1, QStringLiteral(" mm/s"), 10.0);
         QDoubleSpinBox* ampSpin = makeSpin(table, 0.0, 1.0e4, 2, QStringLiteral(" mm"), 5.0);
         QDoubleSpinBox* chordSpin = makeSpin(table, 0.0, 1.0e5, 2, QStringLiteral(" mm"), 20.0);
+        QDoubleSpinBox* travelSpin = makeSpin(table, -45.0, 45.0, 1, QStringLiteral(" °"), 0.0);
+        QDoubleSpinBox* segmentSpin = makeSpin(table, 0.0, 1.0e5, 1, QStringLiteral(" mm"), 100.0);
+        QDoubleSpinBox* clearSpin = makeSpin(table, 0.0, 1.0e5, 1, QStringLiteral(" mm"), 100.0);
         QDoubleSpinBox* thickSpin = makeSpin(table, 0.0, 1.0e4, 2, QStringLiteral(" mm"), 0.0);
         QDoubleSpinBox* grooveSpin = makeSpin(table, 0.0, 90.0, 1, QStringLiteral(" °"), 0.0);
         QDoubleSpinBox* gapSpin = makeSpin(table, 0.0, 1.0e3, 2, QStringLiteral(" mm"), 0.0);
@@ -488,20 +524,28 @@ namespace {
             table, { QStringLiteral("直线焊"), QStringLiteral("摆动焊") });
         QComboBox* weaveTypeCombo = makeCombo(
             table, { QStringLiteral("正弦"), QStringLiteral("三角") });
+        QComboBox* positionCombo = makeCombo(
+            table, { QStringLiteral("平焊"), QStringLiteral("立焊"), QStringLiteral("横焊") });
+        QComboBox* continuityCombo = makeCombo(
+            table, { QStringLiteral("连续焊"), QStringLiteral("间断焊") });
         QComboBox* multiCombo = makeCombo(
             table, { QStringLiteral("单层单道"), QStringLiteral("多层多道") });
 
         QWidget* weaveTypeHost = makeExtensionHost(table, weaveTypeCombo);
         QWidget* ampHost = makeExtensionHost(table, ampSpin);
         QWidget* chordHost = makeExtensionHost(table, chordSpin);
+        QWidget* travelHost = makeExtensionHost(table, travelSpin);
+        QWidget* segmentHost = makeExtensionHost(table, segmentSpin);
+        QWidget* clearHost = makeExtensionHost(table, clearSpin);
         QWidget* thickHost = makeExtensionHost(table, thickSpin);
         QWidget* grooveHost = makeExtensionHost(table, grooveSpin);
         QWidget* gapHost = makeExtensionHost(table, gapSpin);
         QWidget* penHost = makeExtensionHost(table, penSpin);
 
         const QWidgetList editors = { speedSpin, weaveCombo, weaveTypeCombo,
-                                     ampSpin, chordSpin, multiCombo, thickSpin, grooveSpin,
-                                     gapSpin, penSpin };
+                                     ampSpin, chordSpin, positionCombo, travelSpin,
+                                     continuityCombo, segmentSpin, clearSpin,
+                                     multiCombo, thickSpin, grooveSpin, gapSpin, penSpin };
         for (QWidget* editor : editors) {
             editor->setFont(table->font());
             watchEditor(table, editor);
@@ -514,6 +558,7 @@ namespace {
             }
         }
         const QWidgetList hosts = { weaveTypeHost, ampHost, chordHost,
+                                    travelHost, segmentHost, clearHost,
                                     thickHost, grooveHost, gapHost, penHost };
         for (QWidget* host : hosts) {
             watchEditor(table, host);
@@ -524,28 +569,28 @@ namespace {
         table->setCellWidget(row, ColWeaveType, weaveTypeHost);
         table->setCellWidget(row, ColAmplitude, ampHost);
         table->setCellWidget(row, ColChord, chordHost);
+        table->setCellWidget(row, ColWeldPosition, positionCombo);
+        table->setCellWidget(row, ColTravelAngle, travelHost);
+        table->setCellWidget(row, ColWeldContinuity, continuityCombo);
+        table->setCellWidget(row, ColSegmentLength, segmentHost);
+        table->setCellWidget(row, ColClearDistance, clearHost);
         table->setCellWidget(row, ColMultiMode, multiCombo);
         table->setCellWidget(row, ColThickness, thickHost);
         table->setCellWidget(row, ColGrooveAngle, grooveHost);
         table->setCellWidget(row, ColFitUpGap, gapHost);
         table->setCellWidget(row, ColPenetration, penHost);
 
-        QObject::connect(weaveCombo,
-            static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
-            table,
-            [table](int) {
-                if (!table->property(kClearingProperty).toBool()) {
-                    updateDynamicColumns(table);
-                }
-            });
-        QObject::connect(multiCombo,
-            static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
-            table,
-            [table](int) {
-                if (!table->property(kClearingProperty).toBool()) {
-                    updateDynamicColumns(table);
-                }
-            });
+        QComboBox* refreshCombos[] = { weaveCombo, positionCombo, continuityCombo, multiCombo };
+        for (const QComboBox* combo : refreshCombos) {
+            QObject::connect(combo,
+                static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
+                table,
+                [table](int) {
+                    if (!table->property(kClearingProperty).toBool()) {
+                        updateDynamicColumns(table);
+                    }
+                });
+        }
 
         updateDynamicColumns(table);
     }
