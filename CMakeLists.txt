@@ -82,97 +82,37 @@ else()
 endif()
 
 # pcl
-# 多个 PCL 并存时，旧版本（1.12 等）经常先出现在 PATH / PCL_DIR 里。
-# 先选定 1.15，再找 VTK：PCL 1.15 会把 VTK_DIR 指到它自己编译时用的那一份。
-set(_pcl_hint_roots "")
-foreach(_env_name IN ITEMS PCL_1_15_ROOT PCL115_ROOT PCL_ROOT)
-    if(DEFINED ENV{${_env_name}} AND NOT "$ENV{${_env_name}}" STREQUAL "")
-        list(APPEND _pcl_hint_roots "$ENV{${_env_name}}")
-    endif()
-endforeach()
-if(DEFINED ENV{PCL_DIR} AND NOT "$ENV{PCL_DIR}" STREQUAL "")
-    list(APPEND _pcl_hint_roots "$ENV{PCL_DIR}")
+# 本机 All-in-one 安装在 D:/PCL 1.15.1，配置文件在 cmake/PCLConfig.cmake。
+# 直接指定该目录，避免 PATH 或缓存里的旧 PCL 先被找到。
+set(PCL_1_15_ROOT "D:/PCL 1.15.1" CACHE PATH "PCL 1.15.1 installation root")
+if(DEFINED ENV{PCL_1_15_ROOT} AND NOT "$ENV{PCL_1_15_ROOT}" STREQUAL "")
+    set(PCL_1_15_ROOT "$ENV{PCL_1_15_ROOT}" CACHE PATH "PCL 1.15.1 installation root" FORCE)
 endif()
-foreach(_prefix IN LISTS CMAKE_PREFIX_PATH)
-    list(APPEND _pcl_hint_roots "${_prefix}")
-endforeach()
+file(TO_CMAKE_PATH "${PCL_1_15_ROOT}" PCL_1_15_ROOT)
 
-if(WIN32)
-    foreach(_root IN ITEMS
-            "C:/Program Files/PCL 1.15.1"
-            "C:/Program Files/PCL 1.15.0"
-            "C:/Program Files/PCL 1.15"
-            "D:/ThirdParty/PCL 1.15.1"
-            "D:/ThirdParty/PCL 1.15.0"
-            "D:/ThirdParty/PCL1.15.1"
-            "D:/ThirdParty/PCL1.15.0"
-            "D:/ThirdParty/PCL1.15"
-            "D:/PCL 1.15.1"
-            "D:/PCL 1.15.0")
-        list(APPEND _pcl_hint_roots "${_root}")
-    endforeach()
-    foreach(_parent IN ITEMS "C:/Program Files" "D:/ThirdParty" "D:/")
-        if(IS_DIRECTORY "${_parent}")
-            file(GLOB _pcl115_kids LIST_DIRECTORIES true
-                "${_parent}/PCL*1.15*"
-                "${_parent}/pcl*1.15*")
-            list(APPEND _pcl_hint_roots ${_pcl115_kids})
-        endif()
-    endforeach()
+set(_pcl_config_dir "${PCL_1_15_ROOT}/cmake")
+if(NOT EXISTS "${_pcl_config_dir}/PCLConfig.cmake")
+    message(FATAL_ERROR
+        "未找到 ${_pcl_config_dir}/PCLConfig.cmake。确认 PCL 1.15.1 安装在 D:/PCL 1.15.1，或设置 PCL_1_15_ROOT。")
 endif()
 
-macro(_cloudtool_consider_pcl_root root)
-    if(NOT "${root}" STREQUAL "" AND EXISTS "${root}")
-        foreach(_rel IN ITEMS "" "cmake" "lib/cmake/pcl" "share/pcl-1.15")
-            if("${_rel}" STREQUAL "")
-                set(_dir "${root}")
-            else()
-                set(_dir "${root}/${_rel}")
-            endif()
-            if(EXISTS "${_dir}/PCLConfig.cmake" OR EXISTS "${_dir}/pcl-config.cmake")
-                list(APPEND _pcl_candidates "${_dir}")
-            endif()
-        endforeach()
-    endif()
-endmacro()
+set(PCL_DIR "${_pcl_config_dir}" CACHE PATH "Directory containing PCL 1.15.1 PCLConfig.cmake" FORCE)
+list(PREPEND CMAKE_PREFIX_PATH "${PCL_1_15_ROOT}")
+message(STATUS "Using PCL 1.15.1: ${PCL_DIR}")
 
-set(_pcl_candidates "")
-foreach(_root IN LISTS _pcl_hint_roots)
-    _cloudtool_consider_pcl_root("${_root}")
-endforeach()
-if(PCL_DIR)
-    list(APPEND _pcl_candidates "${PCL_DIR}")
+# All-in-one 自带的 VTK 在 3rdParty/VTK。先写好 VTK_DIR，后面的 find_package(VTK) 不再去搜其它版本。
+file(GLOB _vtk_configs
+    "${PCL_1_15_ROOT}/3rdParty/VTK/lib/cmake/vtk-*/vtk-config.cmake"
+    "${PCL_1_15_ROOT}/3rdParty/VTK/lib/cmake/vtk-*/VTKConfig.cmake"
+    "${PCL_1_15_ROOT}/3rdParty/VTK/lib/vtk-*/VTKConfig.cmake")
+if(_vtk_configs)
+    list(GET _vtk_configs 0 _vtk_config)
+    get_filename_component(_vtk_dir "${_vtk_config}" DIRECTORY)
+    set(VTK_DIR "${_vtk_dir}" CACHE PATH "VTK shipped with PCL 1.15.1" FORCE)
+    message(STATUS "Using VTK from PCL 1.15.1: ${VTK_DIR}")
 endif()
 
-set(_pcl115_dir "")
-foreach(_dir IN LISTS _pcl_candidates)
-    set(_version "")
-    if(EXISTS "${_dir}/PCLConfigVersion.cmake")
-        file(STRINGS "${_dir}/PCLConfigVersion.cmake" _ver_lines REGEX "PACKAGE_VERSION[ \t]")
-        string(REGEX MATCH "([0-9]+\\.[0-9]+\\.[0-9]+)" _version "${_ver_lines}")
-    endif()
-    if(NOT _version AND EXISTS "${_dir}/PCLConfig.cmake")
-        file(STRINGS "${_dir}/PCLConfig.cmake" _ver_lines REGEX "set\\(PCL_VERSION")
-        string(REGEX MATCH "([0-9]+\\.[0-9]+\\.[0-9]+)" _version "${_ver_lines}")
-    endif()
-    if(_version MATCHES "^1\\.15\\.")
-        set(_pcl115_dir "${_dir}")
-        break()
-    endif()
-endforeach()
-
-if(_pcl115_dir)
-    set(PCL_DIR "${_pcl115_dir}" CACHE PATH "Directory containing PCL 1.15 PCLConfig.cmake" FORCE)
-    if(_pcl115_dir MATCHES "/cmake$")
-        get_filename_component(_pcl115_prefix "${_pcl115_dir}" DIRECTORY)
-        list(PREPEND CMAKE_PREFIX_PATH "${_pcl115_prefix}")
-    endif()
-    message(STATUS "Prefer PCL 1.15: ${PCL_DIR}")
-    find_package(PCL 1.15 CONFIG REQUIRED)
-else()
-    message(STATUS "PCL 1.15 was not found in the preferred locations. Searching the default path.")
-    find_package(PCL REQUIRED)
-endif()
+find_package(PCL 1.15.1 CONFIG REQUIRED)
 
 if(PCL_FOUND)
     include_directories(${PCL_INCLUDE_DIRS})
