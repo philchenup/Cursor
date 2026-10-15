@@ -1,0 +1,116 @@
+; ============================================================
+; sps.sub 中与 EKI 相关的修改说明（机器人作 Server / 上位机 Client）
+;
+; 放置错误原因：
+; 1) EKI 写在 SPS，但 XML 里 ENVIRONMENT=Program → 必须改为 Submit
+; 2) SPS 里只有 Send，没有 EKI_Init / EKI_Open → 连接未建立
+; 3) IsOpen 一直是 FALSE，发送分支永远进不去
+; 4) 应用 $FLAG[2](ALIVE) 判断上位机是否已连上，而不是手写 IsOpen
+; 5) SPS 中不要用 WAIT SEC 卡死 Submit 周期
+; ============================================================
+
+; ---------- 1) USER DECL 增加 ----------
+; DECL EKI_STATUS RET          ; 你已有可保留
+DECL BOOL EkiInited            ; 建议放到 sps.dat 里做成全局更稳妥
+
+
+; ---------- 2) USER INIT 替换为 ----------
+  reade1=0.0
+  readj1=0.0
+  readj2=0.0
+  readj3=0.0
+  readj4=0.0
+  readj5=0.0
+  readj6=0.0
+  readx=0.0
+  ready=0.0
+  readz=0.0
+  reada=0.0
+  readb=0.0
+  readc=0.0
+
+  E1=0.0
+  J1=0.0
+  J2=0.0
+  J3=0.0
+  J4=0.0
+  J5=0.0
+  J6=0.0
+  JX=0.0
+  JY=0.0
+  JZ=0.0
+  JA=0.0
+  JB=0.0
+  JC=0.0
+
+  XP1={A1 0,A2 -90,A3 -90,A4 0,A5 -90,A6 0}
+  XP2={X 815,Y 0,Z 1594,A 0,B 0,C 0}
+
+  IsOpen=FALSE
+  EkiInited=FALSE
+
+  ; 若上次 Submit 残留连接，先清掉
+  IF $FLAG[2] THEN
+    RET = EKI_Close("Xml_motion16")
+    RET = EKI_Clear("Xml_motion16")
+  ENDIF
+
+  ; 机器人作 Server：Init + Open 后开始监听，等待上位机 connect
+  RET = EKI_Init("Xml_motion16")
+  IF RET.Msg_No == 0 THEN
+    RET = EKI_Open("Xml_motion16")
+    IF RET.Msg_No == 0 THEN
+      EkiInited = TRUE
+    ENDIF
+  ENDIF
+
+
+; ---------- 3) USER PLC 替换为 ----------
+    ;Make your modifications here
+    IF EkiInited == TRUE THEN
+      ; $FLAG[2] = ALIVE：上位机已连接才发送
+      IF $FLAG[2] == TRUE THEN
+        reade1 = $POS_ACT_MES.E1
+        readj1 = $AXIS_ACT_MEAS.A1
+        readj2 = $AXIS_ACT_MEAS.A2
+        readj3 = $AXIS_ACT_MEAS.A3
+        readj4 = $AXIS_ACT_MEAS.A4
+        readj5 = $AXIS_ACT_MEAS.A5
+        readj6 = $AXIS_ACT_MEAS.A6
+        readx  = $POS_ACT_MES.X
+        ready  = $POS_ACT_MES.Y
+        readz  = $POS_ACT_MES.Z
+        reada  = $POS_ACT_MES.A
+        readb  = $POS_ACT_MES.B
+        readc  = $POS_ACT_MES.C
+
+        RET = EKI_SetReal("Xml_motion16","Robot/PE1",reade1)
+        RET = EKI_SetReal("Xml_motion16","Robot/joint1",readj1)
+        RET = EKI_SetReal("Xml_motion16","Robot/joint2",readj2)
+        RET = EKI_SetReal("Xml_motion16","Robot/joint3",readj3)
+        RET = EKI_SetReal("Xml_motion16","Robot/joint4",readj4)
+        RET = EKI_SetReal("Xml_motion16","Robot/joint5",readj5)
+        RET = EKI_SetReal("Xml_motion16","Robot/joint6",readj6)
+        RET = EKI_SetReal("Xml_motion16","Robot/PX",readx)
+        RET = EKI_SetReal("Xml_motion16","Robot/PY",ready)
+        RET = EKI_SetReal("Xml_motion16","Robot/PZ",readz)
+        RET = EKI_SetReal("Xml_motion16","Robot/PA",reada)
+        RET = EKI_SetReal("Xml_motion16","Robot/PB",readb)
+        RET = EKI_SetReal("Xml_motion16","Robot/PC",readc)
+        RET = EKI_Send("Xml_motion16","Robot")
+
+        IsOpen = TRUE
+      ELSE
+        IsOpen = FALSE
+      ENDIF
+    ENDIF
+
+
+; ---------- 4) XML 必须同步改 ----------
+; <ENVIRONMENT>Submit</ENVIRONMENT>
+; <IP>192.168.1.147</IP>
+; <PORT>54600</PORT>
+; <ALIVE Set_Flag="2" Ping="200"/>
+;
+; 上位机：start("192.168.1.147", 54600)
+; 改完 XML 后冷启动并重新读入文件，再取消/选择 Submit 使 sps 重载

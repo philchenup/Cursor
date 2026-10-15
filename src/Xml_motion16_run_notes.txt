@@ -1,0 +1,29 @@
+; ============================================================
+; 与 SPS + Xml_motion16.src 配套使用说明（防报错清单）
+; ============================================================
+;
+; 【谁做什么】
+;   sps.sub          : EKI_Init / EKI_Open / 周期发送 Robot 状态
+;   Xml_motion16.src : 只收 Sensor 并运动（禁止 Init/Open/Clear 连接）
+;   上位机           : start("192.168.1.147", 54600) 后发 stepMove
+;
+; 【启动顺序】
+;   1. 确认 Xml_motion16.xml 已是 Submit + PORT 54600
+;   2. 冷启动 / 重新读入文件
+;   3. Submit 运行（sps 里 Init+Open，开始监听）
+;   4. 上位机点 connect
+;   5. 示教器选中运行 Xml_motion16.src（会 WAIT FOR $FLAG[2]）
+;   6. 上位机点关节/笛卡尔按钮发指令
+;
+; 【运行程序里不要写】
+;   EKI_Init("Xml_motion16")     ; SPS 已做，再写会 Already initialized
+;   EKI_Open("Xml_motion16")
+;   EKI_Close / EKI_Clear        ; 除非你明确要拆掉整条连接
+;   WAIT FOR 空缓冲后直接 Get    ; 必须先等 $FLAG[1]
+;
+; 【若仍报错】
+;   - 解释配置失败     → 查 XML 端口是否 54600..54615，有无注释
+;   - Already initialized → 运行程序删掉 Init/Open
+;   - Value invalid      → Get 前未等 $FLAG[1]，或 Tag 路径写错
+;   - 一直卡住 WAIT FLAG2 → 上位机未连上，或 ALIVE 不是 Set_Flag=2
+; ============================================================

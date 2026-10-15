@@ -1,0 +1,144 @@
+&ACCESS RVP
+&REL 14
+&PARAM EDITMASK = *
+&PARAM TEMPLATE = C:\KRC\Roboter\Template\vorgabe
+DEF motion16()
+
+;FOLD DECLARATIONS
+;FOLD BASISTECH DECL
+;Automatik extern
+DECL STATE_T STAT
+DECL MODUS_T MODE
+;ENDFOLD (BASISTECH DECL)
+;FOLD USER DECL
+; Please insert user defined declarations
+DECL EKI_STATUS RET
+DECL E6AXIS jq1
+DECL E6POS jq2
+REAL J1, J2, J3, J4, J5, J6
+REAL Velocity
+REAL SE1
+
+; 与 sps.sub 配合：
+;   SPS 负责 EKI_Init / EKI_Open / 周期 EKI_Send(Robot)
+;   本程序只收 Sensor 并运动，禁止 Init/Open/Close/Clear
+;ENDFOLD (USER DECL)
+;ENDFOLD (DECLARATIONS)
+
+;FOLD INI;%{PE}
+;FOLD BASISTECH INI
+GLOBAL INTERRUPT DECL 3 WHEN $STOPMESS==TRUE DO IR_STOPM ( )
+INTERRUPT ON 3 
+BAS (#INITMOV,0 )
+;ENDFOLD (BASISTECH INI)
+;FOLD USER INI
+;Make your modifications here
+J1=0.0
+J2=0.0
+J3=0.0
+J4=0.0
+J5=0.0
+J6=0.0
+SE1=0.0
+IsOut=FALSE
+StepM=0
+jq1={A1 0.0,A2 0.0,A3 0.0,A4 0.0,A5 0.0,A6 0.0,E1 0.0,E2 0.0,E3 0.0,E4 0.0,E5 0.0,E6 0.0}
+jq2={X 0,Y 0,Z 0,A 0,B 0,C 0,S 6,T 27,E1 0.0,E2 0.0,E3 0.0,E4 0.0,E5 0.0,E6 0.0}
+
+;ENDFOLD (USER INI)
+;ENDFOLD (INI)
+
+;;FOLD PTP HOME  Vel= 100 % DEFAULT;%{PE}%MKUKATPBASIS,%CMOVE,%VPTP,%P 1:PTP, 2:HOME, 3:, 5:100, 7:DEFAULT
+;$BWDSTART = FALSE
+;PDAT_ACT=PDEFAULT
+;FDAT_ACT=FHOME
+;BAS (#PTP_PARAMS,100 )
+;$H_POS=XHOME
+;PTP  XHOME
+;;ENDFOLD
+
+; ---- 删除原 EKI_Init / EKI_Open / EKI_CHECK ----
+; 连接由 sps.sub 建立；这里只等待上位机连上（ALIVE=$FLAG[2]）
+WAIT FOR ($FLAG[2] == TRUE)
+IsOpen = TRUE
+
+LOOP
+	; 等完整 Sensor 帧（Xml_motion16.xml: Tag="Sensor" Set_Flag="1"）
+	WAIT FOR ($FLAG[1] == TRUE)
+
+	RET = EKI_GetReal("Xml_motion16", "Sensor/SJ1", J1)
+	RET = EKI_GetReal("Xml_motion16", "Sensor/SJ2", J2)
+	RET = EKI_GetReal("Xml_motion16", "Sensor/SJ3", J3)
+	RET = EKI_GetReal("Xml_motion16", "Sensor/SJ4", J4)
+	RET = EKI_GetReal("Xml_motion16", "Sensor/SJ5", J5)
+	RET = EKI_GetReal("Xml_motion16", "Sensor/SJ6", J6)
+	RET = EKI_GetReal("Xml_motion16", "Sensor/SE1", SE1)
+	RET = EKI_GetBool("Xml_motion16", "Sensor/Status/IsOut", IsOut)
+	RET = EKI_GetInt ("Xml_motion16", "Sensor/StepMode", StepM)
+	RET = EKI_ClearBuffer("Xml_motion16", "Sensor")
+
+	; 先清标志，避免运动期间同一帧被再次触发
+	$FLAG[1] = FALSE
+
+	; 上位机断开/退出：只结束本程序，不断开 EKI（交给 SPS）
+	IF (IsOut == TRUE) THEN
+		IsOpen = FALSE
+		EXIT
+	ENDIF
+
+	BAS(#BASE, 0)
+	BAS(#TOOL, 0)
+
+	SWITCH StepM
+	CASE 0
+		; 回零/复位（上位机 returnHome → StepMode=0）
+		jq1.A1 = J1
+		jq1.A2 = J2
+		jq1.A3 = J3
+		jq1.A4 = J4
+		jq1.A5 = J5
+		jq1.A6 = J6
+		jq1.E1 = SE1
+		PTP jq1
+
+	CASE 1
+		; 关节步进（上位机 stepMove(1, ...)）
+		jq1.A1 = J1
+		jq1.A2 = J2
+		jq1.A3 = J3
+		jq1.A4 = J4
+		jq1.A5 = J5
+		jq1.A6 = J6
+		jq1.E1 = SE1
+		PTP jq1
+
+	CASE 2
+		; 笛卡尔步进（上位机 stepMove(2, ...)：SJ1..SJ6=X,Y,Z,A,B,C）
+		jq2.X = J1
+		jq2.Y = J2
+		jq2.Z = J3
+		jq2.A = J4
+		jq2.B = J5
+		jq2.C = J6
+		PTP jq2
+
+	ENDSWITCH
+
+ENDLOOP
+
+WAIT SEC 3
+IsOpen = FALSE
+
+;FOLD PTP HOME  Vel= 100 % DEFAULT;%{PE}%MKUKATPBASIS,%CMOVE,%VPTP,%P 1:PTP, 2:HOME, 3:, 5:100, 7:DEFAULT
+$BWDSTART = FALSE
+PDAT_ACT = PDEFAULT
+FDAT_ACT = FHOME
+BAS(#PTP_PARAMS, 100)
+$H_POS = XHOME
+PTP XHOME
+;ENDFOLD
+
+; ---- 删除原 EKI_Close / EKI_Clear ----
+; 连接生命周期由 sps.sub 管理，这里不要拆掉
+
+END

@@ -1,0 +1,74 @@
+; sps.sub USER INIT 中 EKI 初始化（防 EKI00023）
+; EKI00023 = 通道已 Init，再次 EKI_Init 就会报错
+; 错误原因：用 $FLAG[2](ALIVE) 判断是否 Clear —— ALIVE 只在上位机连上时为 TRUE
+; Submit 重启后通道常仍在，但 FLAG[2]=FALSE，跳过 Clear 再 Init → EKI00023
+
+; ---- 建议：EkiInited 放在 sps.dat 里做成全局（跨 Submit 重启仍记得）----
+; DEFDAT SPS PUBLIC
+;   DECL PUBLIC BOOL EkiInited = FALSE
+;   DECL PUBLIC BOOL IsOpen = FALSE
+; ENDDAT
+
+; ---- USER INIT 替换为 ----
+  reade1=0.0
+  readj1=0.0
+  readj2=0.0
+  readj3=0.0
+  readj4=0.0
+  readj5=0.0
+  readj6=0.0
+  readx=0.0
+  ready=0.0
+  readz=0.0
+  reada=0.0
+  readb=0.0
+  readc=0.0
+
+  E1=0.0
+  J1=0.0
+  J2=0.0
+  J3=0.0
+  J4=0.0
+  J5=0.0
+  J6=0.0
+  JX=0.0
+  JY=0.0
+  JZ=0.0
+  JA=0.0
+  JB=0.0
+  JC=0.0
+
+  XP1={A1 0,A2 -90,A3 -90,A4 0,A5 -90,A6 0}
+  XP2={X 815,Y 0,Z 1594,A 0,B 0,C 0}
+
+  IsOpen=FALSE
+
+  ; 无论 ALIVE 与否：只要曾经 Init 过，先拆掉再重建
+  IF EkiInited == TRUE THEN
+    RET = EKI_Close("Xml_motion16")
+    RET = EKI_Clear("Xml_motion16")
+    EkiInited = FALSE
+  ENDIF
+
+  ; 保险：即使标志丢失，也尝试 Clear（忽略“未初始化”类错误）
+  ON_ERROR_PROCEED
+  RET = EKI_Close("Xml_motion16")
+  ON_ERROR_PROCEED
+  RET = EKI_Clear("Xml_motion16")
+
+  RET = EKI_Init("Xml_motion16")
+  IF RET.Msg_No == 0 THEN
+    RET = EKI_Open("Xml_motion16")
+    IF RET.Msg_No == 0 THEN
+      EkiInited = TRUE
+    ENDIF
+  ENDIF
+; ---- USER INIT 结束，后面再接原来的 LOOP ----
+
+
+; ============================================================
+; Xml_motion16.xml 也必须正确（你当前上传版仍错误）：
+;   - 必须有 <ENVIRONMENT>Submit</ENVIRONMENT>
+;   - PORT 必须 54600..54615（不能 59152）
+;   - 虚拟示教器 INTERNAL/IP 建议 192.168.0.1（VxWorks）
+; ============================================================
