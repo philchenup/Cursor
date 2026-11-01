@@ -32,7 +32,8 @@ public:
         std::vector<DiscretePoint>& trajectory,
         double spacingMm = 10.0,
         double retractMm = 50.0,
-        double verticalTiltDeg = 45.0);
+        double verticalTiltDeg = 45.0,
+        std::vector<std::vector<DiscretePoint>>* clusterTrajectories = nullptr);
 
     std::vector<DiscretePoint> DiscretizeWireWithCustomFrame(
         const TopoDS_Wire& wire,

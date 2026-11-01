@@ -546,6 +546,62 @@ namespace weld_traj {
             return point;
         }
 
+        void TiltAboutLocalY(DiscretePoint& sample, double angleRad)
+        {
+            if (std::abs(angleRad) <= 1.0e-8) {
+                return;
+            }
+            const gp_Vec yAxis(sample.yDir);
+            const double cosine = std::cos(angleRad);
+            const double sine = std::sin(angleRad);
+            auto rotate = [&](const gp_Dir& direction) -> gp_Dir {
+                const gp_Vec source(direction);
+                gp_Vec rotated = source * cosine
+                    + yAxis.Crossed(source) * sine
+                    + yAxis * (yAxis.Dot(source) * (1.0 - cosine));
+                if (rotated.Magnitude() <= Precision::Confusion()) {
+                    return direction;
+                }
+                return gp_Dir(rotated);
+            };
+            const gp_Dir xDir = rotate(sample.xDir);
+            const gp_Dir zDir = rotate(sample.zDir);
+            DiscretePoint tilted;
+            if (FinishFrame(sample.position, xDir, zDir, tilted)) {
+                sample = tilted;
+            }
+        }
+
+        // 单条焊缝：起点绕局部 Y 向焊缝内侧偏 45°，沿焊缝 50 mm 内回到 0°；
+        // 终点对称，向焊缝内侧偏 -45°，同样在 50 mm 内回正。
+        void ApplyEntryExitYaw(std::vector<DiscretePoint>& points, double recoverMm, double angleDeg)
+        {
+            if (points.size() < 2 || !(recoverMm > Precision::Confusion())) {
+                return;
+            }
+            std::vector<double> distance(points.size(), 0.0);
+            for (std::size_t i = 1; i < points.size(); ++i) {
+                distance[i] = distance[i - 1]
+                    + points[i].position.Distance(points[i - 1].position);
+            }
+            const double length = distance.back();
+            if (length <= Precision::Confusion()) {
+                return;
+            }
+            const double window = std::min(recoverMm, length * 0.5);
+            const double angleRad = angleDeg * kPi / 180.0;
+            for (std::size_t i = 0; i < points.size(); ++i) {
+                double yaw = 0.0;
+                if (distance[i] <= window) {
+                    yaw = angleRad * (1.0 - distance[i] / window);
+                }
+                else if (length - distance[i] <= window) {
+                    yaw = -angleRad * (1.0 - (length - distance[i]) / window);
+                }
+                TiltAboutLocalY(points[i], yaw);
+            }
+        }
+
     }  // namespace
 }  // namespace weld_traj
 
@@ -564,6 +620,7 @@ bool WeldingPathBuilder::BuildClusterTrajectory(const TopoDS_Shape& selectShape,
     }
 
     const bool vertical = cluster.isVertical;
+    const bool singleSeam = cluster.edges.size() == 1;
     const double tiltRad = verticalTiltDeg * kPi / 180.0;
     const double maxProjectDist = std::max(1.0, m_standoff);
     const double cornerTol = std::max(m_tol, kCornerJoinMm);
@@ -827,6 +884,9 @@ bool WeldingPathBuilder::BuildClusterTrajectory(const TopoDS_Shape& selectShape,
         if (seamPoints.empty()) {
             return;
         }
+        if (singleSeam) {
+            ApplyEntryExitYaw(seamPoints, 50.0, 45.0);
+        }
         if (runVertical && retractMm > Precision::Confusion()) {
             // 立焊：先到焊完退焊位置（终点沿 -Z），再去预焊位置（起点沿 -Z），
             // 然后沿焊缝施焊，焊完后再退回退焊位置。
@@ -892,9 +952,13 @@ bool WeldingPathBuilder::BuildWeldingTrajectory(const TopoDS_Shape& selectShape,
     std::vector<DiscretePoint>& trajectory,
     double spacingMm,
     double retractMm,
-    double verticalTiltDeg)
+    double verticalTiltDeg,
+    std::vector<std::vector<DiscretePoint>>* clusterTrajectories)
 {
     trajectory.clear();
+    if (clusterTrajectories != nullptr) {
+        clusterTrajectories->clear();
+    }
     if (selectShape.IsNull() || sortedClusters.empty()) {
         return false;
     }
@@ -912,6 +976,7 @@ bool WeldingPathBuilder::BuildWeldingTrajectory(const TopoDS_Shape& selectShape,
             [](const EdgeCluster& cluster) { return !cluster.isVertical; });
 
         std::vector<DiscretePoint> merged;
+        std::vector<std::vector<DiscretePoint>> segments;
         for (const EdgeCluster& cluster : orderedClusters) {
             if (cluster.edges.empty()) {
                 continue;
@@ -924,18 +989,31 @@ bool WeldingPathBuilder::BuildWeldingTrajectory(const TopoDS_Shape& selectShape,
                 verticalTiltDeg,
                 oneCluster)) {
                 trajectory.clear();
+                if (clusterTrajectories != nullptr) {
+                    clusterTrajectories->clear();
+                }
                 return false;
             }
+            if (oneCluster.empty()) {
+                continue;
+            }
+            segments.push_back(oneCluster);
             merged.insert(merged.end(), oneCluster.begin(), oneCluster.end());
         }
         if (merged.empty()) {
             return false;
         }
         trajectory.swap(merged);
+        if (clusterTrajectories != nullptr) {
+            clusterTrajectories->swap(segments);
+        }
         return true;
     }
     catch (const std::exception&) {
         trajectory.clear();
+        if (clusterTrajectories != nullptr) {
+            clusterTrajectories->clear();
+        }
         return false;
     }
 }
