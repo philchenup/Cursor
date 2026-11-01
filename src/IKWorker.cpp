@@ -9,6 +9,8 @@
 #include <cmath>
 #include <stdexcept>
 
+#include <random>
+
 #include <rl/mdl/Kinematic.h>
 #include <rl/mdl/Joint.h>
 #include <rl/mdl/JacobianInverseKinematics.h>
@@ -16,6 +18,14 @@
 #include <rl/plan/Optimizer.h>
 #include <rl/plan/Planner.h>
 #include <rl/plan/SimpleModel.h>
+
+namespace
+{
+    constexpr double kMillimeterToMeter = 0.001;
+    constexpr double kMeterToMillimeter = 1000.0;
+    constexpr double kTcpPosTolMeter = 1.0e-3;
+    constexpr double kTcpAngTolRad = 0.017453292519943295;
+}
 
 IKWorker::IKWorker(QObject * parent) : QObject(parent)
 {
@@ -549,9 +559,13 @@ void IKWorker::doGoToStart(const IKGoToStartParams& params)
 
         emit started();
 
-        const rl::math::Transform T_tcp_to_flange = params.T_flange_to_tcp.inverse();
-        const rl::math::Transform T_world_tcp_start = pointToTransform(params.startPoint);
+        rl::math::Transform T_flange_to_tcp = params.T_flange_to_tcp;
+        T_flange_to_tcp.translation() *= kMillimeterToMeter;
+        const rl::math::Transform T_tcp_to_flange = T_flange_to_tcp.inverse();
+        rl::math::Transform T_world_tcp_start = pointToTransform(params.startPoint);
+        T_world_tcp_start.translation() *= kMillimeterToMeter;
         const double yWeld = T_world_tcp_start.translation().y();
+        const rl::math::Transform T_flange_goal = T_world_tcp_start * T_tcp_to_flange;
 
         railJoint = kinematic->getJoint(0);
         if (railJoint)
@@ -582,8 +596,8 @@ void IKWorker::doGoToStart(const IKGoToStartParams& params)
             kinematic->setPosition(q);
             kinematic->forwardPosition();
             const rl::math::Transform T_tcp =
-                kinematic->getOperationalPosition(0) * params.T_flange_to_tcp;
-            return T_tcp.translation();
+                kinematic->getOperationalPosition(0) * T_flange_to_tcp;
+            return T_tcp.translation() * kMeterToMillimeter;
             };
 
         auto checkStop = [&]() -> bool {
@@ -596,7 +610,7 @@ void IKWorker::doGoToStart(const IKGoToStartParams& params)
             };
 
         // ========== path1：只动地轨 Joint0，对齐焊接起点 Y，其它关节保持 Home ==========
-        double kRailStepMm = params.railStepLen;
+        const double railStep = params.railStepLen * kMillimeterToMeter;
         double yTarget = yWeld;
         if (railJoint && railJoint->getDofPosition() == 1)
         {
@@ -610,11 +624,11 @@ void IKWorker::doGoToStart(const IKGoToStartParams& params)
         const double y0 = params.q_home(0);
         const double yDir = (yTarget >= y0) ? 1.0 : -1.0;
         double y = y0;
-        while (std::abs(yTarget - y) > kRailStepMm)
+        while (std::abs(yTarget - y) > railStep)
         {
             if (checkStop())
                 return;
-            y += yDir * kRailStepMm;
+            y += yDir * railStep;
             qRail(0) = y;
             path1.push_back(qRail);
         }
@@ -626,7 +640,102 @@ void IKWorker::doGoToStart(const IKGoToStartParams& params)
 
         reportProgress(20);
 
-        // ========== 固定 Joint0，后续 IK / RRT 不再采样地轨 ==========
+        // 逆解期间不收紧地轨限位。限位收成 ±1e-6 时，求解器内部的地轨坐标会漂出窗口，
+        // isValid() 会拒绝法兰已经对准的解。地轨在每步增量里直接置零。
+        auto reached = [&](const rl::math::Vector& q) -> bool {
+            kinematic->setPosition(q);
+            kinematic->forwardPosition();
+            const rl::math::Transform T = kinematic->getOperationalPosition(0);
+            if ((T.translation() - T_flange_goal.translation()).norm() > kTcpPosTolMeter)
+                return false;
+            const Eigen::Quaterniond qa(T.linear());
+            const Eigen::Quaterniond qb(T_flange_goal.linear());
+            return qa.angularDistance(qb) <= kTcpAngTolRad;
+        };
+
+        auto solveRailFixed = [&](rl::math::Vector q) -> bool {
+            if (q.size() < 1)
+                return false;
+            q(0) = yTarget;
+            kinematic->clamp(q);
+            q(0) = yTarget;
+            if (!kinematic->isValid(q))
+                return false;
+
+            kinematic->setPosition(q);
+            constexpr double kStep = 0.05;
+            constexpr double kLambda = 1.0e-3;
+            for (int iter = 0; iter < 250; ++iter)
+            {
+                if (reached(q))
+                    return true;
+
+                kinematic->calculateJacobian(true);
+                const rl::math::Matrix& Jfull = kinematic->getJacobian();
+                if (Jfull.rows() < 6 || Jfull.cols() < 1)
+                    return false;
+
+                rl::math::Matrix J = Jfull.topRows(6);
+                J.col(0).setZero();
+
+                const rl::math::Vector dx =
+                    kinematic->getOperationalPosition(0).toDelta(T_flange_goal);
+                if (!dx.allFinite())
+                    return false;
+
+                const rl::math::Matrix A = J * J.transpose()
+                    + (kLambda * kLambda) * rl::math::Matrix::Identity(6, 6);
+                const rl::math::Vector dqRaw = J.transpose() * A.ldlt().solve(dx);
+                if (dqRaw.size() != q.size() || !dqRaw.allFinite())
+                    return false;
+
+                rl::math::Vector dq = dqRaw;
+                dq(0) = 0.0;
+
+                rl::math::Vector q2(q.size());
+                kinematic->step(q, dq, q2);
+                q2(0) = yTarget;
+                if (kinematic->transformedDistance(q, q2) > kStep * kStep)
+                    kinematic->interpolate(q, q2, kStep, q2);
+                q2(0) = yTarget;
+                kinematic->clamp(q2);
+                q2(0) = yTarget;
+                if (!kinematic->isValid(q2))
+                    return false;
+                q = q2;
+                kinematic->setPosition(q);
+            }
+            return reached(q);
+        };
+
+        rl::math::Vector qGoal = path1.back();
+        bool ikOk = solveRailFixed(qGoal);
+        if (!ikOk)
+        {
+            std::mt19937 rng{ std::random_device{}() };
+            std::uniform_real_distribution<double> uni(0.0, 1.0);
+            rl::math::Vector sample(qGoal.size());
+            for (int attempt = 0; attempt < 8 && !ikOk; ++attempt)
+            {
+                if (checkStop())
+                    return;
+                for (Eigen::Index i = 0; i < sample.size(); ++i)
+                    sample(i) = uni(rng);
+                qGoal = kinematic->generatePositionUniform(sample);
+                qGoal(0) = yTarget;
+                ikOk = solveRailFixed(qGoal);
+            }
+        }
+        if (!ikOk)
+        {
+            restoreRail();
+            m_running.store(false);
+            emit failed(QStringLiteral("IK failed: weld start configuration."));
+            return;
+        }
+        qGoal = kinematic->getPosition();
+        qGoal(0) = yTarget;
+
         if (railJoint && railJoint->getDofPosition() == 1)
         {
             const double eps = 1e-6;
@@ -636,21 +745,6 @@ void IKWorker::doGoToStart(const IKGoToStartParams& params)
             railJoint->setMinimum(lo);
             railJoint->setMaximum(hi);
         }
-
-        // ========== 焊接起点关节解（path2 终点）==========
-        rl::mdl::JacobianInverseKinematics ik(kinematic.get());
-        ik.setDuration(std::chrono::milliseconds(params.timeoutMs));
-        ik.addGoal(T_world_tcp_start * T_tcp_to_flange, 0);
-        kinematic->setPosition(path1.back());
-        if (!ik.solve())
-        {
-            restoreRail();
-            m_running.store(false);
-            emit failed(QStringLiteral("IK failed: weld start configuration."));
-            return;
-        }
-        rl::math::Vector qGoal = kinematic->getPosition();
-        qGoal(0) = yTarget;
 
         reportProgress(30);
 
@@ -699,7 +793,9 @@ void IKWorker::doGoToStart(const IKGoToStartParams& params)
                 mw->optimizer->process(sparse);
             }
 
-            const double delta = (params.cartStepLen > 0.0) ? params.cartStepLen : 1.0;
+            const double delta = (params.cartStepLen > 0.0)
+                ? params.cartStepLen * kMillimeterToMeter
+                : 0.001;
             rl::math::Vector inter(mw->model->getDofPosition());
             if (!sparse.empty())
                 path2.push_back(*sparse.begin());
