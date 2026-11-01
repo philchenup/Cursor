@@ -572,8 +572,8 @@ namespace weld_traj {
             }
         }
 
-        // 单条焊缝：起点绕局部 Y 向焊缝内侧偏 45°，沿焊缝 50 mm 内回到 0°；
-        // 终点对称，向焊缝内侧偏 -45°，同样在 50 mm 内回正。
+        // 枪身沿 -Z 伸出。绕局部 Y 取负角时，起点处枪身倒向焊缝前进方向（内侧）；
+        // 终点取正角，枪身倒回焊缝。偏角在 recoverMm 内线性回到 0°。
         void ApplyEntryExitYaw(std::vector<DiscretePoint>& points, double recoverMm, double angleDeg)
         {
             if (points.size() < 2 || !(recoverMm > Precision::Confusion())) {
@@ -593,10 +593,10 @@ namespace weld_traj {
             for (std::size_t i = 0; i < points.size(); ++i) {
                 double yaw = 0.0;
                 if (distance[i] <= window) {
-                    yaw = angleRad * (1.0 - distance[i] / window);
+                    yaw = -angleRad * (1.0 - distance[i] / window);
                 }
                 else if (length - distance[i] <= window) {
-                    yaw = -angleRad * (1.0 - (length - distance[i]) / window);
+                    yaw = angleRad * (1.0 - (length - distance[i]) / window);
                 }
                 TiltAboutLocalY(points[i], yaw);
             }
