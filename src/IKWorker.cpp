@@ -17,68 +17,6 @@
 #include <rl/plan/Planner.h>
 #include <rl/plan/SimpleModel.h>
 
-namespace
-{
-    constexpr double kMillimeterToMeter = 0.001;
-
-    bool PlanCollisionFree(MainWindow* mw,
-        const rl::math::Vector& qStart,
-        const rl::math::Vector& qGoal,
-        double step,
-        std::vector<rl::math::Vector>& path)
-    {
-        if (mw == nullptr || mw->planner == nullptr || mw->model == nullptr)
-            return false;
-
-        QMutexLocker lock(&mw->mutex);
-        if (!mw->start)
-            mw->start = std::make_shared<rl::math::Vector>(qStart);
-        else
-            *mw->start = qStart;
-        if (!mw->goal)
-            mw->goal = std::make_shared<rl::math::Vector>(qGoal);
-        else
-            *mw->goal = qGoal;
-
-        mw->planner->start = mw->start.get();
-        mw->planner->goal = mw->goal.get();
-        mw->planner->viewer = nullptr;
-
-        if (!mw->planner->verify() || !mw->planner->solve())
-            return false;
-
-        rl::plan::VectorList sparse = mw->planner->getPath();
-        if (mw->optimizer)
-        {
-            mw->optimizer->setViewer(nullptr);
-            mw->optimizer->process(sparse);
-        }
-        if (sparse.empty())
-            return false;
-
-        path.clear();
-        const double delta = (step > 0.0) ? step : 0.05;
-        rl::math::Vector inter(mw->model->getDofPosition());
-        path.push_back(*sparse.begin());
-
-        rl::plan::VectorList::iterator it = sparse.begin();
-        rl::plan::VectorList::iterator jt = sparse.begin();
-        if (jt != sparse.end())
-            ++jt;
-        for (; it != sparse.end() && jt != sparse.end(); ++it, ++jt)
-        {
-            const rl::math::Real steps = std::ceil(mw->model->distance(*it, *jt) / delta);
-            const rl::math::Real n = (steps < 1.0) ? 1.0 : steps;
-            for (std::size_t k = 1; k < static_cast<std::size_t>(n) + 1; ++k)
-            {
-                mw->model->interpolate(*it, *jt, static_cast<rl::math::Real>(k) / n, inter);
-                path.push_back(inter);
-            }
-        }
-        return !path.empty();
-    }
-}
-
 IKWorker::IKWorker(QObject * parent) : QObject(parent)
 {
     qRegisterMetaType<rl::math::Vector>("rl::math::Vector");
@@ -86,7 +24,6 @@ IKWorker::IKWorker(QObject * parent) : QObject(parent)
     qRegisterMetaType<std::vector<rl::math::Vector3>>("std::vector<rl::math::Vector3>");
     qRegisterMetaType<IKSolveParams>("IKSolveParams");
     qRegisterMetaType<IKGoToStartParams>("IKGoToStartParams");
-    qRegisterMetaType<IKTransitParams>("IKTransitParams");
 }
 
 IKWorker::~IKWorker() = default;
@@ -110,11 +47,7 @@ rl::math::Transform IKWorker::pointToTransform(const DiscretePoint& pt)
 {
     rl::math::Transform T = rl::math::Transform::Identity();
 
-    // 焊缝点来自 OpenCascade，单位毫米；规划场景单位是米。
-    T.translation() = rl::math::Vector3(
-        pt.position.X() * kMillimeterToMeter,
-        pt.position.Y() * kMillimeterToMeter,
-        pt.position.Z() * kMillimeterToMeter);
+    T.translation() = rl::math::Vector3(pt.position.X(), pt.position.Y(), pt.position.Z());
 
     rl::math::Matrix33 R;
     R.col(0) = rl::math::Vector3(pt.xDir.X(), pt.xDir.Y(), pt.xDir.Z());
@@ -359,18 +292,45 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
 
     rl::math::Vector qFrozen;
     bool sceneFrozen = false;
+    rl::mdl::Joint* railJoint = nullptr;
+    rl::math::Vector railMin0, railMax0;
 
     try
     {
         MainWindow* mw = MainWindow::instance();
-        if (!mw || !mw->planner || !mw->model || !kinematic) throw std::runtime_error("Kinematic not set. Call setKinematic() before doReturnHome().");
+        if (!mw || !mw->planner || !mw->model || !kinematic) throw std::runtime_error("Kinematic not set. Call setKinematic() before doGoToStart().");
 
         const std::size_t dof = kinematic->getDof();
         if (params.q_home.size() != static_cast<Eigen::Index>(dof)) throw std::runtime_error("q_home size mismatch with model DOF.");
 
         emit started();
+
+        railJoint = kinematic->getJoint(0);
+        if (railJoint)
+        {
+            railMin0 = railJoint->getMinimum();
+            railMax0 = railJoint->getMaximum();
+        }
+
+        auto restoreRail = [&]() {
+            if (railJoint)
+            {
+                railJoint->setMinimum(railMin0);
+                railJoint->setMaximum(railMax0);
+            }
+        };
+
         qFrozen = kinematic->getPosition();
-        sceneFrozen = true;
+
+        int lastReportedPercent = -1;
+        auto reportProgress = [&](int percent) {
+            percent = std::max(0, std::min(100, percent));
+            if (percent != lastReportedPercent)
+            {
+                emit progress(percent);
+                lastReportedPercent = percent;
+            }
+        };
 
         auto toolXyz = [&](const rl::math::Vector& q) -> rl::math::Vector3 {
             kinematic->setPosition(q);
@@ -380,48 +340,185 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
             return T_tcp.translation();
         };
 
-        std::vector<rl::math::Vector> jointTrajectory;
-        if ((params.q_current - params.q_home).cwiseAbs().maxCoeff() <= 1e-9)
+        const double jointStep = (params.jointStepRad > 0.0) ? params.jointStepRad : 0.02;
+
+        auto appendLerp = [&](std::vector<rl::math::Vector>& path,
+            const rl::math::Vector& a,
+            const rl::math::Vector& b,
+            double step)
         {
-            jointTrajectory.push_back(params.q_home);
-        }
-        else if (!PlanCollisionFree(mw, params.q_current, params.q_home, params.jointStepRad, jointTrajectory))
+            const double maxDq = (b - a).cwiseAbs().maxCoeff();
+            const int n = (maxDq <= 1e-12)
+                ? 0
+                : std::max(1, static_cast<int>(std::ceil(maxDq / step)));
+            for (int i = 1; i <= n; ++i)
+            {
+                const double t = static_cast<double>(i) / static_cast<double>(n);
+                path.push_back((1.0 - t) * a + t * b);
+            }
+        };
+
+        rl::math::Vector qArmHome = params.q_home;
+        qArmHome(0) = params.q_current(0);
+
+        if (railJoint && railJoint->getDofPosition() == 1)
         {
-            kinematic->setPosition(qFrozen);
-            kinematic->forwardPosition();
-            m_running.store(false);
-            emit failed(QStringLiteral("Planner failed: return home is in collision or has no path."));
-            return;
+            const double eps = 1e-6;
+            const double v = std::min(std::max(params.q_current(0), railMin0(0)), railMax0(0));
+            rl::math::Vector lo(1), hi(1);
+            lo << (v - eps);
+            hi << (v + eps);
+            railJoint->setMinimum(lo);
+            railJoint->setMaximum(hi);
         }
+
+        std::vector<rl::math::Vector> path1;
+        path1.push_back(params.q_current);
+
+        if ((params.q_current - qArmHome).cwiseAbs().maxCoeff() > 1e-9)
+        {
+            QMutexLocker lock(&mw->mutex);
+
+            if (!mw->start)
+                mw->start = std::make_shared<rl::math::Vector>(params.q_current);
+            else
+                *mw->start = params.q_current;
+            if (!mw->goal)
+                mw->goal = std::make_shared<rl::math::Vector>(qArmHome);
+            else
+                *mw->goal = qArmHome;
+
+            mw->planner->start = mw->start.get();
+            mw->planner->goal = mw->goal.get();
+            mw->planner->viewer = nullptr;
+
+            if (!mw->planner->verify())
+            {
+                m_running.store(false);
+                emit failed(QStringLiteral("Invalid start or goal configuration."));
+                return;
+            }
+
+            const bool solved = mw->planner->solve();
+            if (!solved)
+            {
+                m_running.store(false);
+                emit failed(QStringLiteral("Planner failed: current pose to home joints."));
+                return;
+            }
+
+            rl::plan::VectorList sparse = mw->planner->getPath();
+            if (mw->optimizer)
+            {
+                mw->optimizer->setViewer(nullptr);
+                mw->optimizer->process(sparse);
+            }
+
+            rl::math::Vector prev = params.q_current;
+            for (const rl::math::Vector& node : sparse)
+            {
+                rl::math::Vector qn = node;
+                qn(0) = params.q_current(0);
+                if ((qn - prev).cwiseAbs().maxCoeff() <= 1e-12)
+                    continue;
+                appendLerp(path1, prev, qn, jointStep);
+                prev = path1.back();
+            }
+        }
+
+        for (rl::math::Vector& q : path1)
+            q(0) = params.q_current(0);
+
+        // RRT 终点若未到 qArmHome，关节插值接上，禁止一步跳变
+        if (path1.empty())
+            path1.push_back(qArmHome);
+        else if ((path1.back() - qArmHome).cwiseAbs().maxCoeff() > 1e-9)
+            appendLerp(path1, path1.back(), qArmHome, jointStep);
+
+        restoreRail();
+        reportProgress(70);
+
+        // path2：只动地轨，手臂保持 path1 终点（已是 Home 臂）
+        std::vector<rl::math::Vector> path2;
+        rl::math::Vector qRail = path1.back();
+        path2.push_back(qRail);
+
+        const double y0 = qRail(0);
+        const double yTarget = params.q_home(0);
+        const double yDir = (yTarget >= y0) ? 1.0 : -1.0;
+        double y = y0;
+        while (std::abs(yTarget - y) > params.railStepLen)
+        {
+            y += yDir * params.railStepLen;
+            qRail(0) = y;
+            path2.push_back(qRail);
+        }
+        if (std::abs(yTarget - y) > 1e-9)
+        {
+            qRail(0) = yTarget;
+            path2.push_back(qRail);
+        }
+
+        reportProgress(90);
+
+        std::vector<rl::math::Vector> jointTrajectory = path1;
+        std::size_t p2Begin = 0;
+        if (!path2.empty() && !path1.empty()
+            && (path2.front() - path1.back()).cwiseAbs().maxCoeff() < 1e-6)
+        {
+            p2Begin = 1;
+        }
+        jointTrajectory.insert(jointTrajectory.end(),
+            path2.begin() + static_cast<std::ptrdiff_t>(p2Begin), path2.end());
+
+        if ((jointTrajectory.back() - params.q_home).cwiseAbs().maxCoeff() > 1e-9)
+            appendLerp(jointTrajectory, jointTrajectory.back(), params.q_home, jointStep);
 
         std::vector<rl::math::Vector3> toolPoints;
         toolPoints.reserve(jointTrajectory.size());
         for (const rl::math::Vector& q : jointTrajectory)
             toolPoints.push_back(toolXyz(q));
 
-        kinematic->setPosition(qFrozen);
-        kinematic->forwardPosition();
-
-        emit progress(100);
+        reportProgress(100);
         m_running.store(false);
         emit finished_return(jointTrajectory, toolPoints, 100.0);
     }
     catch (const std::exception& e)
     {
+        if (railJoint && railMin0.size() > 0)
+        {
+            railJoint->setMinimum(railMin0);
+            railJoint->setMaximum(railMax0);
+        }
         if (sceneFrozen && kinematic && qFrozen.size() > 0)
         {
             kinematic->setPosition(qFrozen);
             kinematic->forwardPosition();
+        }
+        if (MainWindow* mw = MainWindow::instance())
+        {
+            QMetaObject::invokeMethod(mw, "setSceneFlushEnabled",
+                Qt::QueuedConnection, Q_ARG(bool, true));
         }
         m_running.store(false);
         emit failed(QString::fromUtf8(e.what()));
     }
     catch (...)
     {
+        if (railJoint && railMin0.size() > 0)
+        {
+            railJoint->setMinimum(railMin0);
+            railJoint->setMaximum(railMax0);
+        }
         if (sceneFrozen && kinematic && qFrozen.size() > 0)
         {
             kinematic->setPosition(qFrozen);
             kinematic->forwardPosition();
+        }
+        if (MainWindow* mw = MainWindow::instance())
+        {
+            QMetaObject::invokeMethod(mw, "setSceneFlushEnabled",
+                Qt::QueuedConnection, Q_ARG(bool, true));
         }
         m_running.store(false);
         emit failed(QStringLiteral("Unknown exception in IK worker (return home)."));
@@ -678,123 +775,5 @@ void IKWorker::doGoToStart(const IKGoToStartParams& params)
         }
         m_running.store(false);
         emit failed(QStringLiteral("Unknown exception in IK worker (go to start)."));
-    }
-}
-
-void IKWorker::doTransit(const IKTransitParams& params)
-{
-    m_running.store(true);
-    m_stopRequested.store(false);
-
-    std::shared_ptr<rl::mdl::Kinematic> kinematic;
-    {
-        QMutexLocker locker(&m_kinMutex);
-        kinematic = m_kinematic;
-    }
-
-    rl::mdl::Joint* railJoint = nullptr;
-    rl::math::Vector railMin0, railMax0;
-
-    try
-    {
-        MainWindow* mw = MainWindow::instance();
-        if (!mw || !mw->planner || !mw->model || !kinematic)
-            throw std::runtime_error("Kinematic not set. Call setKinematic() before doTransit().");
-        if (params.q_from.size() != static_cast<Eigen::Index>(kinematic->getDof()))
-            throw std::runtime_error("q_from size mismatch with model DOF.");
-
-        emit started();
-
-        const rl::math::Transform T_tcp_to_flange = params.T_flange_to_tcp.inverse();
-        const rl::math::Transform T_world_tcp = pointToTransform(params.goalPoint);
-        const double yWeld = T_world_tcp.translation().y();
-
-        railJoint = kinematic->getJoint(0);
-        if (railJoint)
-        {
-            railMin0 = railJoint->getMinimum();
-            railMax0 = railJoint->getMaximum();
-        }
-        auto restoreRail = [&]() {
-            if (railJoint)
-            {
-                railJoint->setMinimum(railMin0);
-                railJoint->setMaximum(railMax0);
-            }
-        };
-
-        double yTarget = yWeld;
-        if (railJoint && railJoint->getDofPosition() == 1)
-        {
-            yTarget = std::min(std::max(yWeld, railMin0(0)), railMax0(0));
-            const double eps = 1e-6;
-            rl::math::Vector lo(1), hi(1);
-            lo << (yTarget - eps);
-            hi << (yTarget + eps);
-            railJoint->setMinimum(lo);
-            railJoint->setMaximum(hi);
-        }
-
-        rl::mdl::JacobianInverseKinematics ik(kinematic.get());
-        ik.setDuration(std::chrono::milliseconds(params.timeoutMs));
-        ik.addGoal(T_world_tcp * T_tcp_to_flange, 0);
-        kinematic->setPosition(params.q_from);
-        if (!ik.solve())
-        {
-            restoreRail();
-            m_running.store(false);
-            emit failed(QStringLiteral("IK failed: next weld start configuration."));
-            return;
-        }
-        rl::math::Vector qGoal = kinematic->getPosition();
-        if (qGoal.size() > 0)
-            qGoal(0) = yTarget;
-        restoreRail();
-
-        std::vector<rl::math::Vector> jointTrajectory;
-        if (!PlanCollisionFree(mw, params.q_from, qGoal, params.cartStepLen, jointTrajectory))
-        {
-            kinematic->setPosition(params.q_from);
-            kinematic->forwardPosition();
-            m_running.store(false);
-            emit failed(QStringLiteral("Planner failed: transit between welds is in collision or has no path."));
-            return;
-        }
-
-        auto toolXyz = [&](const rl::math::Vector& q) -> rl::math::Vector3 {
-            kinematic->setPosition(q);
-            kinematic->forwardPosition();
-            return (kinematic->getOperationalPosition(0) * params.T_flange_to_tcp).translation();
-        };
-        std::vector<rl::math::Vector3> toolPoints;
-        toolPoints.reserve(jointTrajectory.size());
-        for (const rl::math::Vector& q : jointTrajectory)
-            toolPoints.push_back(toolXyz(q));
-
-        kinematic->setPosition(params.q_from);
-        kinematic->forwardPosition();
-        emit progress(100);
-        m_running.store(false);
-        emit finished_start(jointTrajectory, toolPoints, 100.0);
-    }
-    catch (const std::exception& e)
-    {
-        if (railJoint && railMin0.size() > 0)
-        {
-            railJoint->setMinimum(railMin0);
-            railJoint->setMaximum(railMax0);
-        }
-        m_running.store(false);
-        emit failed(QString::fromUtf8(e.what()));
-    }
-    catch (...)
-    {
-        if (railJoint && railMin0.size() > 0)
-        {
-            railJoint->setMinimum(railMin0);
-            railJoint->setMaximum(railMax0);
-        }
-        m_running.store(false);
-        emit failed(QStringLiteral("Unknown exception in IK worker (transit)."));
     }
 }

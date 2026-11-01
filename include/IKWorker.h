@@ -10,22 +10,12 @@
 
 #include "GlobalDefs.h"
 
-struct IKTransitParams
-{
-    rl::math::Vector q_from;
-    DiscretePoint goalPoint;
-    rl::math::Transform T_flange_to_tcp = rl::math::Transform::Identity();
-    double cartStepLen = 5.0;
-    int timeoutMs = 500;
-};
-
 Q_DECLARE_METATYPE(rl::math::Vector)
 Q_DECLARE_METATYPE(std::vector<rl::math::Vector>)
 Q_DECLARE_METATYPE(IKSolveParams)
 Q_DECLARE_METATYPE(IKReturnHomeParams)
 Q_DECLARE_METATYPE(DiscretePoint)
 Q_DECLARE_METATYPE(IKGoToStartParams)
-Q_DECLARE_METATYPE(IKTransitParams)
 Q_DECLARE_METATYPE(std::vector<rl::math::Vector3>)
 
 class IKWorker : public QObject
@@ -52,9 +42,6 @@ public slots:
     void doReturnHome(const IKReturnHomeParams& params);
 
     void doGoToStart(const IKGoToStartParams& params);
-
-    // 从上一条轨迹终点的关节位置，规划到下一条焊缝起点。全程碰撞检测。
-    void doTransit(const IKTransitParams& params);
 signals:
     void started();
     void progress(int percent);
