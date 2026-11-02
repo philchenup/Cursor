@@ -338,6 +338,7 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
         const double jointStep = (params.jointStepRad > 0.0) ? params.jointStepRad : 0.02;
         const double railStep = (params.railStepLen > 0.0) ? params.railStepLen : 0.01;
         constexpr double kRetractMeter = 0.1;
+        constexpr double kFlangeLiftMeter = 0.2;
 
         railJoint = kinematic->getJoint(0);
         if (railJoint)
@@ -442,7 +443,36 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
             return;
         }
         qRetract(0) = railNow;
-        reportProgress(20);
+        reportProgress(15);
+
+        kinematic->setPosition(qRetract);
+        kinematic->forwardPosition();
+        rl::math::Transform T_flange_lift = kinematic->getOperationalPosition(0);
+        T_flange_lift.translation().z() += kFlangeLiftMeter;
+
+        kinematic->setPosition(qRetract);
+        kinematic->forwardPosition();
+        rl::mdl::JacobianInverseKinematics ikLift(kinematic.get());
+        ikLift.setDuration(std::chrono::milliseconds(std::max(params.timeoutMs, 1)));
+        ikLift.setRandomRestarts(0);
+        ikLift.setEpsilon(1.0e-4);
+        ikLift.addGoal(T_flange_lift, 0);
+        const bool liftOk = ikLift.solve();
+
+        rl::math::Vector qLift = kinematic->getPosition();
+        kinematic->setPosition(qLift);
+        kinematic->forwardPosition();
+        const double liftError =
+            kinematic->getOperationalPosition(0).toDelta(T_flange_lift).norm();
+        if (!qLift.allFinite() || !(liftOk || liftError < 1.0e-3))
+        {
+            restoreRail();
+            m_running.store(false);
+            emit failed(QStringLiteral("IK failed: flange lift 0.2 m."));
+            return;
+        }
+        qLift(0) = railNow;
+        reportProgress(30);
 
         rl::math::Vector qArmHome = params.q_home;
         qArmHome(0) = railNow;
@@ -454,15 +484,20 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
             const rl::math::Vector qFrom = path1.back();
             appendLerp(path1, qFrom, qRetract, jointStep);
         }
+        if ((path1.back() - qLift).cwiseAbs().maxCoeff() > 1e-9)
+        {
+            const rl::math::Vector qFrom = path1.back();
+            appendLerp(path1, qFrom, qLift, jointStep);
+        }
 
-        if ((qRetract - qArmHome).cwiseAbs().maxCoeff() > 1e-9)
+        if ((qLift - qArmHome).cwiseAbs().maxCoeff() > 1e-9)
         {
             QMutexLocker lock(&mw->mutex);
 
             if (!mw->start)
-                mw->start = std::make_shared<rl::math::Vector>(qRetract);
+                mw->start = std::make_shared<rl::math::Vector>(qLift);
             else
-                *mw->start = qRetract;
+                *mw->start = qLift;
             if (!mw->goal)
                 mw->goal = std::make_shared<rl::math::Vector>(qArmHome);
             else
@@ -479,7 +514,7 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
             {
                 restoreRail();
                 m_running.store(false);
-                emit failed(QStringLiteral("Invalid retract or home-arm configuration."));
+                emit failed(QStringLiteral("Invalid lift or home-arm configuration."));
                 return;
             }
 
@@ -487,7 +522,7 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
             {
                 restoreRail();
                 m_running.store(false);
-                emit failed(QStringLiteral("Planner failed: retract pose to home joints."));
+                emit failed(QStringLiteral("Planner failed: lift pose to home joints."));
                 return;
             }
 
