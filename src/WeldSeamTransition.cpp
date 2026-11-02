@@ -32,6 +32,7 @@ namespace weld_traj {
         constexpr double kPi = 3.14159265358979323846;
         constexpr double kDedupMm = 0.02;
         constexpr double kCornerJoinMm = 0.1;
+        constexpr double kFlatJoinMm = 20.0;
         constexpr double kGapBridgeMm = 30.0;
         constexpr int kMaxSamples = 10000;
 
@@ -669,8 +670,8 @@ bool WeldingPathBuilder::BuildClusterTrajectory(const TopoDS_Shape& selectShape,
             }
         }
 
-        // 平焊只在首尾已经相接时补过渡曲线。有间隙的平焊缝不在这里桥接，后面会拆成独立簇。
-        const bool flatGap = !vertical && gap > cornerTol;
+        // 平焊端点距离在 20 mm 内补过渡并连成同一段；超过则断开。
+        const bool flatGap = !vertical && gap > kFlatJoinMm;
         if (!fillet && !flatGap && gap < kGapBridgeMm
             && BuildInterpolationCurve(prev, next, transition) && !transition.IsNull()) {
             BRepAdaptor_Curve bridge(transition);
@@ -914,7 +915,7 @@ bool WeldingPathBuilder::BuildClusterTrajectory(const TopoDS_Shape& selectShape,
         if (index + 1 >= seams.size()) {
             return false;
         }
-        return seams[index].pe.EndPoint.Distance(seams[index + 1].pe.StartPoint) <= cornerTol;
+        return seams[index].pe.EndPoint.Distance(seams[index + 1].pe.StartPoint) <= kFlatJoinMm;
     };
 
     for (std::size_t i = 0; i < seams.size(); ++i) {
@@ -924,7 +925,7 @@ bool WeldingPathBuilder::BuildClusterTrajectory(const TopoDS_Shape& selectShape,
         if (i + 1 >= seams.size()) {
             break;
         }
-        // 平焊不要求首尾相连。对不上的下一条单独成一段，不采样过渡。
+        // 平焊端点距离超过 20 mm 时，下一条单独成一段，不采样过渡。
         if (!vertical && !flatEndsMeet(i)) {
             appendRun(false);
             continue;
@@ -970,14 +971,10 @@ bool WeldingPathBuilder::BuildWeldingTrajectory(const TopoDS_Shape& selectShape,
     }
 
     try {
-        // 调用方若把立焊簇插在平焊中间，这里仍保证先平焊、后立焊。
-        std::vector<EdgeCluster> orderedClusters = sortedClusters;
-        std::stable_partition(orderedClusters.begin(), orderedClusters.end(),
-            [](const EdgeCluster& cluster) { return !cluster.isVertical; });
-
+        // 簇的顺序跟 SortEdges 一致：立焊留在遇到它的位置，不再整段挪到平焊后面。
         std::vector<DiscretePoint> merged;
         std::vector<std::vector<DiscretePoint>> segments;
-        for (const EdgeCluster& cluster : orderedClusters) {
+        for (const EdgeCluster& cluster : sortedClusters) {
             if (cluster.edges.empty()) {
                 continue;
             }
@@ -1768,7 +1765,8 @@ bool WeldingPathBuilder::SortEdges(const std::vector<TopoDS_Edge>& weldEdges,
 
     // ---------- 常量 ----------
     constexpr double kVerticalAngleDeg = 10.0;     // 与 Z 轴夹角小于该值视为“垂直边”
-    constexpr double kCoincidentTol = 0.1;      // 首尾相接阈值，与轨迹里的 kCornerJoinMm 一致
+    constexpr double kCoincidentTol = 0.1;      // 立焊首尾相接阈值
+    constexpr double kFlatJoinMm = 20.0;        // 平焊端点距离在该值内则连上
     constexpr double kVecEps = 1.0e-9;   // 零向量阈值
 
     // ---------- 工具 lambda ----------
@@ -1799,13 +1797,6 @@ bool WeldingPathBuilder::SortEdges(const std::vector<TopoDS_Edge>& weldEdges,
         return angDeg < kVerticalAngleDeg;
         };
 
-    // 按索引判断是否垂直边，用来把平焊和立焊拆开排序。
-    auto IsVerticalEdgeIdx = [&](int idx) -> bool {
-        gp_Pnt p1, p2;
-        GetEdgePoints(weldEdges[idx], p1, p2);
-        return IsVerticalEdge(p1, p2);
-        };
-
     auto OrientEdgeEndpoints = [&](const gp_Pnt& p1, const gp_Pnt& p2,
         const gp_Pnt& refPrevEnd,
         bool useRef,
@@ -1823,8 +1814,11 @@ bool WeldingPathBuilder::SortEdges(const std::vector<TopoDS_Edge>& weldEdges,
                 else { outStart = p2; outEnd = p1; }
             }
             else {
-                if (p1.Y() <= p2.Y()) { outStart = p1; outEnd = p2; }
-                else { outStart = p2; outEnd = p1; }
+                // 起点取 Y 更小的端点；Y 相等时取 X 更小的端点。
+                const bool p2First = p2.Y() < p1.Y() - 1.0e-9
+                    || (std::abs(p1.Y() - p2.Y()) <= 1.0e-9 && p2.X() < p1.X());
+                if (p2First) { outStart = p2; outEnd = p1; }
+                else { outStart = p1; outEnd = p2; }
             }
         };
 
@@ -1841,22 +1835,17 @@ bool WeldingPathBuilder::SortEdges(const std::vector<TopoDS_Edge>& weldEdges,
         };
 
     // ============================================================
-    //  阶段 A：平焊、立焊分开排序
-    //  平焊全部排在立焊前面。组内起点取 Y 最小的边，
-    //  沿端点相接贪心延伸；路口取更低的 Z，断口再跳到最近的未用边。
+    //  阶段 A：平焊、立焊放在同一条序列里排序
+    //  起点取全部焊缝里 Y 最小的边（Y 相同再取 X 更小的端点）。
+    //  平焊端点距离 ≤ 20 mm 则连上，并且优先连接平焊；
+    //  没有可接的平焊时，立焊仍只在端点贴上时才接。
+    //  同类型路口取更低的 Z，断口再跳到最近的未用边。
     // ============================================================
 
-    std::vector<int> flatIndices;
-    std::vector<int> verticalIndices;
-    flatIndices.reserve(weldEdges.size());
-    verticalIndices.reserve(weldEdges.size());
+    std::vector<int> allIndices;
+    allIndices.reserve(weldEdges.size());
     for (size_t i = 0; i < weldEdges.size(); ++i) {
-        if (IsVerticalEdgeIdx(static_cast<int>(i))) {
-            verticalIndices.push_back(static_cast<int>(i));
-        }
-        else {
-            flatIndices.push_back(static_cast<int>(i));
-        }
+        allIndices.push_back(static_cast<int>(i));
     }
 
     auto OrderGroup = [&](const std::vector<int>& indices) -> std::vector<ProcessedEdge> {
@@ -1872,15 +1861,20 @@ bool WeldingPathBuilder::SortEdges(const std::vector<TopoDS_Edge>& weldEdges,
 
         size_t currentLocal = 0;
         double bestY = std::numeric_limits<double>::max();
-        double bestZ = std::numeric_limits<double>::max();
+        double bestX = std::numeric_limits<double>::max();
         for (size_t i = 0; i < indices.size(); ++i) {
             gp_Pnt p1, p2;
             GetEdgePoints(edgeAt(i), p1, p2);
-            const double y = std::min(p1.Y(), p2.Y());
-            const double z = std::min(p1.Z(), p2.Z());
-            if (y < bestY - 1.0e-9 || (std::abs(y - bestY) <= 1.0e-9 && z < bestZ)) {
+            gp_Pnt startPt = p1;
+            if (p2.Y() < p1.Y() - 1.0e-9
+                || (std::abs(p1.Y() - p2.Y()) <= 1.0e-9 && p2.X() < p1.X())) {
+                startPt = p2;
+            }
+            const double y = startPt.Y();
+            const double x = startPt.X();
+            if (y < bestY - 1.0e-9 || (std::abs(y - bestY) <= 1.0e-9 && x < bestX)) {
                 bestY = y;
-                bestZ = z;
+                bestX = x;
                 currentLocal = i;
             }
         }
@@ -1893,7 +1887,8 @@ bool WeldingPathBuilder::SortEdges(const std::vector<TopoDS_Edge>& weldEdges,
         int usedCount = 1;
 
         while (usedCount < static_cast<int>(indices.size())) {
-            std::vector<std::pair<size_t, double>> adjacent;
+            std::vector<std::pair<size_t, double>> flatAdjacent;
+            std::vector<std::pair<size_t, double>> verticalAdjacent;
             size_t nearestLocal = indices.size();
             double nearestGap = std::numeric_limits<double>::max();
 
@@ -1904,8 +1899,13 @@ bool WeldingPathBuilder::SortEdges(const std::vector<TopoDS_Edge>& weldEdges,
                 gp_Pnt p1, p2;
                 GetEdgePoints(edgeAt(i), p1, p2);
                 const double dMin = std::min(currentEndPnt.Distance(p1), currentEndPnt.Distance(p2));
-                if (dMin < kCoincidentTol) {
-                    adjacent.emplace_back(i, dMin);
+                if (!IsVerticalEdge(p1, p2)) {
+                    if (dMin <= kFlatJoinMm) {
+                        flatAdjacent.emplace_back(i, dMin);
+                    }
+                }
+                else if (dMin < kCoincidentTol) {
+                    verticalAdjacent.emplace_back(i, dMin);
                 }
                 if (dMin < nearestGap) {
                     nearestGap = dMin;
@@ -1913,6 +1913,9 @@ bool WeldingPathBuilder::SortEdges(const std::vector<TopoDS_Edge>& weldEdges,
                 }
             }
 
+            // 20 mm 内有平焊就先接平焊；否则再接贴上的立焊。
+            std::vector<std::pair<size_t, double>>& adjacent =
+                !flatAdjacent.empty() ? flatAdjacent : verticalAdjacent;
             if (adjacent.empty()) {
                 if (nearestLocal >= indices.size()) {
                     break;
@@ -1946,19 +1949,15 @@ bool WeldingPathBuilder::SortEdges(const std::vector<TopoDS_Edge>& weldEdges,
         return ordered;
     };
 
-    const std::vector<ProcessedEdge> flatOrdered = OrderGroup(flatIndices);
-    const std::vector<ProcessedEdge> verticalOrdered = OrderGroup(verticalIndices);
-    sortedEdges = flatOrdered;
-    sortedEdges.insert(sortedEdges.end(), verticalOrdered.begin(), verticalOrdered.end());
+    sortedEdges = OrderGroup(allIndices);
     if (sortedEdges.empty()) {
         return false;
     }
 
     // ============================================================
-    //  阶段 B：聚类
-    //  平焊：上一条终点与下一条起点距离 ≤ kCoincidentTol 才并入同一簇。
-    //        首尾不相接的平焊缝各自成簇，不再用 30 mm 间隙并簇。
-    //  立焊：每条单独成簇，并且整体排在平焊簇之后。
+    //  阶段 B：按排序结果聚类，保留平焊和立焊的交错顺序
+    //  平焊：上一条终点与下一条起点距离 ≤ 20 mm 则并入同一簇。
+    //  立焊：遇到就切断当前平焊簇，每条单独成簇，留在序列原位置。
     // ============================================================
 
     std::vector<ProcessedEdge> pendingFlat;
@@ -1973,21 +1972,22 @@ bool WeldingPathBuilder::SortEdges(const std::vector<TopoDS_Edge>& weldEdges,
         pendingFlat.clear();
     };
 
-    for (const ProcessedEdge& pe : flatOrdered) {
+    for (const ProcessedEdge& pe : sortedEdges) {
+        if (IsVerticalEdge(pe.StartPoint, pe.EndPoint)) {
+            FlushPendingFlat();
+            EdgeCluster cluster;
+            cluster.isVertical = true;
+            cluster.edges.push_back(pe);
+            sortedClusters.push_back(std::move(cluster));
+            continue;
+        }
         if (!pendingFlat.empty()
-            && pendingFlat.back().EndPoint.Distance(pe.StartPoint) > kCoincidentTol) {
+            && pendingFlat.back().EndPoint.Distance(pe.StartPoint) > kFlatJoinMm) {
             FlushPendingFlat();
         }
         pendingFlat.push_back(pe);
     }
     FlushPendingFlat();
-
-    for (const ProcessedEdge& pe : verticalOrdered) {
-        EdgeCluster cluster;
-        cluster.isVertical = true;
-        cluster.edges.push_back(pe);
-        sortedClusters.push_back(std::move(cluster));
-    }
 
     return !sortedClusters.empty();
 }
