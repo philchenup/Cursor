@@ -119,7 +119,6 @@ void IKWorker::doSolve(const IKSolveParams& params)
 
         int successCount = 0, failCount = 0, lastReportedPercent = -1;
 
-        // —— 单点 IK 求解 lambda：成功/失败计数、地轨窗口、轨迹写入都封装在内 ——
         // 返回 false 表示用户请求停止（外层需要尽快退出）
         auto restoreRail = [&]() {
             if (railJoint)
@@ -129,12 +128,13 @@ void IKWorker::doSolve(const IKSolveParams& params)
             }
         };
 
-        auto solveOne = [&](const rl::math::Transform& T_world_tcp) -> bool
+        // 只求一个点的关节，不写入执行轨迹。成功时 qOut 为该点的关节解。
+        auto solveConfiguration = [&](const rl::math::Transform& T_world_tcp,
+            const rl::math::Vector& qSeed,
+            rl::math::Vector& qOut) -> bool
             {
-                if (m_stopRequested.load())
-                    return false;
-
                 const rl::math::Transform T_world_flange = T_world_tcp * T_tcp_to_flange;
+                rl::math::Vector qTry = qSeed;
 
                 if (railJoint && railJoint->getDofPosition() == 1)
                 {
@@ -155,10 +155,10 @@ void IKWorker::doSolve(const IKSolveParams& params)
                     railMax << hi;
                     railJoint->setMinimum(railMin);
                     railJoint->setMaximum(railMax);
-                    q_current(0) = std::min(std::max(q_current(0), lo), hi);
+                    qTry(0) = std::min(std::max(qTry(0), lo), hi);
                 }
 
-                kinematic->setPosition(q_current);
+                kinematic->setPosition(qTry);
                 kinematic->forwardPosition();
 
                 rl::mdl::JacobianInverseKinematics ik(kinematic.get());
@@ -168,13 +168,26 @@ void IKWorker::doSolve(const IKSolveParams& params)
                 ik.addGoal(T_world_flange, 0);
 
                 const bool solved = ik.solve();
-                const rl::math::Vector q = kinematic->getPosition();
-                kinematic->setPosition(q);
+                qOut = kinematic->getPosition();
+                kinematic->setPosition(qOut);
                 kinematic->forwardPosition();
                 const double poseError =
                     kinematic->getOperationalPosition(0).toDelta(T_world_flange).norm();
+                if (qOut.allFinite() && (solved || poseError < 1.0e-3))
+                    return true;
 
-                if (q.allFinite() && (solved || poseError < 1.0e-3))
+                kinematic->setPosition(qSeed);
+                kinematic->forwardPosition();
+                return false;
+            };
+
+        auto solveOne = [&](const rl::math::Transform& T_world_tcp) -> bool
+            {
+                if (m_stopRequested.load())
+                    return false;
+
+                rl::math::Vector q;
+                if (solveConfiguration(T_world_tcp, q_current, q))
                 {
                     q_current = q;
                     jointTrajectory.push_back(q_current);
@@ -190,9 +203,10 @@ void IKWorker::doSolve(const IKSolveParams& params)
                 return true;
             };
 
-        // 间距超过 0.1 m：先求终点关节，再用规划器做带碰撞检测的过渡。
+        // 当前点关节 = 规划起点，下一点关节 = 规划终点。
+        // 优化后的路径写入 jointTrajectory，作为这两点之间的执行轨迹。
         // 返回 false 时已经发出 failed 或 aborted，调用方直接 return。
-        auto planCollisionGap = [&](const rl::math::Transform& T_world_tcp) -> bool
+        auto planCollisionGap = [&](const rl::math::Transform& T_next_tcp) -> bool
             {
                 if (m_stopRequested.load())
                 {
@@ -213,44 +227,31 @@ void IKWorker::doSolve(const IKSolveParams& params)
                     return false;
                 }
 
-                const rl::math::Vector qFrom = q_current;
-                const rl::math::Transform T_world_flange = T_world_tcp * T_tcp_to_flange;
-
-                restoreRail();
-                kinematic->setPosition(qFrom);
-                kinematic->forwardPosition();
-
-                rl::mdl::JacobianInverseKinematics ik(kinematic.get());
-                ik.setDuration(std::chrono::milliseconds(std::max(params.timeoutMs, 1)));
-                ik.setRandomRestarts(0);
-                ik.setEpsilon(1.0e-4);
-                ik.addGoal(T_world_flange, 0);
-
-                const bool solved = ik.solve();
-                rl::math::Vector qGoal = kinematic->getPosition();
-                kinematic->setPosition(qGoal);
-                kinematic->forwardPosition();
-                const double poseError =
-                    kinematic->getOperationalPosition(0).toDelta(T_world_flange).norm();
-                restoreRail();
-
-                if (!(qGoal.allFinite() && (solved || poseError < 1.0e-3)))
+                const rl::math::Vector qStart = q_current;
+                rl::math::Vector qGoal;
+                if (!solveConfiguration(T_next_tcp, qStart, qGoal))
                 {
-                    kinematic->setPosition(qFrom);
+                    restoreRail();
+                    kinematic->setPosition(qStart);
                     kinematic->forwardPosition();
                     m_running.store(false);
-                    emit failed(QStringLiteral("IK failed before collision-checked transit."));
+                    emit failed(QStringLiteral("IK failed for the next point before trajectory planning."));
                     return false;
                 }
+
+                // 求下一点时地轨被收到该点附近。规划前放开，才能从当前点关节走到下一点关节。
+                restoreRail();
+                kinematic->setPosition(qStart);
+                kinematic->forwardPosition();
 
                 std::vector<rl::math::Vector> planned;
                 QString planError;
                 {
                     QMutexLocker lock(&mw->mutex);
                     if (!mw->start)
-                        mw->start = std::make_shared<rl::math::Vector>(qFrom);
+                        mw->start = std::make_shared<rl::math::Vector>(qStart);
                     else
-                        *mw->start = qFrom;
+                        *mw->start = qStart;
                     if (!mw->goal)
                         mw->goal = std::make_shared<rl::math::Vector>(qGoal);
                     else
@@ -305,15 +306,16 @@ void IKWorker::doSolve(const IKSolveParams& params)
                 }
                 if (!planError.isEmpty())
                 {
-                    kinematic->setPosition(qFrom);
+                    kinematic->setPosition(qStart);
                     kinematic->forwardPosition();
                     m_running.store(false);
                     emit failed(planError);
                     return false;
                 }
 
+                // 当前点已经在执行轨迹里。这里只补它到下一点之间的优化轨迹，并记下下一点关节。
                 const bool skipFirst = !planned.empty()
-                    && (planned.front() - qFrom).cwiseAbs().maxCoeff() <= 1.0e-6;
+                    && (planned.front() - qStart).cwiseAbs().maxCoeff() <= 1.0e-6;
                 for (std::size_t i = skipFirst ? 1 : 0; i < planned.size(); ++i)
                     jointTrajectory.push_back(planned[i]);
                 if (jointTrajectory.empty()
@@ -358,7 +360,7 @@ void IKWorker::doSolve(const IKSolveParams& params)
 
                 if (dist > kPlanGapMm)
                 {
-                    // 超过 0.1 m：轨迹规划 + 碰撞检测，终点已含在规划结果里。
+                    // 超过 0.1 m：当前点关节 → 下一点关节，优化轨迹写入执行轨迹。
                     if (!planCollisionGap(T_curr_tcp))
                         return;
                     T_prev_tcp = T_curr_tcp;
