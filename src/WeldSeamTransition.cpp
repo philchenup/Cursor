@@ -1814,8 +1814,11 @@ bool WeldingPathBuilder::SortEdges(const std::vector<TopoDS_Edge>& weldEdges,
                 else { outStart = p2; outEnd = p1; }
             }
             else {
-                if (p1.Y() <= p2.Y()) { outStart = p1; outEnd = p2; }
-                else { outStart = p2; outEnd = p1; }
+                // 起点取 Y 更小的端点；Y 相等时取 X 更小的端点。
+                const bool p2First = p2.Y() < p1.Y() - 1.0e-9
+                    || (std::abs(p1.Y() - p2.Y()) <= 1.0e-9 && p2.X() < p1.X());
+                if (p2First) { outStart = p2; outEnd = p1; }
+                else { outStart = p1; outEnd = p2; }
             }
         };
 
@@ -1833,7 +1836,7 @@ bool WeldingPathBuilder::SortEdges(const std::vector<TopoDS_Edge>& weldEdges,
 
     // ============================================================
     //  阶段 A：平焊、立焊放在同一条序列里排序
-    //  起点取全部焊缝里 Y 最小的边（Y 相同再取更低的 Z）。
+    //  起点取全部焊缝里 Y 最小的边（Y 相同再取 X 更小的端点）。
     //  平焊端点距离 ≤ 20 mm 则连上，并且优先连接平焊；
     //  没有可接的平焊时，立焊仍只在端点贴上时才接。
     //  同类型路口取更低的 Z，断口再跳到最近的未用边。
@@ -1858,15 +1861,20 @@ bool WeldingPathBuilder::SortEdges(const std::vector<TopoDS_Edge>& weldEdges,
 
         size_t currentLocal = 0;
         double bestY = std::numeric_limits<double>::max();
-        double bestZ = std::numeric_limits<double>::max();
+        double bestX = std::numeric_limits<double>::max();
         for (size_t i = 0; i < indices.size(); ++i) {
             gp_Pnt p1, p2;
             GetEdgePoints(edgeAt(i), p1, p2);
-            const double y = std::min(p1.Y(), p2.Y());
-            const double z = std::min(p1.Z(), p2.Z());
-            if (y < bestY - 1.0e-9 || (std::abs(y - bestY) <= 1.0e-9 && z < bestZ)) {
+            gp_Pnt startPt = p1;
+            if (p2.Y() < p1.Y() - 1.0e-9
+                || (std::abs(p1.Y() - p2.Y()) <= 1.0e-9 && p2.X() < p1.X())) {
+                startPt = p2;
+            }
+            const double y = startPt.Y();
+            const double x = startPt.X();
+            if (y < bestY - 1.0e-9 || (std::abs(y - bestY) <= 1.0e-9 && x < bestX)) {
                 bestY = y;
-                bestZ = z;
+                bestX = x;
                 currentLocal = i;
             }
         }
