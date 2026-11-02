@@ -1004,6 +1004,91 @@ bool WeldingPathBuilder::BuildWeldingTrajectory(const TopoDS_Shape& selectShape,
             return false;
         }
         trajectory.swap(merged);
+
+        // 相邻点间距超过 0.1 m 时，沿世界 X 方向做三次样条，按 spacingMm 插入中间点。
+        if (trajectory.size() >= 2) {
+            constexpr double kSplineGapMm = 100.0;
+            auto blendDir = [](const gp_Dir& from, const gp_Dir& to, double t) -> gp_Dir {
+                gp_Vec toward(to);
+                if (gp_Vec(from).Dot(toward) < 0.0) {
+                    toward.Reverse();
+                }
+                gp_Vec mixed = gp_Vec(from) * (1.0 - t) + toward * t;
+                if (mixed.Magnitude() <= 1.0e-12) {
+                    return from;
+                }
+                return gp_Dir(mixed);
+            };
+            auto hermitePoint = [](const gp_Pnt& p0, const gp_Pnt& p1,
+                const gp_Vec& m0, const gp_Vec& m1, double t) -> gp_Pnt {
+                const double t2 = t * t;
+                const double t3 = t2 * t;
+                const double h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+                const double h10 = t3 - 2.0 * t2 + t;
+                const double h01 = -2.0 * t3 + 3.0 * t2;
+                const double h11 = t3 - t2;
+                const gp_Vec xyz = gp_Vec(p0.XYZ()) * h00 + m0 * h10
+                    + gp_Vec(p1.XYZ()) * h01 + m1 * h11;
+                return gp_Pnt(xyz.XYZ());
+            };
+
+            std::vector<DiscretePoint> filled;
+            filled.reserve(trajectory.size());
+            filled.push_back(trajectory.front());
+            for (std::size_t i = 0; i + 1 < trajectory.size(); ++i) {
+                const DiscretePoint& a = trajectory[i];
+                const DiscretePoint& b = trajectory[i + 1];
+                const double chord = a.position.Distance(b.position);
+                if (chord > kSplineGapMm && spacingMm > Precision::Confusion()) {
+                    gp_Vec xTangent(1.0, 0.0, 0.0);
+                    if (b.position.X() < a.position.X()) {
+                        xTangent.Reverse();
+                    }
+                    if (std::abs(b.position.X() - a.position.X()) <= 1.0e-6) {
+                        xTangent = gp_Vec(a.position, b.position);
+                        if (xTangent.Magnitude() > 1.0e-9) {
+                            xTangent.Normalize();
+                        }
+                        else {
+                            xTangent = gp_Vec(1.0, 0.0, 0.0);
+                        }
+                    }
+                    const gp_Vec tangent = xTangent * (chord / 3.0);
+                    const int segmentCount = std::min(
+                        10000,
+                        std::max(1, static_cast<int>(std::ceil(chord / spacingMm))));
+                    for (int step = 1; step < segmentCount; ++step) {
+                        const double t = static_cast<double>(step) / static_cast<double>(segmentCount);
+                        DiscretePoint mid = a;
+                        mid.position = hermitePoint(a.position, b.position, tangent, tangent, t);
+                        const gp_Dir xDir = blendDir(a.xDir, b.xDir, t);
+                        gp_Vec zVec(blendDir(a.zDir, b.zDir, t));
+                        zVec -= gp_Vec(xDir) * zVec.Dot(gp_Vec(xDir));
+                        if (zVec.Magnitude() <= 1.0e-12) {
+                            zVec = gp_Vec(0.0, 0.0, 1.0);
+                            zVec -= gp_Vec(xDir) * zVec.Dot(gp_Vec(xDir));
+                        }
+                        if (zVec.Magnitude() <= 1.0e-12) {
+                            filled.push_back(mid);
+                            continue;
+                        }
+                        zVec.Normalize();
+                        const gp_Vec yVec = zVec.Crossed(gp_Vec(xDir));
+                        if (yVec.Magnitude() <= 1.0e-12) {
+                            filled.push_back(mid);
+                            continue;
+                        }
+                        mid.xDir = xDir;
+                        mid.yDir = gp_Dir(yVec);
+                        mid.zDir = gp_Dir(zVec);
+                        filled.push_back(mid);
+                    }
+                }
+                filled.push_back(b);
+            }
+            trajectory.swap(filled);
+        }
+
         if (clusterTrajectories != nullptr) {
             clusterTrajectories->swap(segments);
         }
