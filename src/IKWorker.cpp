@@ -13,6 +13,8 @@
 #include <rl/mdl/Joint.h>
 #include <rl/mdl/JacobianInverseKinematics.h>
 #include <rl/math/Unit.h>
+#include <Eigen/Geometry>
+
 #include <rl/plan/Optimizer.h>
 #include <rl/plan/Planner.h>
 #include <rl/plan/SimpleModel.h>
@@ -94,7 +96,11 @@ void IKWorker::doSolve(const IKSolveParams& params)
 
         emit started();
 
-        const rl::math::Transform T_tcp_to_flange = params.T_flange_to_tcp.inverse();
+        const rl::math::Transform T_flange_to_tcp = params.T_flange_to_tcp;
+        const rl::math::Transform T_tcp_to_flange = T_flange_to_tcp.inverse();
+        const double railWindow = params.railWindow;
+        // 焊缝点是毫米。超过 0.1 m 的空隙改用带碰撞检测的轨迹规划。
+        constexpr double kPlanGapMm = 100.0;
 
         rl::mdl::Joint* railJoint = (params.constrainRail && dof >= 1) ? kinematic->getJoint(0) : nullptr;
         rl::math::Vector railMin0, railMax0;
@@ -113,46 +119,215 @@ void IKWorker::doSolve(const IKSolveParams& params)
 
         int successCount = 0, failCount = 0, lastReportedPercent = -1;
 
-        // —— 单点 IK 求解 lambda：成功/失败计数、地轨窗口、轨迹写入都封装在内 ——
         // 返回 false 表示用户请求停止（外层需要尽快退出）
-        auto solveOne = [&](const rl::math::Transform& T_world_tcp) -> bool
+        auto restoreRail = [&]() {
+            if (railJoint)
             {
-                if (m_stopRequested.load())
-                    return false;
+                railJoint->setMinimum(railMin0);
+                railJoint->setMaximum(railMax0);
+            }
+        };
 
-                rl::math::Transform T_world_flange = T_world_tcp * T_tcp_to_flange;
+        // 只求一个点的关节，不写入执行轨迹。成功时 qOut 为该点的关节解。
+        auto solveConfiguration = [&](const rl::math::Transform& T_world_tcp,
+            const rl::math::Vector& qSeed,
+            rl::math::Vector& qOut) -> bool
+            {
+                const rl::math::Transform T_world_flange = T_world_tcp * T_tcp_to_flange;
+                rl::math::Vector qTry = qSeed;
 
-                // 地轨约束（直接操作 Joint(0)）
                 if (railJoint && railJoint->getDofPosition() == 1)
                 {
-                    double lo = std::max(railMin0(0), T_world_tcp.translation().y());
-                    double hi = std::min(railMax0(0), T_world_tcp.translation().y());
+                    const double y = std::min(
+                        std::max(T_world_tcp.translation().y(), railMin0(0)),
+                        railMax0(0));
+                    constexpr double kRailEps = 1.0e-4;
+                    double lo = std::max(railMin0(0), y - kRailEps);
+                    double hi = std::min(railMax0(0), y + kRailEps);
+                    if (lo > hi)
+                    {
+                        lo = y;
+                        hi = y;
+                    }
 
                     rl::math::Vector railMin(1), railMax(1);
                     railMin << lo;
                     railMax << hi;
                     railJoint->setMinimum(railMin);
                     railJoint->setMaximum(railMax);
+                    qTry(0) = std::min(std::max(qTry(0), lo), hi);
                 }
 
+                kinematic->setPosition(qTry);
+                kinematic->forwardPosition();
+
                 rl::mdl::JacobianInverseKinematics ik(kinematic.get());
-                ik.setDuration(std::chrono::milliseconds(params.timeoutMs));
+                ik.setDuration(std::chrono::milliseconds(std::max(params.timeoutMs, 1)));
+                ik.setRandomRestarts(0);
+                ik.setEpsilon(1.0e-4);
                 ik.addGoal(T_world_flange, 0);
 
-                kinematic->setPosition(q_current);
-                bool ok = ik.solve();
+                const bool solved = ik.solve();
+                qOut = kinematic->getPosition();
+                kinematic->setPosition(qOut);
+                kinematic->forwardPosition();
+                const double poseError =
+                    kinematic->getOperationalPosition(0).toDelta(T_world_flange).norm();
+                if (qOut.allFinite() && (solved || poseError < 1.0e-3))
+                    return true;
 
-                if (ok)
+                kinematic->setPosition(qSeed);
+                kinematic->forwardPosition();
+                return false;
+            };
+
+        auto solveOne = [&](const rl::math::Transform& T_world_tcp) -> bool
+            {
+                if (m_stopRequested.load())
+                    return false;
+
+                rl::math::Vector q;
+                if (solveConfiguration(T_world_tcp, q_current, q))
                 {
-                    q_current = kinematic->getPosition();
+                    q_current = q;
                     jointTrajectory.push_back(q_current);
                     ++successCount;
                 }
                 else
                 {
+                    kinematic->setPosition(q_current);
+                    kinematic->forwardPosition();
                     ++failCount;
-                    jointTrajectory.push_back(q_current); // 沿用上一个解，保持轨迹长度
+                    jointTrajectory.push_back(q_current);
                 }
+                return true;
+            };
+
+        // 当前点关节 = 规划起点，下一点关节 = 规划终点。
+        // 优化后的路径写入 jointTrajectory，作为这两点之间的执行轨迹。
+        // 返回 false 时已经发出 failed 或 aborted，调用方直接 return。
+        auto planCollisionGap = [&](const rl::math::Transform& T_next_tcp) -> bool
+            {
+                if (m_stopRequested.load())
+                {
+                    restoreRail();
+                    kinematic->setPosition(q_current);
+                    kinematic->forwardPosition();
+                    m_running.store(false);
+                    emit aborted();
+                    return false;
+                }
+
+                MainWindow* mw = MainWindow::instance();
+                if (!mw || !mw->planner || !mw->model)
+                {
+                    restoreRail();
+                    m_running.store(false);
+                    emit failed(QStringLiteral("Planner is not available for collision-checked transit."));
+                    return false;
+                }
+
+                const rl::math::Vector qStart = q_current;
+                rl::math::Vector qGoal;
+                if (!solveConfiguration(T_next_tcp, qStart, qGoal))
+                {
+                    restoreRail();
+                    kinematic->setPosition(qStart);
+                    kinematic->forwardPosition();
+                    m_running.store(false);
+                    emit failed(QStringLiteral("IK failed for the next point before trajectory planning."));
+                    return false;
+                }
+
+                // 求下一点时地轨被收到该点附近。规划前放开，才能从当前点关节走到下一点关节。
+                restoreRail();
+                kinematic->setPosition(qStart);
+                kinematic->forwardPosition();
+
+                std::vector<rl::math::Vector> planned;
+                QString planError;
+                {
+                    QMutexLocker lock(&mw->mutex);
+                    if (!mw->start)
+                        mw->start = std::make_shared<rl::math::Vector>(qStart);
+                    else
+                        *mw->start = qStart;
+                    if (!mw->goal)
+                        mw->goal = std::make_shared<rl::math::Vector>(qGoal);
+                    else
+                        *mw->goal = qGoal;
+
+                    mw->planner->start = mw->start.get();
+                    mw->planner->goal = mw->goal.get();
+                    mw->planner->viewer = nullptr;
+
+                    // verify/solve 会用场景里的工件做碰撞检测，碰撞或无解都算失败。
+                    if (!mw->planner->verify() || !mw->planner->solve())
+                    {
+                        planError = QStringLiteral(
+                            "Planner failed: gap longer than 0.1 m is in collision or has no path.");
+                    }
+                    else
+                    {
+                        rl::plan::VectorList sparse = mw->planner->getPath();
+                        if (mw->optimizer)
+                        {
+                            mw->optimizer->setViewer(nullptr);
+                            mw->optimizer->process(sparse);
+                        }
+                        if (sparse.empty())
+                        {
+                            planError = QStringLiteral("Planner returned an empty path.");
+                        }
+                        else
+                        {
+                            const double delta = 0.02;
+                            rl::math::Vector inter(mw->model->getDofPosition());
+                            planned.push_back(*sparse.begin());
+
+                            rl::plan::VectorList::iterator it = sparse.begin();
+                            rl::plan::VectorList::iterator jt = sparse.begin();
+                            if (jt != sparse.end())
+                                ++jt;
+                            for (; it != sparse.end() && jt != sparse.end(); ++it, ++jt)
+                            {
+                                const rl::math::Real steps =
+                                    std::ceil(mw->model->distance(*it, *jt) / delta);
+                                const rl::math::Real n = (steps < 1.0) ? 1.0 : steps;
+                                for (std::size_t s = 1; s < static_cast<std::size_t>(n) + 1; ++s)
+                                {
+                                    mw->model->interpolate(
+                                        *it, *jt, static_cast<rl::math::Real>(s) / n, inter);
+                                    planned.push_back(inter);
+                                }
+                            }
+                        }
+                    }
+                }
+                if (!planError.isEmpty())
+                {
+                    kinematic->setPosition(qStart);
+                    kinematic->forwardPosition();
+                    m_running.store(false);
+                    emit failed(planError);
+                    return false;
+                }
+
+                // 当前点已经在执行轨迹里。这里只补它到下一点之间的优化轨迹，并记下下一点关节。
+                const bool skipFirst = !planned.empty()
+                    && (planned.front() - qStart).cwiseAbs().maxCoeff() <= 1.0e-6;
+                for (std::size_t i = skipFirst ? 1 : 0; i < planned.size(); ++i)
+                    jointTrajectory.push_back(planned[i]);
+                if (jointTrajectory.empty()
+                    || (jointTrajectory.back() - qGoal).cwiseAbs().maxCoeff() > 1.0e-6)
+                {
+                    jointTrajectory.push_back(qGoal);
+                }
+
+                q_current = qGoal;
+                kinematic->setPosition(q_current);
+                kinematic->forwardPosition();
+                ++successCount;
                 return true;
             };
 
@@ -181,12 +356,31 @@ void IKWorker::doSolve(const IKSolveParams& params)
             {
                 const rl::math::Vector3 p0 = T_prev_tcp.translation();
                 const rl::math::Vector3 p1 = T_curr_tcp.translation();
-                const double dist = (p1 - p0).norm();
+                const double dx = p1.x() - p0.x();
+                const double dy = p1.y() - p0.y();
+                const double dist = std::sqrt(dx * dx + dy * dy);
 
-                if (dist > params.railWindow)
+                if (dist > kPlanGapMm)
+                {
+                    // 超过 0.1 m：当前点关节 → 下一点关节，优化轨迹写入执行轨迹。
+                    if (!planCollisionGap(T_curr_tcp))
+                        return;
+                    T_prev_tcp = T_curr_tcp;
+                    hasPrev = true;
+
+                    int percent = static_cast<int>((k + 1) * 100LL / totalPoints);
+                    if (percent != lastReportedPercent)
+                    {
+                        emit progress(percent);
+                        lastReportedPercent = percent;
+                    }
+                    continue;
+                }
+
+                if (dist > railWindow)
                 {
                     // 段数：保证每一段的步长 <= railWindow
-                    const int segments = static_cast<int>(std::ceil(dist / params.railWindow));
+                    const int segments = static_cast<int>(std::ceil(dist / railWindow));
                     // 姿态用四元数 SLERP，避免方向向量线性插值破坏正交性
                     const Eigen::Quaterniond q0(T_prev_tcp.linear());
                     const Eigen::Quaterniond q1(T_curr_tcp.linear());
