@@ -14,6 +14,7 @@
 #include <rl/math/Unit.h>
 #include <rl/plan/Optimizer.h>
 #include <rl/plan/Planner.h>
+#include <rl/plan/Rrt.h>
 #include <rl/plan/SimpleModel.h>
 
 namespace {
@@ -311,14 +312,8 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
 
     rl::math::Vector qFrozen;
     bool sceneFrozen = false;
-
-    struct SavedLimit
-    {
-        rl::mdl::Joint* joint;
-        rl::math::Vector minimum;
-        rl::math::Vector maximum;
-    };
-    std::vector<SavedLimit> savedLimits;
+    rl::mdl::Joint* railJoint = nullptr;
+    rl::math::Vector railMin0, railMax0;
 
     try
     {
@@ -327,54 +322,38 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
             throw std::runtime_error("Kinematic not set. Call setKinematic() before doReturnHome().");
 
         const std::size_t dof = kinematic->getDof();
-        if (params.q_home.size() != static_cast<Eigen::Index>(dof)
-            || params.q_current.size() != static_cast<Eigen::Index>(dof))
-            throw std::runtime_error("q_home or q_current size mismatch with model DOF.");
+        if (params.q_home.size() != static_cast<Eigen::Index>(dof))
+            throw std::runtime_error("q_home size mismatch with model DOF.");
 
         emit started();
 
+        const rl::math::Vector q_current = kinematic->getPosition();
+        if (q_current.size() != static_cast<Eigen::Index>(dof))
+            throw std::runtime_error("Current joint vector size mismatch with model DOF.");
+        qFrozen = q_current;
+        sceneFrozen = true;
+
         const rl::math::Transform T_flange_to_tcp = params.T_flange_to_tcp;
         const rl::math::Transform T_tcp_to_flange = T_flange_to_tcp.inverse();
-        const double railStep = params.railStepLen;
+        const double jointStep = (params.jointStepRad > 0.0) ? params.jointStepRad : 0.02;
+        const double railStep = (params.railStepLen > 0.0) ? params.railStepLen : 0.01;
+        constexpr double kRetractMeter = 0.1;
+        constexpr double kFlangeLiftMeter = 0.2;
 
-        for (std::size_t i = 0; i < kinematic->getJoints(); ++i)
+        railJoint = kinematic->getJoint(0);
+        if (railJoint)
         {
-            rl::mdl::Joint* joint = kinematic->getJoint(i);
-            savedLimits.push_back({ joint, joint->getMinimum(), joint->getMaximum() });
+            railMin0 = railJoint->getMinimum();
+            railMax0 = railJoint->getMaximum();
         }
 
-        auto restoreLimits = [&]() {
-            for (const SavedLimit& item : savedLimits)
+        auto restoreRail = [&]() {
+            if (railJoint)
             {
-                item.joint->setMinimum(item.minimum);
-                item.joint->setMaximum(item.maximum);
+                railJoint->setMinimum(railMin0);
+                railJoint->setMaximum(railMax0);
             }
-            };
-
-        auto lockJoints = [&](const rl::math::Vector& q, bool lockRail, bool lockArm) {
-            std::size_t qIndex = 0;
-            for (std::size_t i = 0; i < kinematic->getJoints(); ++i)
-            {
-                rl::mdl::Joint* joint = kinematic->getJoint(i);
-                const Eigen::Index n = static_cast<Eigen::Index>(joint->getDofPosition());
-                const bool lock = (i == 0) ? lockRail : lockArm;
-                if (lock)
-                {
-                    rl::math::Vector lo(n), hi(n);
-                    for (Eigen::Index k = 0; k < n; ++k)
-                    {
-                        const double value = q(static_cast<Eigen::Index>(qIndex) + k);
-                        lo(k) = value - 1e-6;
-                        hi(k) = value + 1e-6;
-                    }
-                    joint->setMinimum(lo);
-                    joint->setMaximum(hi);
-                }
-                qIndex += static_cast<std::size_t>(n);
-            }
-            };
-
-        qFrozen = kinematic->getPosition();
+        };
 
         int lastReportedPercent = -1;
         auto reportProgress = [&](int percent) {
@@ -384,7 +363,7 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
                 emit progress(percent);
                 lastReportedPercent = percent;
             }
-            };
+        };
 
         auto toolXyz = [&](const rl::math::Vector& q) -> rl::math::Vector3 {
             kinematic->setPosition(q);
@@ -392,234 +371,221 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
             const rl::math::Transform T_tcp =
                 kinematic->getOperationalPosition(0) * T_flange_to_tcp;
             return T_tcp.translation();
-            };
-
-        const double jointStep = (params.jointStepRad > 0.0) ? params.jointStepRad : 0.02;
+        };
 
         auto appendLerp = [&](std::vector<rl::math::Vector>& path,
-            const rl::math::Vector& a,
-            const rl::math::Vector& b,
+            const rl::math::Vector& aIn,
+            const rl::math::Vector& bIn,
             double step)
+        {
+            const rl::math::Vector a = aIn;
+            const rl::math::Vector b = bIn;
+            const double maxDq = (b - a).cwiseAbs().maxCoeff();
+            const int n = (maxDq <= 1e-12)
+                ? 0
+                : std::max(1, static_cast<int>(std::ceil(maxDq / step)));
+            path.reserve(path.size() + static_cast<std::size_t>(n));
+            for (int i = 1; i <= n; ++i)
             {
-                const double maxDq = (b - a).cwiseAbs().maxCoeff();
-                const int n = (maxDq <= 1e-12)
-                    ? 0
-                    : std::max(1, static_cast<int>(std::ceil(maxDq / step)));
-                for (int i = 1; i <= n; ++i)
-                {
-                    const double t = static_cast<double>(i) / static_cast<double>(n);
-                    path.push_back((1.0 - t) * a + t * b);
-                }
-            };
-
-        enum class PoseState { Free, Invalid, Colliding };
-        auto poseState = [&](const rl::math::Vector& q) -> PoseState {
-            QMutexLocker lock(&mw->mutex);
-            if (!mw->model->isValid(q))
-                return PoseState::Invalid;
-            mw->model->setPosition(q);
-            mw->model->updateFrames(true);
-            return mw->model->isColliding() ? PoseState::Colliding : PoseState::Free;
-            };
-
-        auto planSegment = [&](const rl::math::Vector& from,
-            const rl::math::Vector& to,
-            double sampleStep,
-            std::vector<rl::math::Vector>& path) -> bool
-            {
-                QMutexLocker lock(&mw->mutex);
-
-                if (!mw->start)
-                    mw->start = std::make_shared<rl::math::Vector>(from);
-                else
-                    *mw->start = from;
-                if (!mw->goal)
-                    mw->goal = std::make_shared<rl::math::Vector>(to);
-                else
-                    *mw->goal = to;
-
-                mw->planner->start = mw->start.get();
-                mw->planner->goal = mw->goal.get();
-                mw->planner->viewer = nullptr;
-
-                if (rl::plan::Rrt* rrt = dynamic_cast<rl::plan::Rrt*>(mw->planner.get()))
-                    rrt->reset();
-
-                if (!mw->planner->verify())
-                    return false;
-                if (!mw->planner->solve())
-                    return false;
-
-                rl::plan::VectorList sparse = mw->planner->getPath();
-                if (mw->optimizer)
-                {
-                    mw->optimizer->setViewer(nullptr);
-                    mw->optimizer->process(sparse);
-                }
-                if (sparse.empty())
-                    return false;
-
-                const double delta = (sampleStep > 0.0) ? sampleStep : jointStep;
-                rl::math::Vector inter(mw->model->getDofPosition());
-                if (path.empty()
-                    || (path.back() - *sparse.begin()).cwiseAbs().maxCoeff() > 1e-6)
-                {
-                    path.push_back(*sparse.begin());
-                }
-
-                rl::plan::VectorList::iterator it = sparse.begin();
-                rl::plan::VectorList::iterator jt = sparse.begin();
-                if (jt != sparse.end())
-                    ++jt;
-                for (; it != sparse.end() && jt != sparse.end(); ++it, ++jt)
-                {
-                    const rl::math::Real steps = std::ceil(mw->model->distance(*it, *jt) / delta);
-                    const rl::math::Real n = (steps < 1.0) ? 1.0 : steps;
-                    for (std::size_t k = 1; k < static_cast<std::size_t>(n) + 1; ++k)
-                    {
-                        mw->model->interpolate(*it, *jt, static_cast<rl::math::Real>(k) / n, inter);
-                        path.push_back(inter);
-                    }
-                }
-                return true;
-            };
-
-        // 当前焊接姿态若插在工件里，先沿工具 Z 抬离，地轨不动
-        auto liftOff = [&](rl::math::Vector& qFree) -> bool {
-            const double liftsMeter[] = { 0.02, 0.05, 0.08, 0.12, 0.20 };
-            const double signs[] = { -1.0, 1.0 };
-            kinematic->setPosition(params.q_current);
-            kinematic->forwardPosition();
-            const rl::math::Transform T0 =
-                kinematic->getOperationalPosition(0) * T_flange_to_tcp;
-            for (double sign : signs)
-            {
-                for (double liftMeter : liftsMeter)
-                {
-                    rl::math::Transform tcp = T0;
-                    tcp.translation() += sign * T0.linear().col(2) * liftMeter;
-
-                    rl::mdl::JacobianInverseKinematics ik(kinematic.get());
-                    ik.setDuration(std::chrono::milliseconds(params.timeoutMs));
-                    ik.addGoal(tcp * T_tcp_to_flange, 0);
-                    kinematic->setPosition(params.q_current);
-                    if (!ik.solve())
-                        continue;
-
-                    rl::math::Vector q = kinematic->getPosition();
-                    q(0) = params.q_current(0);
-                    if (poseState(q) == PoseState::Free)
-                    {
-                        qFree = q;
-                        return true;
-                    }
-                }
+                const double t = static_cast<double>(i) / static_cast<double>(n);
+                rl::math::Vector q = (1.0 - t) * a + t * b;
+                path.push_back(q);
             }
-            return false;
-            };
+        };
+
+        kinematic->setPosition(q_current);
+        kinematic->forwardPosition();
+        rl::math::Transform T_tcp =
+            kinematic->getOperationalPosition(0) * T_flange_to_tcp;
+        T_tcp.translation() -= T_tcp.linear().col(2) * kRetractMeter;
+
+        double railNow = q_current(0);
+        if (railJoint && railJoint->getDofPosition() == 1)
+        {
+            railNow = std::min(std::max(q_current(0), railMin0(0)), railMax0(0));
+            constexpr double eps = 1.0e-4;
+            double lo = std::max(railMin0(0), railNow - eps);
+            double hi = std::min(railMax0(0), railNow + eps);
+            if (lo > hi)
+            {
+                lo = railNow;
+                hi = railNow;
+            }
+            rl::math::Vector railMin(1), railMax(1);
+            railMin << lo;
+            railMax << hi;
+            railJoint->setMinimum(railMin);
+            railJoint->setMaximum(railMax);
+        }
+
+        rl::math::Vector qSeed = q_current;
+        qSeed(0) = railNow;
+        kinematic->setPosition(qSeed);
+        kinematic->forwardPosition();
+
+        rl::mdl::JacobianInverseKinematics ik(kinematic.get());
+        ik.setDuration(std::chrono::milliseconds(std::max(params.timeoutMs, 1)));
+        ik.setRandomRestarts(0);
+        ik.setEpsilon(1.0e-4);
+        ik.addGoal(T_tcp * T_tcp_to_flange, 0);
+        const bool ikOk = ik.solve();
+
+        rl::math::Vector qRetract = kinematic->getPosition();
+        kinematic->setPosition(qRetract);
+        kinematic->forwardPosition();
+        const double poseError =
+            kinematic->getOperationalPosition(0).toDelta(T_tcp * T_tcp_to_flange).norm();
+        if (!qRetract.allFinite() || !(ikOk || poseError < 1.0e-3))
+        {
+            restoreRail();
+            m_running.store(false);
+            emit failed(QStringLiteral("IK failed: TCP retract 0.1 m along tool Z."));
+            return;
+        }
+        qRetract(0) = railNow;
+        reportProgress(15);
+
+        kinematic->setPosition(qRetract);
+        kinematic->forwardPosition();
+        rl::math::Transform T_flange_lift = kinematic->getOperationalPosition(0);
+        T_flange_lift.translation().z() += kFlangeLiftMeter;
+
+        kinematic->setPosition(qRetract);
+        kinematic->forwardPosition();
+        rl::mdl::JacobianInverseKinematics ikLift(kinematic.get());
+        ikLift.setDuration(std::chrono::milliseconds(std::max(params.timeoutMs, 1)));
+        ikLift.setRandomRestarts(0);
+        ikLift.setEpsilon(1.0e-4);
+        ikLift.addGoal(T_flange_lift, 0);
+        const bool liftOk = ikLift.solve();
+
+        rl::math::Vector qLift = kinematic->getPosition();
+        kinematic->setPosition(qLift);
+        kinematic->forwardPosition();
+        const double liftError =
+            kinematic->getOperationalPosition(0).toDelta(T_flange_lift).norm();
+        if (!qLift.allFinite() || !(liftOk || liftError < 1.0e-3))
+        {
+            restoreRail();
+            m_running.store(false);
+            emit failed(QStringLiteral("IK failed: flange lift 0.2 m."));
+            return;
+        }
+        qLift(0) = railNow;
+        reportProgress(30);
 
         rl::math::Vector qArmHome = params.q_home;
-        qArmHome(0) = params.q_current(0);
-        lockJoints(params.q_current, true, false);
+        qArmHome(0) = railNow;
 
-        const PoseState goalState = poseState(qArmHome);
-        if (goalState == PoseState::Colliding)
-        {
-            restoreLimits();
-            m_running.store(false);
-            emit failed(QStringLiteral(
-                "Home arm pose collides while the rail stays at the current position."));
-            return;
-        }
-        if (goalState == PoseState::Invalid)
-        {
-            restoreLimits();
-            m_running.store(false);
-            emit failed(QStringLiteral(
-                "Home arm pose is outside joint limits with the rail locked."));
-            return;
-        }
-
-        rl::math::Vector qPlanStart = params.q_current;
         std::vector<rl::math::Vector> path1;
-        path1.push_back(params.q_current);
-
-        if (poseState(params.q_current) == PoseState::Colliding)
+        path1.push_back(q_current);
+        if ((q_current - qRetract).cwiseAbs().maxCoeff() > 1e-9)
         {
-            rl::math::Vector qLift;
-            if (!liftOff(qLift))
-            {
-                restoreLimits();
-                m_running.store(false);
-                emit failed(QStringLiteral(
-                    "Current pose is in collision, and lifting along tool Z by up to 0.2 m is still in collision."));
-                return;
-            }
-            appendLerp(path1, params.q_current, qLift, jointStep);
-            qPlanStart = qLift;
+            const rl::math::Vector qFrom = path1.back();
+            appendLerp(path1, qFrom, qRetract, jointStep);
+        }
+        if ((path1.back() - qLift).cwiseAbs().maxCoeff() > 1e-9)
+        {
+            const rl::math::Vector qFrom = path1.back();
+            appendLerp(path1, qFrom, qLift, jointStep);
         }
 
-        if ((qPlanStart - qArmHome).cwiseAbs().maxCoeff() > 1e-9)
+        if ((qLift - qArmHome).cwiseAbs().maxCoeff() > 1e-9)
         {
-            if (!planSegment(qPlanStart, qArmHome, jointStep, path1))
+            QMutexLocker lock(&mw->mutex);
+
+            if (!mw->start)
+                mw->start = std::make_shared<rl::math::Vector>(qLift);
+            else
+                *mw->start = qLift;
+            if (!mw->goal)
+                mw->goal = std::make_shared<rl::math::Vector>(qArmHome);
+            else
+                *mw->goal = qArmHome;
+
+            mw->planner->start = mw->start.get();
+            mw->planner->goal = mw->goal.get();
+            mw->planner->viewer = nullptr;
+
+            if (rl::plan::Rrt* rrt = dynamic_cast<rl::plan::Rrt*>(mw->planner.get()))
+                rrt->reset();
+
+            if (!mw->planner->verify())
             {
-                restoreLimits();
+                restoreRail();
                 m_running.store(false);
-                emit failed(QStringLiteral(
-                    "Planner found no collision-free arm path with the rail fixed."));
+                emit failed(QStringLiteral("Invalid lift or home-arm configuration."));
                 return;
             }
+
+            if (!mw->planner->solve())
+            {
+                restoreRail();
+                m_running.store(false);
+                emit failed(QStringLiteral("Planner failed: lift pose to home joints."));
+                return;
+            }
+
+            rl::plan::VectorList sparse = mw->planner->getPath();
+            if (mw->optimizer)
+            {
+                mw->optimizer->setViewer(nullptr);
+                mw->optimizer->process(sparse);
+            }
+
+            rl::math::Vector prev = path1.back();
+            for (const rl::math::Vector& node : sparse)
+            {
+                rl::math::Vector qn = node;
+                qn(0) = railNow;
+                if ((qn - prev).cwiseAbs().maxCoeff() <= 1e-12)
+                    continue;
+                appendLerp(path1, prev, qn, jointStep);
+                prev = path1.back();
+            }
         }
+
         for (rl::math::Vector& q : path1)
-            q(0) = params.q_current(0);
-        if ((path1.back() - qArmHome).cwiseAbs().maxCoeff() > 1e-9)
-            appendLerp(path1, path1.back(), qArmHome, jointStep);
+            q(0) = railNow;
+        if (path1.empty())
+            path1.push_back(qArmHome);
+        else if ((path1.back() - qArmHome).cwiseAbs().maxCoeff() > 1e-9)
+        {
+            const rl::math::Vector qFrom = path1.back();
+            appendLerp(path1, qFrom, qArmHome, jointStep);
+        }
 
-        restoreLimits();
-        reportProgress(60);
-
-        rl::math::Vector qRailStart = path1.back();
-        for (Eigen::Index i = 1; i < qRailStart.size(); ++i)
-            qRailStart(i) = params.q_home(i);
-        path1.back() = qRailStart;
-
-        lockJoints(params.q_home, false, true);
+        restoreRail();
+        reportProgress(70);
 
         std::vector<rl::math::Vector> path2;
-        if (std::abs(qRailStart(0) - params.q_home(0)) > 1e-9)
+        rl::math::Vector qRail = path1.back();
+        for (Eigen::Index i = 1; i < qRail.size(); ++i)
+            qRail(i) = params.q_home(i);
+        path1.back() = qRail;
+        path2.push_back(qRail);
+
+        const double y0 = qRail(0);
+        const double yTarget = params.q_home(0);
+        const double yDir = (yTarget >= y0) ? 1.0 : -1.0;
+        double y = y0;
+        while (std::abs(yTarget - y) > railStep)
         {
-            if (poseState(params.q_home) == PoseState::Colliding)
-            {
-                restoreLimits();
-                m_running.store(false);
-                emit failed(QStringLiteral(
-                    "Home pose collides, so the rail cannot return to home."));
-                return;
-            }
-            if (!planSegment(qRailStart, params.q_home, railStep, path2))
-            {
-                restoreLimits();
-                m_running.store(false);
-                emit failed(QStringLiteral("Planner failed: rail return to home."));
-                return;
-            }
-            for (rl::math::Vector& q : path2)
-            {
-                for (Eigen::Index i = 1; i < q.size(); ++i)
-                    q(i) = params.q_home(i);
-            }
+            y += yDir * railStep;
+            qRail(0) = y;
+            path2.push_back(qRail);
         }
-        else
+        if (std::abs(yTarget - y) > 1e-9)
         {
-            path2.push_back(params.q_home);
+            qRail(0) = yTarget;
+            path2.push_back(qRail);
         }
 
-        restoreLimits();
         reportProgress(90);
 
         std::vector<rl::math::Vector> jointTrajectory = path1;
         std::size_t p2Begin = 0;
-        if (!path2.empty()
+        if (!path2.empty() && !path1.empty()
             && (path2.front() - path1.back()).cwiseAbs().maxCoeff() < 1e-6)
         {
             p2Begin = 1;
@@ -628,12 +594,18 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
             path2.begin() + static_cast<std::ptrdiff_t>(p2Begin), path2.end());
 
         if ((jointTrajectory.back() - params.q_home).cwiseAbs().maxCoeff() > 1e-9)
-            appendLerp(jointTrajectory, jointTrajectory.back(), params.q_home, jointStep);
+        {
+            const rl::math::Vector qFrom = jointTrajectory.back();
+            appendLerp(jointTrajectory, qFrom, params.q_home, jointStep);
+        }
 
         std::vector<rl::math::Vector3> toolPoints;
         toolPoints.reserve(jointTrajectory.size());
         for (const rl::math::Vector& q : jointTrajectory)
             toolPoints.push_back(toolXyz(q));
+
+        kinematic->setPosition(q_current);
+        kinematic->forwardPosition();
 
         reportProgress(100);
         m_running.store(false);
@@ -641,10 +613,10 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
     }
     catch (const std::exception& e)
     {
-        for (const SavedLimit& item : savedLimits)
+        if (railJoint && railMin0.size() > 0)
         {
-            item.joint->setMinimum(item.minimum);
-            item.joint->setMaximum(item.maximum);
+            railJoint->setMinimum(railMin0);
+            railJoint->setMaximum(railMax0);
         }
         if (sceneFrozen && kinematic && qFrozen.size() > 0)
         {
@@ -661,10 +633,10 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
     }
     catch (...)
     {
-        for (const SavedLimit& item : savedLimits)
+        if (railJoint && railMin0.size() > 0)
         {
-            item.joint->setMinimum(item.minimum);
-            item.joint->setMaximum(item.maximum);
+            railJoint->setMinimum(railMin0);
+            railJoint->setMaximum(railMax0);
         }
         if (sceneFrozen && kinematic && qFrozen.size() > 0)
         {
