@@ -356,7 +356,9 @@ void IKWorker::doSolve(const IKSolveParams& params)
             {
                 const rl::math::Vector3 p0 = T_prev_tcp.translation();
                 const rl::math::Vector3 p1 = T_curr_tcp.translation();
-                const double dist = (p1 - p0).norm();
+                const double dx = p1.x() - p0.x();
+                const double dy = p1.y() - p0.y();
+                const double dist = std::sqrt(dx * dx + dy * dy);
 
                 if (dist > kPlanGapMm)
                 {
