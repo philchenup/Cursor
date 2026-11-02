@@ -373,18 +373,22 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
         };
 
         auto appendLerp = [&](std::vector<rl::math::Vector>& path,
-            const rl::math::Vector& a,
-            const rl::math::Vector& b,
+            const rl::math::Vector& aIn,
+            const rl::math::Vector& bIn,
             double step)
         {
+            const rl::math::Vector a = aIn;
+            const rl::math::Vector b = bIn;
             const double maxDq = (b - a).cwiseAbs().maxCoeff();
             const int n = (maxDq <= 1e-12)
                 ? 0
                 : std::max(1, static_cast<int>(std::ceil(maxDq / step)));
+            path.reserve(path.size() + static_cast<std::size_t>(n));
             for (int i = 1; i <= n; ++i)
             {
                 const double t = static_cast<double>(i) / static_cast<double>(n);
-                path.push_back((1.0 - t) * a + t * b);
+                rl::math::Vector q = (1.0 - t) * a + t * b;
+                path.push_back(q);
             }
         };
 
@@ -446,7 +450,10 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
         std::vector<rl::math::Vector> path1;
         path1.push_back(q_current);
         if ((q_current - qRetract).cwiseAbs().maxCoeff() > 1e-9)
-            appendLerp(path1, path1.back(), qRetract, jointStep);
+        {
+            const rl::math::Vector qFrom = path1.back();
+            appendLerp(path1, qFrom, qRetract, jointStep);
+        }
 
         if ((qRetract - qArmHome).cwiseAbs().maxCoeff() > 1e-9)
         {
@@ -508,7 +515,10 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
         if (path1.empty())
             path1.push_back(qArmHome);
         else if ((path1.back() - qArmHome).cwiseAbs().maxCoeff() > 1e-9)
-            appendLerp(path1, path1.back(), qArmHome, jointStep);
+        {
+            const rl::math::Vector qFrom = path1.back();
+            appendLerp(path1, qFrom, qArmHome, jointStep);
+        }
 
         restoreRail();
         reportProgress(70);
@@ -549,7 +559,10 @@ void IKWorker::doReturnHome(const IKReturnHomeParams& params)
             path2.begin() + static_cast<std::ptrdiff_t>(p2Begin), path2.end());
 
         if ((jointTrajectory.back() - params.q_home).cwiseAbs().maxCoeff() > 1e-9)
-            appendLerp(jointTrajectory, jointTrajectory.back(), params.q_home, jointStep);
+        {
+            const rl::math::Vector qFrom = jointTrajectory.back();
+            appendLerp(jointTrajectory, qFrom, params.q_home, jointStep);
+        }
 
         std::vector<rl::math::Vector3> toolPoints;
         toolPoints.reserve(jointTrajectory.size());
