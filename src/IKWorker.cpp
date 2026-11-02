@@ -124,35 +124,59 @@ void IKWorker::doSolve(const IKSolveParams& params)
                 if (m_stopRequested.load())
                     return false;
 
-                rl::math::Transform T_world_flange = T_world_tcp * T_tcp_to_flange;
+                const rl::math::Transform T_world_flange = T_world_tcp * T_tcp_to_flange;
 
+                // 地轨跟到当前 TCP 的 Y。窗口留出 0.1 mm，避免上下限重合后
+                // 求解器内部的关节值被 isValid() 拒绝。
                 if (railJoint && railJoint->getDofPosition() == 1)
                 {
-                    double lo = std::max(railMin0(0), T_world_tcp.translation().y());
-                    double hi = std::min(railMax0(0), T_world_tcp.translation().y());
+                    const double y = std::min(
+                        std::max(T_world_tcp.translation().y(), railMin0(0)),
+                        railMax0(0));
+                    constexpr double kRailEps = 1.0e-4;
+                    double lo = std::max(railMin0(0), y - kRailEps);
+                    double hi = std::min(railMax0(0), y + kRailEps);
+                    if (lo > hi)
+                    {
+                        lo = y;
+                        hi = y;
+                    }
 
                     rl::math::Vector railMin(1), railMax(1);
                     railMin << lo;
                     railMax << hi;
                     railJoint->setMinimum(railMin);
                     railJoint->setMaximum(railMax);
+                    q_current(0) = std::min(std::max(q_current(0), lo), hi);
                 }
 
+                // 只用上一帧关节做初值，禁止随机重启。
+                kinematic->setPosition(q_current);
+                kinematic->forwardPosition();
+
                 rl::mdl::JacobianInverseKinematics ik(kinematic.get());
-                ik.setDuration(std::chrono::milliseconds(params.timeoutMs));
+                ik.setDuration(std::chrono::milliseconds(std::max(params.timeoutMs, 1)));
+                ik.setRandomRestarts(0);
+                ik.setEpsilon(1.0e-4);
                 ik.addGoal(T_world_flange, 0);
 
-                kinematic->setPosition(q_current);
-                bool ok = ik.solve();
+                const bool solved = ik.solve();
+                const rl::math::Vector q = kinematic->getPosition();
+                kinematic->setPosition(q);
+                kinematic->forwardPosition();
+                const double poseError =
+                    kinematic->getOperationalPosition(0).toDelta(T_world_flange).norm();
 
-                if (ok)
+                if (q.allFinite() && (solved || poseError < 1.0e-3))
                 {
-                    q_current = kinematic->getPosition();
+                    q_current = q;
                     jointTrajectory.push_back(q_current);
                     ++successCount;
                 }
                 else
                 {
+                    kinematic->setPosition(q_current);
+                    kinematic->forwardPosition();
                     ++failCount;
                     jointTrajectory.push_back(q_current);
                 }
